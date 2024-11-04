@@ -1,0 +1,16 @@
+[package]
+name = "rsipstack"
+version = "0.1.0"
+edition = "2021"
+description = "SIP Stack Rust library for building SIP applications"
+license = "MIT"
+repository = "https://github.com/restsend/rsipstack"
+readme = "README.md"
+keywords = ["sip", "voip", "telephony", "sipstack"]
+authors = ["jinti <jinti@fourz.cn>"]
+categories = ["networking", "voip"]
+
+[dependencies]
+log = "0.4.22"
+rsip = "0.4.0"
+tokio = "1.41.0"
