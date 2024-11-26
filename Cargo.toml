@@ -13,7 +13,12 @@ categories = ["networking", "voip"]
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+[lib]
+crate-type = ["cdylib", "rlib"]
+
 [dependencies]
+async-trait = "0.1.83"
+futures = "0.3.31"
 async-trait = "0.1.83"
 futures = "0.3.31"
 log = "0.4.22"
@@ -25,6 +30,7 @@ wasm-bindgen = "0.2.84"
 # all the `std::fmt` and `std::panicking` infrastructure, so isn't great for
 # code size when deploying.
 console_error_panic_hook = { version = "0.1.7", optional = true }
+wasm-bindgen-futures = "0.4.45"
 
 [features]
 default = ["console_error_panic_hook"]
@@ -41,5 +47,11 @@ tokio = { version = "1.41.0", features = ["full"] }
 wasm-bindgen-test = "0.3.34"
 
 [profile.release]
-# Tell `rustc` to optimize for small code size.
-opt-level = "s"
+#strip = true
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = true

@@ -5,8 +5,9 @@ use tracing::info;
 
 // A sip client example, that sends a REGISTER request to a sip server.
 #[tokio::main]
-async fn main() {
+async fn main() -> rsipstack::Result<()> {
     let user_agent = EndpointBuilder::new().build();
+
     let client_loop = async {
         let register_req = rsip::message::Request{
             method: rsip::method::Method::Register,
@@ -19,11 +20,12 @@ async fn main() {
             version: rsip::Version::V2,
             body: Default::default(),
         };
-        let tx = user_agent.client_transaction(register_req);
+        let tx = user_agent.client_transaction(register_req)?;
         tx.send().await.expect("Failed to send register request.");
-        while let Some(resp) = tx.next().await {
+        while let Ok(resp) = tx.receive().await {
             info!("Received response: {:?}", resp);
         }
+        Ok::<(), rsipstack::Error>(())
     };
     
     let server_loop = async {
@@ -35,7 +37,8 @@ async fn main() {
         _ = user_agent.serve() => {},
         _ = client_loop => {},
         _ = server_loop => {},
-    }
+    };
+    Ok(())
 
     // let register_tx = user_agent.client_transaction(method::Method::Register)
     // .on_challenge(|response| {
