@@ -9,8 +9,6 @@ pub enum Error {
     Error(String),
 }
 
-
-
 impl Into<JsValue> for Error {
     fn into(self) -> JsValue {
         match self {
@@ -22,7 +20,6 @@ impl Into<JsValue> for Error {
             Error::Error(e) => e.into(),
         }
     }
-    
 }
 impl From<rsip::Error> for Error {
     fn from(e: rsip::Error) -> Self {
@@ -33,5 +30,5 @@ impl From<rsip::Error> for Error {
 impl<T> From<tokio::sync::mpsc::error::SendError<T>> for Error {
     fn from(e: tokio::sync::mpsc::error::SendError<T>) -> Self {
         Error::Error(e.to_string())
-    }    
+    }
 }
