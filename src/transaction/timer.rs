@@ -33,7 +33,9 @@ impl<T> Timer<T> {
             last_task_id: AtomicU64::new(1),
         }
     }
-
+    pub fn len(&self) -> usize {
+        self.tasks.read().unwrap().len()
+    }
     pub fn timeout_at(&self, execute_at: Instant, value: T) -> u64 {
         let task_id = self.last_task_id.fetch_add(1, Ordering::Relaxed);
         self.tasks.write().unwrap().insert(
@@ -70,15 +72,20 @@ impl<T> Timer<T> {
         let mut tasks = self.tasks.write().unwrap();
 
         let keys_to_remove: Vec<_> = tasks
-            .iter()
-            .take_while(|(key, _)| key.execute_at <= now)
+            .range(
+                ..=TimerKey {
+                    task_id: 0,
+                    execute_at: now,
+                },
+            )
             .map(|(key, _)| key.clone())
             .collect();
+
         let mut id_to_tasks = self.id_to_tasks.write().unwrap();
 
         for key in keys_to_remove {
             id_to_tasks.remove(&key.task_id);
-            result.extend(tasks.remove(&key));
+            tasks.remove(&key).map(|value| result.push(value));
         }
         result
     }
@@ -90,6 +97,7 @@ fn test_timer() {
     let timer = Timer::new();
     let now = Instant::now();
     let task_id = timer.timeout_at(now, "task1");
+    assert_eq!(task_id, 1);
     assert_eq!(timer.cancel(task_id), Some("task1"));
     assert_eq!(timer.cancel(task_id), None);
 
@@ -100,4 +108,5 @@ fn test_timer() {
     timer.timeout_at(now + Duration::from_secs(3), "task3");
     let non_tasks = timer.poll(now + Duration::from_secs(1));
     assert_eq!(non_tasks.len(), 0);
+    assert_eq!(timer.len(), 1);
 }

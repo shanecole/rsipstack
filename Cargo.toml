@@ -7,7 +7,7 @@ license = "MIT"
 repository = "https://github.com/restsend/rsipstack"
 readme = "README.md"
 keywords = ["sip", "voip", "telephony", "sipstack"]
-authors = ["jinti <jinti@fourz.cn>"]
+authors = ["kui<kui@fourz.cn>"]
 categories = ["networking", "voip"]
 
 
