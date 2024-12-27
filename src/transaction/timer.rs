@@ -4,7 +4,7 @@ use std::{
         atomic::{AtomicU64, Ordering},
         RwLock,
     },
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 #[derive(Debug, PartialOrd, PartialEq, Eq, Clone)]
@@ -33,9 +33,15 @@ impl<T> Timer<T> {
             last_task_id: AtomicU64::new(1),
         }
     }
+
     pub fn len(&self) -> usize {
         self.tasks.read().unwrap().len()
     }
+
+    pub fn timeout(&self, duration: Duration, value: T) -> u64 {
+        self.timeout_at(Instant::now() + duration, value)
+    }
+
     pub fn timeout_at(&self, execute_at: Instant, value: T) -> u64 {
         let task_id = self.last_task_id.fetch_add(1, Ordering::Relaxed);
         self.tasks.write().unwrap().insert(
@@ -105,7 +111,7 @@ fn test_timer() {
     let must_hass_task_2 = timer.poll(now + Duration::from_secs(1));
     assert_eq!(must_hass_task_2.len(), 1);
 
-    timer.timeout_at(now + Duration::from_secs(3), "task3");
+    timer.timeout_at(now + Duration::from_millis(1001), "task3");
     let non_tasks = timer.poll(now + Duration::from_secs(1));
     assert_eq!(non_tasks.len(), 0);
     assert_eq!(timer.len(), 1);

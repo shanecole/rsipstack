@@ -1,17 +1,16 @@
 use super::{
     key::TransactionKey,
-    transaction::{Transaction, TransactionCore, TransactionCoreRef, TransportLayer},
+    transaction::{
+        Transaction, TransactionCore, TransactionCoreRef, TransactionType, TransportLayer,
+    },
 };
 use crate::Result;
-use std::{
-    collections::HashMap,
-    time::{Duration, Instant},
-};
+use std::time::{Duration, Instant};
 use tokio::select;
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 
-const USER_AGENT: &str = "rustsip/0.1";
+const USER_AGENT: &str = "rsipstack/0.1";
 
 pub struct EndpointBuilder {
     user_agent: String,
@@ -23,9 +22,7 @@ pub struct EndpointBuilder {
 pub struct Endpoint {
     core: TransactionCoreRef,
     user_agent: String,
-    transactions: HashMap<TransactionKey, Transaction>,
     cancel_token: CancellationToken,
-    timer_interval: Duration,
 }
 
 impl EndpointBuilder {
@@ -64,17 +61,17 @@ impl EndpointBuilder {
             .take()
             .expect("transport_layer is required");
 
-        let core = TransactionCore::new(transport_layer);
+        let cancel_token = self.cancel_token.take().unwrap_or_default();
+        let core = TransactionCore::new(
+            transport_layer,
+            cancel_token.child_token(),
+            self.timer_interval,
+        );
 
         Endpoint {
             core,
             user_agent: self.user_agent.clone(),
-            cancel_token: self.cancel_token.take().unwrap_or_default(),
-            transactions: HashMap::new(),
-            timer_interval: self
-                .timer_interval
-                .take()
-                .unwrap_or(Duration::from_millis(20)),
+            cancel_token: self.cancel_token.take().unwrap(),
         }
     }
 }
@@ -85,29 +82,20 @@ impl Endpoint {
             _ = self.cancel_token.cancelled() => {
                 info!("endpoint cancelled");
             },
-            _ = self.process_timer() => {
+            _ = self.core.process_timer() => {
             }
         }
         info!("endpoint shutdown");
     }
 
     pub fn shutdown(&self) {
+        info!("endpoint shutdown requested");
         self.cancel_token.cancel();
     }
-}
 
-impl Endpoint {
-    async fn process_timer(&self) -> Result<()> {
-        loop {
-            for t in self.core.timers.poll(Instant::now()) {
-                if let Some(transaction) = self.transactions.get(t.key()) {
-                    let r = transaction.on_timer(&t).await;
-                    if let Err(e) = r {
-                        info!("process_timer {} error: {:?}", t, e);
-                    }
-                }
-            }
-            tokio::time::sleep(self.timer_interval).await;
-        }
+    pub fn client_transaction(&self, request: rsip::Request) -> Result<Transaction> {
+        let key: TransactionKey = (&request).try_into()?;
+        let tx = Transaction::new_client(key, request, self.core.clone(), None);
+        Ok(tx)
     }
 }
