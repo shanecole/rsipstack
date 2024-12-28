@@ -1,9 +1,10 @@
+use crate::transaction::key::TransactionKey;
 use wasm_bindgen::prelude::*;
 #[derive(Debug, Eq, PartialEq, Clone)]
 pub enum Error {
     SipMessageError(String),
     TransportLayerError(String),
-    TransactionError(String),
+    TransactionError(String, TransactionKey),
     EndpointError(String),
     DialogError(String),
     Error(String),
@@ -14,7 +15,7 @@ impl Into<JsValue> for Error {
         match self {
             Error::SipMessageError(e) => e.into(),
             Error::TransportLayerError(e) => e.into(),
-            Error::TransactionError(e) => e.into(),
+            Error::TransactionError(e, key) => format!("{}: {}", e, key.to_string()).into(),
             Error::EndpointError(e) => e.into(),
             Error::DialogError(e) => e.into(),
             Error::Error(e) => e.into(),

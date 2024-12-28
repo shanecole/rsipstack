@@ -26,7 +26,7 @@ impl Hash for Rfc2543 {
     }
 }
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Rfc3261 {
     pub branch: String,
     pub method: Method,
@@ -45,10 +45,11 @@ impl Hash for Rfc3261 {
     }
 }
 
-#[derive(Clone, PartialEq, Eq, Hash)]
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub enum TransactionKey {
     RFC3261(Rfc3261),
     RFC2543(Rfc2543),
+    Invalid,
 }
 
 impl std::fmt::Display for TransactionKey {
@@ -68,6 +69,7 @@ impl std::fmt::Display for TransactionKey {
                 rfc2543.from_tag,
                 rfc2543.via_host_port
             ),
+            TransactionKey::Invalid => write!(f, "INVALID"),
         }
     }
 }
@@ -82,19 +84,19 @@ impl TryFrom<&rsip::Request> for TransactionKey {
                 branch: branch.to_string(),
                 method: req.method().clone(),
                 cseq: req.cseq_header()?.seq()?,
-                from_tag: req
-                    .from_header()?
-                    .tag()?
-                    .ok_or(Error::TransactionError("from tags missing".to_string()))?,
+                from_tag: req.from_header()?.tag()?.ok_or(Error::TransactionError(
+                    "from tags missing".to_string(),
+                    TransactionKey::Invalid,
+                ))?,
                 call_id: req.call_id_header()?.to_string(),
             })),
             None => Ok(TransactionKey::RFC2543(Rfc2543 {
                 method: req.method().clone(),
                 cseq: req.cseq_header()?.seq()?,
-                from_tag: req
-                    .from_header()?
-                    .tag()?
-                    .ok_or(Error::TransactionError("from tags missing".to_string()))?,
+                from_tag: req.from_header()?.tag()?.ok_or(Error::TransactionError(
+                    "from tags missing".to_string(),
+                    TransactionKey::Invalid,
+                ))?,
                 call_id: req.call_id_header()?.to_string(),
                 via_host_port: via.uri.host_with_port,
             })),

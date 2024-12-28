@@ -1,11 +1,9 @@
 use super::{
-    key::TransactionKey,
-    transaction::{
-        Transaction, TransactionCore, TransactionCoreRef, TransactionType, TransportLayer,
-    },
+    transaction::{Transaction, TransactionCore, TransactionCoreRef},
+    TransportLayer,
 };
 use crate::Result;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use tokio::select;
 use tokio_util::sync::CancellationToken;
 use tracing::info;
@@ -94,7 +92,7 @@ impl Endpoint {
     }
 
     pub fn client_transaction(&self, request: rsip::Request) -> Result<Transaction> {
-        let key: TransactionKey = (&request).try_into()?;
+        let key = (&request).try_into()?;
         let tx = Transaction::new_client(key, request, self.core.clone(), None);
         Ok(tx)
     }
