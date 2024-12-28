@@ -2,8 +2,9 @@ use super::key::TransactionKey;
 use super::timer::Timer;
 use super::{
     IncomingRequest, RequestSender, TransactionState, TransactionTimer, TransactionType, Transport,
-    TransportLayer, USER_AGENT,
 };
+use crate::transport::transport::TransportReceiver;
+use crate::transport::{TransportEvent, TransportLayer};
 use crate::{Error, Result};
 use rsip::{Method, Request, Response, SipMessage};
 use std::{
@@ -11,6 +12,7 @@ use std::{
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
+use tokio::select;
 use tokio::sync::mpsc::{error, unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio::time::sleep;
 use tokio_util::sync::CancellationToken;
@@ -60,6 +62,42 @@ impl TransactionCore {
         })
     }
 
+    pub(super) async fn serve(&self) -> Result<()> {
+        let (transport_tx, transport_rx) = unbounded_channel();
+
+        select! {
+            _ = self.process_timer() => {
+            },
+            _ = self.transport_layer.serve(transport_tx) => {
+            },
+            _ = self.process_transport_layer(transport_rx) => {
+            },
+        }
+        Ok(())
+    }
+
+    // process transport layer, receive message from transport layer
+    async fn process_transport_layer(&self, mut transport_rx: TransportReceiver) -> Result<()> {
+        while let Some(event) = transport_rx.recv().await {
+            match event {
+                TransportEvent::IncomingMessage(msg, transport) => {
+                    trace!("incoming message {} from {}", msg, transport);
+                    self.on_received_message(msg, transport).await?;
+                }
+                TransportEvent::NewTransport(t) => {
+                    trace!("new transport {} ", t);
+                }
+                TransportEvent::TransportClosed(t) => {
+                    trace!("transport closed {} ", t);
+                }
+                TransportEvent::Terminate => {
+                    break;
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub(super) async fn process_timer(&self) -> Result<()> {
         while !self.cancel_token.is_cancelled() {
             for t in self.timers.poll(Instant::now()) {
@@ -101,28 +139,24 @@ impl TransactionCore {
     ) -> Result<()> {
         if let SipMessage::Request(ref req) = msg {
             if req.method != Method::Ack {
-                let incoming_sender = self.incoming_sender.lock().unwrap();
-                match incoming_sender.as_ref() {
-                    Some(sender) => {
-                        let event = IncomingRequest {
-                            request: msg.try_into()?,
-                            transport: transport,
-                        };
-                        sender.send(Some(event)).map_err(|e| {
-                            Error::TransactionError(e.to_string(), TransactionKey::Invalid)
-                        })?;
-                        return Ok(());
-                    }
-                    None => {
-                        let resp =
-                            self.make_response(req, rsip::StatusCode::ServerInternalError, None);
-                        transport.send(resp.into()).await?;
-                        return Err(Error::TransactionError(
-                            "incoming_sender not set".to_string(),
-                            TransactionKey::Invalid,
-                        ));
-                    }
+                if self.incoming_sender.lock().unwrap().is_none() {
+                    let resp = self.make_response(req, rsip::StatusCode::ServerInternalError, None);
+                    transport.send(resp.into()).await?;
+                    return Err(Error::TransactionError(
+                        "incoming_sender not set".to_string(),
+                        TransactionKey::Invalid,
+                    ));
                 }
+                let event = IncomingRequest {
+                    request: msg.try_into()?,
+                    transport: transport,
+                };
+                self.incoming_sender
+                    .lock()
+                    .unwrap()
+                    .as_ref()
+                    .map(|s| s.send(Some(event)));
+                return Ok(());
             }
         }
 
@@ -131,18 +165,20 @@ impl TransactionCore {
             SipMessage::Response(resp) => TransactionKey::try_from(resp)?,
         };
 
-        if let Some(last_message) = self
+        let last_message = self
             .finished_transactions
             .lock()
             .unwrap()
             .get(&key)
-            .and_then(|m| m.clone())
-        {
-            transport.send(last_message.into()).await?;
+            .map(|m| m.clone())
+            .flatten();
+
+        if let Some(last_message) = last_message {
+            transport.send(last_message).await?;
             return Ok(());
         }
 
-        if let Some(tu) = self.transactions.lock().unwrap().get(&key) {
+        if let Some(tu) = { self.transactions.lock().unwrap().get(&key) } {
             tu.send(TransactionEvent::Received(msg, Some(transport)))
                 .map_err(|e| Error::TransactionError(e.to_string(), key))?;
         }

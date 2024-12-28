@@ -1,8 +1,8 @@
 use super::{
     transaction::{Transaction, TransactionCore, TransactionCoreRef},
-    RequestReceiver, RequestSender, Transport, TransportLayer, USER_AGENT,
+    RequestReceiver, RequestSender, Transport,
 };
-use crate::Result;
+use crate::{transport::TransportLayer, Result, USER_AGENT};
 use std::{sync::Mutex, time::Duration};
 use tokio::{select, sync::mpsc::unbounded_channel};
 use tokio_util::sync::CancellationToken;
@@ -52,10 +52,7 @@ impl EndpointBuilder {
     }
 
     pub fn build(&mut self) -> Endpoint {
-        let transport_layer = self
-            .transport_layer
-            .take()
-            .expect("transport_layer is required");
+        let transport_layer = self.transport_layer.take().unwrap_or_default();
 
         let cancel_token = self.cancel_token.take().unwrap_or_default();
         let core = TransactionCore::new(
@@ -79,8 +76,8 @@ impl Endpoint {
             _ = self.cancel_token.cancelled() => {
                 info!("endpoint cancelled");
             },
-            _ = self.core.process_timer() => {
-            }
+            _ = self.core.serve() => {},
+
         }
         info!("endpoint shutdown");
     }

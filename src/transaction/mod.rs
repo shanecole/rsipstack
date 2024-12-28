@@ -1,8 +1,6 @@
-use crate::Result;
-use async_trait::async_trait;
+use crate::transport::Transport;
 use key::TransactionKey;
-use rsip::SipMessage;
-use std::{sync::Arc, time::Duration};
+use std::time::Duration;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 pub mod endpoint;
@@ -11,24 +9,6 @@ pub mod message;
 mod timer;
 pub mod transaction;
 pub use endpoint::EndpointBuilder;
-
-const USER_AGENT: &str = "rsipstack/0.1";
-
-#[async_trait]
-pub trait TransportHandler {
-    fn is_secure(&self) -> bool;
-    fn is_reliable(&self) -> bool;
-    fn is_stream(&self) -> bool;
-    async fn next(&self) -> Result<SipMessage>;
-    async fn send(&self, msg: SipMessage) -> Result<()>;
-}
-
-pub type Transport = Arc<dyn TransportHandler + Send + Sync>;
-#[async_trait]
-pub trait TransactionLayerHandler {
-    async fn lookup(&self, uri: &rsip::uri::Uri) -> Result<Transport>;
-}
-pub type TransportLayer = Arc<dyn TransactionLayerHandler + Send + Sync>;
 
 pub struct IncomingRequest {
     pub request: rsip::Request,

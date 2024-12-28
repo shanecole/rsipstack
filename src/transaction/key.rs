@@ -1,11 +1,11 @@
-use std::hash::Hash;
-
 use crate::{Error, Result};
+use rsip::headers::UntypedHeader;
 use rsip::{
     param::Tag,
     prelude::{HeadersExt, ToTypedHeader},
     HostWithPort, Method,
 };
+use std::hash::Hash;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Rfc2543 {
@@ -87,19 +87,20 @@ impl TryFrom<&rsip::Request> for TransactionKey {
             "from tags missing".to_string(),
             TransactionKey::Invalid,
         ))?;
+        let call_id = req.call_id_header()?.value().to_string();
         match via.branch() {
             Some(branch) => Ok(TransactionKey::RFC3261(Rfc3261 {
                 branch: branch.to_string(),
                 method,
                 cseq: req.cseq_header()?.seq()?,
                 from_tag,
-                call_id: req.call_id_header()?.to_string(),
+                call_id,
             })),
             None => Ok(TransactionKey::RFC2543(Rfc2543 {
                 method,
                 cseq: req.cseq_header()?.seq()?,
                 from_tag,
-                call_id: req.call_id_header()?.to_string(),
+                call_id,
                 via_host_port: via.uri.host_with_port,
             })),
         }
@@ -117,19 +118,20 @@ impl TryFrom<&rsip::Response> for TransactionKey {
             "from tags missing".to_string(),
             TransactionKey::Invalid,
         ))?;
+        let call_id = resp.call_id_header()?.value().to_string();
         match via.branch() {
             Some(branch) => Ok(TransactionKey::RFC3261(Rfc3261 {
                 branch: branch.to_string(),
                 method,
                 cseq: cseq.seq()?,
                 from_tag,
-                call_id: resp.call_id_header()?.to_string(),
+                call_id,
             })),
             None => Ok(TransactionKey::RFC2543(Rfc2543 {
                 method,
                 cseq: cseq.seq()?,
                 from_tag,
-                call_id: resp.call_id_header()?.to_string(),
+                call_id,
                 via_host_port: via.uri.host_with_port,
             })),
         }
@@ -156,6 +158,55 @@ fn test_transaction_key() -> Result<()> {
         version: rsip::Version::V2,
         body: Default::default(),
     };
-    _ = TransactionKey::try_from(&register_req)?;
+    let key = TransactionKey::try_from(&register_req)?;
+    assert_eq!(
+        key,
+        TransactionKey::RFC3261(Rfc3261 {
+            branch: "z9hG4bKnashd92".to_string(),
+            method: Method::Register,
+            cseq: 2,
+            from_tag: Tag::new("ja743ks76zlflH"),
+            call_id: "1j9FpLxk3uxtm8tn@biloxi.example.com".to_string(),
+        })
+    );
+    let register_resp = rsip::message::Response {
+        status_code: rsip::StatusCode::OK,
+        version: rsip::Version::V2,
+        headers: vec![
+            Via::new("SIP/2.0/TLS client.biloxi.example.com:5061;branch=z9hG4bKnashd92").into(),
+            CSeq::new("2 REGISTER").into(),
+            From::new("Bob <sips:bob@biloxi.example.com>;tag=ja743ks76zlflH").into(),
+            CallId::new("1j9FpLxk3uxtm8tn@biloxi.example.com").into(),
+        ]
+        .into(),
+        body: Default::default(),
+    };
+    let key = TransactionKey::try_from(&register_resp)?;
+    assert_eq!(
+        key,
+        TransactionKey::RFC3261(Rfc3261 {
+            branch: "z9hG4bKnashd92".to_string(),
+            method: Method::Register,
+            cseq: 2,
+            from_tag: Tag::new("ja743ks76zlflH"),
+            call_id: "1j9FpLxk3uxtm8tn@biloxi.example.com".to_string(),
+        })
+    );
+
+    let mut ack_req = register_req.clone();
+    ack_req.method = Method::Ack;
+    ack_req.headers.unique_push(CSeq::new("2 ACK").into());
+
+    let key = TransactionKey::try_from(&ack_req)?;
+    assert_eq!(
+        key,
+        TransactionKey::RFC3261(Rfc3261 {
+            branch: "z9hG4bKnashd92".to_string(),
+            method: Method::Invite,
+            cseq: 2,
+            from_tag: Tag::new("ja743ks76zlflH"),
+            call_id: "1j9FpLxk3uxtm8tn@biloxi.example.com".to_string(),
+        })
+    );
     Ok(())
 }
