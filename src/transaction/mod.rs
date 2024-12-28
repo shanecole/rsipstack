@@ -12,6 +12,8 @@ mod timer;
 pub mod transaction;
 pub use endpoint::EndpointBuilder;
 
+const USER_AGENT: &str = "rsipstack/0.1";
+
 #[async_trait]
 pub trait TransportHandler {
     fn is_secure(&self) -> bool;
@@ -28,8 +30,13 @@ pub trait TransactionLayerHandler {
 }
 pub type TransportLayer = Arc<dyn TransactionLayerHandler + Send + Sync>;
 
-pub(super) type TransactionReceiver = UnboundedReceiver<TransactionEvent>;
-pub(super) type TransactionSender = UnboundedSender<TransactionEvent>;
+pub struct IncomingRequest {
+    pub request: rsip::Request,
+    pub transport: Transport,
+}
+
+pub type RequestReceiver = UnboundedReceiver<Option<IncomingRequest>>;
+pub type RequestSender = UnboundedSender<Option<IncomingRequest>>;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TransactionState {
@@ -46,12 +53,6 @@ pub enum TransactionType {
     ClientNonInvite,
     ServerInvite,
     ServerNonInvite,
-}
-
-pub(super) enum TransactionEvent {
-    Received(SipMessage, Option<Transport>),
-    Timer(TransactionTimer),
-    Terminate,
 }
 
 pub(super) enum TransactionTimer {

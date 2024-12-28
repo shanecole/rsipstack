@@ -1,17 +1,17 @@
+use super::key::TransactionKey;
 use super::timer::Timer;
-use super::{key::TransactionKey, message::make_response};
 use super::{
-    TransactionEvent, TransactionReceiver, TransactionSender, TransactionState, TransactionTimer,
-    TransactionType, Transport, TransportLayer,
+    IncomingRequest, RequestSender, TransactionState, TransactionTimer, TransactionType, Transport,
+    TransportLayer, USER_AGENT,
 };
 use crate::{Error, Result};
-use rsip::{transport, Method, Request, Response, SipMessage};
+use rsip::{Method, Request, Response, SipMessage};
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
-use tokio::sync::mpsc::{error, unbounded_channel};
+use tokio::sync::mpsc::{error, unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio::time::sleep;
 use tokio_util::sync::CancellationToken;
 use tracing::trace;
@@ -21,12 +21,21 @@ pub(super) const T1X64: Duration = Duration::from_secs(64 * 500);
 pub(super) const T4: Duration = Duration::from_secs(4); // server invite only
 pub(super) const TIMER_INTERVAL: Duration = Duration::from_millis(20);
 
+pub(super) type TransactionEventReceiver = UnboundedReceiver<TransactionEvent>;
+pub(super) type TransactionEventSender = UnboundedSender<TransactionEvent>;
+pub(super) enum TransactionEvent {
+    Received(SipMessage, Option<Transport>),
+    Timer(TransactionTimer),
+    Terminate,
+}
+
 pub(super) struct TransactionCore {
+    pub user_agent: String,
     pub timers: Timer<TransactionTimer>,
     pub transport_layer: TransportLayer,
     pub finished_transactions: Mutex<HashMap<TransactionKey, Option<SipMessage>>>,
-    pub transactions: Mutex<HashMap<TransactionKey, TransactionSender>>,
-    incoming_sender: TransactionSender,
+    pub transactions: Mutex<HashMap<TransactionKey, TransactionEventSender>>,
+    incoming_sender: Mutex<Option<RequestSender>>,
     cancel_token: CancellationToken,
     timer_interval: Duration,
 }
@@ -34,19 +43,20 @@ pub(super) type TransactionCoreRef = Arc<TransactionCore>;
 
 impl TransactionCore {
     pub fn new(
+        user_agent: String,
         transport_layer: TransportLayer,
         cancel_token: CancellationToken,
         timer_interval: Option<Duration>,
-        incoming_sender: TransactionSender,
     ) -> Arc<Self> {
         Arc::new(TransactionCore {
+            user_agent,
             timers: Timer::new(),
             transport_layer,
             transactions: Mutex::new(HashMap::new()),
             finished_transactions: Mutex::new(HashMap::new()),
             timer_interval: timer_interval.unwrap_or(TIMER_INTERVAL),
             cancel_token,
-            incoming_sender,
+            incoming_sender: Mutex::new(None),
         })
     }
 
@@ -62,7 +72,7 @@ impl TransactionCore {
                     _ => {}
                 }
 
-                if let Some(tu) = self.transactions.lock().unwrap().get(t.key()) {
+                if let Some(tu) = { self.transactions.lock().unwrap().get(t.key()) } {
                     match tu.send(TransactionEvent::Timer(t)) {
                         Ok(_) => {}
                         Err(error::SendError(t)) => match t {
@@ -79,19 +89,40 @@ impl TransactionCore {
         Ok(())
     }
 
+    pub(super) fn attach_incoming_sender(&self, sender: Option<RequestSender>) {
+        *self.incoming_sender.lock().unwrap() = sender;
+    }
+
     // receive message from transport layer
     pub(super) async fn on_received_message(
         &self,
         msg: SipMessage,
-        transport: Option<Transport>,
+        transport: Transport,
     ) -> Result<()> {
         if let SipMessage::Request(ref req) = msg {
-            if req.method == Method::Ack {
-                let event = TransactionEvent::Received(msg, transport);
-                return self
-                    .incoming_sender
-                    .send(event)
-                    .map_err(|e| Error::TransactionError(e.to_string(), TransactionKey::Invalid));
+            if req.method != Method::Ack {
+                let incoming_sender = self.incoming_sender.lock().unwrap();
+                match incoming_sender.as_ref() {
+                    Some(sender) => {
+                        let event = IncomingRequest {
+                            request: msg.try_into()?,
+                            transport: transport,
+                        };
+                        sender.send(Some(event)).map_err(|e| {
+                            Error::TransactionError(e.to_string(), TransactionKey::Invalid)
+                        })?;
+                        return Ok(());
+                    }
+                    None => {
+                        let resp =
+                            self.make_response(req, rsip::StatusCode::ServerInternalError, None);
+                        transport.send(resp.into()).await?;
+                        return Err(Error::TransactionError(
+                            "incoming_sender not set".to_string(),
+                            TransactionKey::Invalid,
+                        ));
+                    }
+                }
             }
         }
 
@@ -107,20 +138,18 @@ impl TransactionCore {
             .get(&key)
             .and_then(|m| m.clone())
         {
-            if let Some(transport) = transport {
-                transport.send(last_message.into()).await?;
-            }
+            transport.send(last_message.into()).await?;
             return Ok(());
         }
 
         if let Some(tu) = self.transactions.lock().unwrap().get(&key) {
-            tu.send(TransactionEvent::Received(msg, transport))
+            tu.send(TransactionEvent::Received(msg, Some(transport)))
                 .map_err(|e| Error::TransactionError(e.to_string(), key))?;
         }
         Ok(())
     }
 
-    fn attach_transaction(&self, key: &TransactionKey, tu_sender: TransactionSender) {
+    fn attach_transaction(&self, key: &TransactionKey, tu_sender: TransactionEventSender) {
         self.transactions
             .lock()
             .unwrap()
@@ -163,8 +192,8 @@ pub struct Transaction {
     pub(super) transport: Option<Transport>,
     pub(super) last_response: Option<Response>,
     pub(super) last_ack: Option<Request>,
-    pub(super) tu_receiver: TransactionReceiver,
-    pub(super) tu_sender: TransactionSender,
+    pub(super) tu_receiver: TransactionEventReceiver,
+    pub(super) tu_sender: TransactionEventSender,
     pub(super) timer_a: Option<u64>,
     pub(super) timer_b: Option<u64>,
     pub(super) timer_d: Option<u64>,
@@ -285,6 +314,33 @@ impl Transaction {
         }
     }
 
+    pub async fn send_trying(&mut self) -> Result<()> {
+        if self.transaction_type != TransactionType::ServerInvite {
+            return Err(Error::TransactionError(
+                "send_trying is only valid for server invite transactions".to_string(),
+                self.key.clone(),
+            ));
+        }
+
+        let transport = self.transport.as_ref().ok_or(Error::TransactionError(
+            "no transport found".to_string(),
+            self.key.clone(),
+        ))?;
+
+        if self.state != TransactionState::Calling {
+            // ignore if not in Calling state
+            return Ok(());
+        }
+        transport
+            .send(
+                self.core
+                    .make_response(&self.original, rsip::StatusCode::Trying, None)
+                    .into(),
+            )
+            .await?;
+        self.transition(TransactionState::Trying).map(|_| ())
+    }
+
     pub async fn send_ack(&mut self, ack: Request) -> Result<()> {
         if self.transaction_type != TransactionType::ClientInvite {
             return Err(Error::TransactionError(
@@ -349,7 +405,7 @@ impl Transaction {
         match self.state {
             TransactionState::Calling | TransactionState::Trying => {
                 // retransmission of the trying response
-                self.respond(make_response(
+                self.respond(self.core.make_response(
                     &self.original,
                     rsip::StatusCode::Trying,
                     None,
@@ -429,8 +485,11 @@ impl Transaction {
                 } else if let TransactionTimer::TimerB(_) = timer {
                     self.transition(TransactionState::Terminated)?;
                     // Inform TU about timeout
-                    let timeout_response =
-                        make_response(&self.original, rsip::StatusCode::RequestTimeout, None);
+                    let timeout_response = self.core.make_response(
+                        &self.original,
+                        rsip::StatusCode::RequestTimeout,
+                        None,
+                    );
                     self.inform_tu_response(timeout_response)?;
                 }
             }
@@ -438,8 +497,11 @@ impl Transaction {
                 if let TransactionTimer::TimerB(_) = timer {
                     self.transition(TransactionState::Terminated)?;
                     // Inform TU about timeout
-                    let timeout_response =
-                        make_response(&self.original, rsip::StatusCode::RequestTimeout, None);
+                    let timeout_response = self.core.make_response(
+                        &self.original,
+                        rsip::StatusCode::RequestTimeout,
+                        None,
+                    );
                     self.inform_tu_response(timeout_response)?;
                 }
             }

@@ -1,4 +1,4 @@
-use rsipstack::{EndpointBuilder, Error};
+use rsipstack::{transaction::IncomingRequest, EndpointBuilder, Error};
 use std::sync::Arc;
 use tokio::select;
 use tracing::info;
@@ -30,8 +30,42 @@ async fn main() -> rsipstack::Result<()> {
         Ok::<_, Error>(())
     });
 
+    let user_agent_ref = user_agent.clone();
+    let mut incoming = user_agent_ref.incoming_requests();
+
+    let serve_loop = async move {
+        loop {
+            match incoming.recv().await {
+                Some(req) => {
+                    if let Some(IncomingRequest { request, transport }) = req {
+                        info!("Received request: {:?}", request);
+                        let mut tx = user_agent_ref.server_transaction(request, transport)?;
+
+                        tokio::spawn(async move {
+                            // 1. make a trying response
+                            tx.send_trying().await?;
+                            // 2. make a done response
+                            let done_response = rsip::Response {
+                                status_code: rsip::StatusCode::NotAcceptable,
+                                version: rsip::Version::V2,
+                                ..Default::default()
+                            };
+                            tx.respond(done_response).await?;
+                            Ok::<_, Error>(())
+                        });
+                    } else {
+                        break;
+                    }
+                }
+                None => break,
+            }
+        }
+        Ok::<_, Error>(())
+    };
+
     select! {
         _ = user_agent.serve() => {}
+        _ = serve_loop => {}
     }
     Ok(())
 }
