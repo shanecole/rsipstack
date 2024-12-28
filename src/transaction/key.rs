@@ -79,24 +79,26 @@ impl TryFrom<&rsip::Request> for TransactionKey {
 
     fn try_from(req: &rsip::Request) -> Result<Self> {
         let via = req.via_header()?.typed()?;
+        let mut method = req.method().clone();
+        if method == Method::Ack {
+            method = Method::Invite;
+        }
+        let from_tag = req.from_header()?.tag()?.ok_or(Error::TransactionError(
+            "from tags missing".to_string(),
+            TransactionKey::Invalid,
+        ))?;
         match via.branch() {
             Some(branch) => Ok(TransactionKey::RFC3261(Rfc3261 {
                 branch: branch.to_string(),
-                method: req.method().clone(),
+                method,
                 cseq: req.cseq_header()?.seq()?,
-                from_tag: req.from_header()?.tag()?.ok_or(Error::TransactionError(
-                    "from tags missing".to_string(),
-                    TransactionKey::Invalid,
-                ))?,
+                from_tag,
                 call_id: req.call_id_header()?.to_string(),
             })),
             None => Ok(TransactionKey::RFC2543(Rfc2543 {
-                method: req.method().clone(),
+                method,
                 cseq: req.cseq_header()?.seq()?,
-                from_tag: req.from_header()?.tag()?.ok_or(Error::TransactionError(
-                    "from tags missing".to_string(),
-                    TransactionKey::Invalid,
-                ))?,
+                from_tag,
                 call_id: req.call_id_header()?.to_string(),
                 via_host_port: via.uri.host_with_port,
             })),
@@ -110,24 +112,23 @@ impl TryFrom<&rsip::Response> for TransactionKey {
     fn try_from(resp: &rsip::Response) -> Result<Self> {
         let via = resp.via_header()?.typed()?;
         let cseq = resp.cseq_header()?;
+        let method = cseq.method()?;
+        let from_tag = resp.from_header()?.tag()?.ok_or(Error::TransactionError(
+            "from tags missing".to_string(),
+            TransactionKey::Invalid,
+        ))?;
         match via.branch() {
             Some(branch) => Ok(TransactionKey::RFC3261(Rfc3261 {
                 branch: branch.to_string(),
-                method: cseq.method()?,
+                method,
                 cseq: cseq.seq()?,
-                from_tag: resp.from_header()?.tag()?.ok_or(Error::TransactionError(
-                    "from tags missing".to_string(),
-                    TransactionKey::Invalid,
-                ))?,
+                from_tag,
                 call_id: resp.call_id_header()?.to_string(),
             })),
             None => Ok(TransactionKey::RFC2543(Rfc2543 {
-                method: cseq.method()?,
+                method,
                 cseq: cseq.seq()?,
-                from_tag: resp.from_header()?.tag()?.ok_or(Error::TransactionError(
-                    "from tags missing".to_string(),
-                    TransactionKey::Invalid,
-                ))?,
+                from_tag,
                 call_id: resp.call_id_header()?.to_string(),
                 via_host_port: via.uri.host_with_port,
             })),

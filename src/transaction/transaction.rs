@@ -12,6 +12,7 @@ use std::{
     time::{Duration, Instant},
 };
 use tokio::sync::mpsc::{error, unbounded_channel};
+use tokio::time::sleep;
 use tokio_util::sync::CancellationToken;
 use tracing::trace;
 
@@ -25,6 +26,7 @@ pub(super) struct TransactionCore {
     pub transport_layer: TransportLayer,
     pub finished_transactions: Mutex<HashMap<TransactionKey, Option<SipMessage>>>,
     pub transactions: Mutex<HashMap<TransactionKey, TransactionSender>>,
+    incoming_sender: TransactionSender,
     cancel_token: CancellationToken,
     timer_interval: Duration,
 }
@@ -35,6 +37,7 @@ impl TransactionCore {
         transport_layer: TransportLayer,
         cancel_token: CancellationToken,
         timer_interval: Option<Duration>,
+        incoming_sender: TransactionSender,
     ) -> Arc<Self> {
         Arc::new(TransactionCore {
             timers: Timer::new(),
@@ -43,6 +46,7 @@ impl TransactionCore {
             finished_transactions: Mutex::new(HashMap::new()),
             timer_interval: timer_interval.unwrap_or(TIMER_INTERVAL),
             cancel_token,
+            incoming_sender,
         })
     }
 
@@ -56,7 +60,8 @@ impl TransactionCore {
                         continue;
                     }
                     _ => {}
-                };
+                }
+
                 if let Some(tu) = self.transactions.lock().unwrap().get(t.key()) {
                     match tu.send(TransactionEvent::Timer(t)) {
                         Ok(_) => {}
@@ -69,7 +74,7 @@ impl TransactionCore {
                     }
                 }
             }
-            tokio::time::sleep(self.timer_interval).await;
+            sleep(self.timer_interval).await;
         }
         Ok(())
     }
@@ -80,6 +85,16 @@ impl TransactionCore {
         msg: SipMessage,
         transport: Option<Transport>,
     ) -> Result<()> {
+        if let SipMessage::Request(ref req) = msg {
+            if req.method == Method::Ack {
+                let event = TransactionEvent::Received(msg, transport);
+                return self
+                    .incoming_sender
+                    .send(event)
+                    .map_err(|e| Error::TransactionError(e.to_string(), TransactionKey::Invalid));
+            }
+        }
+
         let key = match &msg {
             SipMessage::Request(req) => TransactionKey::try_from(req)?,
             SipMessage::Response(resp) => TransactionKey::try_from(resp)?,
@@ -196,6 +211,18 @@ impl Transaction {
         Transaction::new(tx_type, key, original, transport, core)
     }
 
+    pub(super) fn new_server(
+        key: TransactionKey,
+        original: Request,
+        core: TransactionCoreRef,
+        transport: Option<Transport>,
+    ) -> Self {
+        let tx_type = match original.method {
+            Method::Invite => TransactionType::ServerInvite,
+            _ => TransactionType::ServerNonInvite,
+        };
+        Transaction::new(tx_type, key, original, transport, core)
+    }
     // send client request
     pub async fn send(&mut self) -> Result<()> {
         match self.transaction_type {

@@ -1,10 +1,11 @@
 use super::{
     transaction::{Transaction, TransactionCore, TransactionCoreRef},
-    TransportLayer,
+    TransactionEvent, TransactionReceiver, TransactionSender, TransportLayer,
 };
 use crate::Result;
+use rsip::SipMessage;
 use std::time::Duration;
-use tokio::select;
+use tokio::{select, sync::mpsc::unbounded_channel};
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 
@@ -21,6 +22,8 @@ pub struct Endpoint {
     core: TransactionCoreRef,
     user_agent: String,
     cancel_token: CancellationToken,
+    incoming_receiver: TransactionReceiver,
+    incoming_sender: TransactionSender,
 }
 
 impl EndpointBuilder {
@@ -60,14 +63,18 @@ impl EndpointBuilder {
             .expect("transport_layer is required");
 
         let cancel_token = self.cancel_token.take().unwrap_or_default();
+        let (incoming_sender, incoming_receiver) = unbounded_channel();
         let core = TransactionCore::new(
             transport_layer,
             cancel_token.child_token(),
             self.timer_interval,
+            incoming_sender.clone(),
         );
 
         Endpoint {
             core,
+            incoming_receiver,
+            incoming_sender,
             user_agent: self.user_agent.clone(),
             cancel_token: self.cancel_token.take().unwrap(),
         }
@@ -89,11 +96,28 @@ impl Endpoint {
     pub fn shutdown(&self) {
         info!("endpoint shutdown requested");
         self.cancel_token.cancel();
+        self.incoming_sender.send(TransactionEvent::Terminate).ok(); // ensure the server_transaction loop exits
     }
 
     pub fn client_transaction(&self, request: rsip::Request) -> Result<Transaction> {
         let key = (&request).try_into()?;
         let tx = Transaction::new_client(key, request, self.core.clone(), None);
         Ok(tx)
+    }
+
+    pub async fn server_transaction(&mut self) -> Option<Transaction> {
+        match self.incoming_receiver.recv().await? {
+            TransactionEvent::Received(SipMessage::Request(req), transport) => {
+                let tx = Transaction::new_server(
+                    (&req).try_into().ok()?,
+                    req,
+                    self.core.clone(),
+                    transport,
+                );
+                return Some(tx);
+            }
+            _ => {}
+        }
+        None
     }
 }
