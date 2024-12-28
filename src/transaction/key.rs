@@ -104,6 +104,37 @@ impl TryFrom<&rsip::Request> for TransactionKey {
     }
 }
 
+impl TryFrom<&rsip::Response> for TransactionKey {
+    type Error = crate::error::Error;
+
+    fn try_from(resp: &rsip::Response) -> Result<Self> {
+        let via = resp.via_header()?.typed()?;
+        let cseq = resp.cseq_header()?;
+        match via.branch() {
+            Some(branch) => Ok(TransactionKey::RFC3261(Rfc3261 {
+                branch: branch.to_string(),
+                method: cseq.method()?,
+                cseq: cseq.seq()?,
+                from_tag: resp.from_header()?.tag()?.ok_or(Error::TransactionError(
+                    "from tags missing".to_string(),
+                    TransactionKey::Invalid,
+                ))?,
+                call_id: resp.call_id_header()?.to_string(),
+            })),
+            None => Ok(TransactionKey::RFC2543(Rfc2543 {
+                method: cseq.method()?,
+                cseq: cseq.seq()?,
+                from_tag: resp.from_header()?.tag()?.ok_or(Error::TransactionError(
+                    "from tags missing".to_string(),
+                    TransactionKey::Invalid,
+                ))?,
+                call_id: resp.call_id_header()?.to_string(),
+                via_host_port: via.uri.host_with_port,
+            })),
+        }
+    }
+}
+
 #[test]
 fn test_transaction_key() -> Result<()> {
     use rsip::headers::*;

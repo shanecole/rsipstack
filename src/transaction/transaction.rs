@@ -74,6 +74,37 @@ impl TransactionCore {
         Ok(())
     }
 
+    // receive message from transport layer
+    pub(super) async fn on_received_message(
+        &self,
+        msg: SipMessage,
+        transport: Option<Transport>,
+    ) -> Result<()> {
+        let key = match &msg {
+            SipMessage::Request(req) => TransactionKey::try_from(req)?,
+            SipMessage::Response(resp) => TransactionKey::try_from(resp)?,
+        };
+
+        if let Some(last_message) = self
+            .finished_transactions
+            .lock()
+            .unwrap()
+            .get(&key)
+            .and_then(|m| m.clone())
+        {
+            if let Some(transport) = transport {
+                transport.send(last_message.into()).await?;
+            }
+            return Ok(());
+        }
+
+        if let Some(tu) = self.transactions.lock().unwrap().get(&key) {
+            tu.send(TransactionEvent::Received(msg, transport))
+                .map_err(|e| Error::TransactionError(e.to_string(), key))?;
+        }
+        Ok(())
+    }
+
     fn attach_transaction(&self, key: &TransactionKey, tu_sender: TransactionSender) {
         self.transactions
             .lock()
@@ -285,19 +316,11 @@ impl Transaction {
             TransactionType::ClientInvite | TransactionType::ClientNonInvite => return None,
             _ => {}
         }
+        if self.transport.is_none() && transport.is_some() {
+            self.transport.replace(transport.unwrap());
+        }
         match self.state {
-            TransactionState::Calling => {
-                // first request received
-                self.transition(TransactionState::Trying).ok();
-                self.respond(make_response(
-                    &self.original,
-                    rsip::StatusCode::Trying,
-                    None,
-                ))
-                .await
-                .ok();
-            }
-            TransactionState::Trying => {
+            TransactionState::Calling | TransactionState::Trying => {
                 // retransmission of the trying response
                 self.respond(make_response(
                     &self.original,
@@ -377,20 +400,20 @@ impl Transaction {
                         .timeout(duration, TransactionTimer::TimerA(key, duration));
                     self.timer_a.replace(timer_a);
                 } else if let TransactionTimer::TimerB(_) = timer {
+                    self.transition(TransactionState::Terminated)?;
                     // Inform TU about timeout
                     let timeout_response =
                         make_response(&self.original, rsip::StatusCode::RequestTimeout, None);
                     self.inform_tu_response(timeout_response)?;
-                    self.transition(TransactionState::Terminated)?;
                 }
             }
             TransactionState::Proceeding => {
                 if let TransactionTimer::TimerB(_) = timer {
+                    self.transition(TransactionState::Terminated)?;
                     // Inform TU about timeout
                     let timeout_response =
                         make_response(&self.original, rsip::StatusCode::RequestTimeout, None);
                     self.inform_tu_response(timeout_response)?;
-                    self.transition(TransactionState::Terminated)?;
                 }
             }
             TransactionState::Completed => {
