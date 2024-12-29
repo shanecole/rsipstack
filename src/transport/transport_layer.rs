@@ -1,3 +1,5 @@
+use tracing::info;
+
 use super::{transport::TransportSender, Transport};
 use crate::Result;
 use std::sync::Arc;
@@ -12,6 +14,7 @@ pub struct TransportLayer {
 
 impl TransportLayer {
     pub async fn lookup(&self, uri: &rsip::uri::Uri) -> Result<Transport> {
+        info!("TransportLayer::lookup: {}", uri);
         todo!()
     }
 

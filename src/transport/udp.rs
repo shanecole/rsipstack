@@ -1,7 +1,8 @@
 use std::sync::Arc;
+use tokio::net::UdpSocket;
 
 struct UdpTransportInner {
-    pub(self) conn: tokio::net::UdpSocket,
+    pub(self) conn: UdpSocket,
 }
 
 #[derive(Clone)]

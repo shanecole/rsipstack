@@ -65,7 +65,7 @@ impl EndpointBuilder {
         Endpoint {
             core,
             incoming_sender: Mutex::new(None),
-            cancel_token: self.cancel_token.take().unwrap(),
+            cancel_token,
         }
     }
 }
