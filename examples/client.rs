@@ -6,6 +6,7 @@ use tracing::info;
 // A sip client example, that sends a REGISTER request to a sip server.
 #[tokio::main]
 async fn main() -> rsipstack::Result<()> {
+    tracing_subscriber::fmt::init();
     let user_agent = Arc::new(EndpointBuilder::new().build());
     let user_agent_ref = user_agent.clone();
 
@@ -34,31 +35,20 @@ async fn main() -> rsipstack::Result<()> {
     let mut incoming = user_agent_ref.incoming_requests();
 
     let serve_loop = async move {
-        loop {
-            match incoming.recv().await {
-                Some(req) => {
-                    if let Some(IncomingRequest { request, transport }) = req {
-                        info!("Received request: {:?}", request);
-                        let mut tx = user_agent_ref.server_transaction(request, transport)?;
+        while let Some(Some(IncomingRequest { request, transport })) = incoming.recv().await {
+            info!("Received request: {:?}", request);
+            let mut tx = user_agent_ref.server_transaction(request, transport)?;
 
-                        tokio::spawn(async move {
-                            // 1. make a trying response
-                            tx.send_trying().await?;
-                            // 2. make a done response
-                            let done_response = rsip::Response {
-                                status_code: rsip::StatusCode::NotAcceptable,
-                                version: rsip::Version::V2,
-                                ..Default::default()
-                            };
-                            tx.respond(done_response).await?;
-                            Ok::<_, Error>(())
-                        });
-                    } else {
-                        break;
-                    }
-                }
-                None => break,
-            }
+            tokio::spawn(async move {
+                tx.send_trying().await?;
+                let done_response = rsip::Response {
+                    status_code: rsip::StatusCode::NotAcceptable,
+                    version: rsip::Version::V2,
+                    ..Default::default()
+                };
+                tx.respond(done_response).await?;
+                Ok::<_, Error>(())
+            });
         }
         Ok::<_, Error>(())
     };

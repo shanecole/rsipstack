@@ -16,7 +16,7 @@ use tokio::select;
 use tokio::sync::mpsc::{error, unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio::time::sleep;
 use tokio_util::sync::CancellationToken;
-use tracing::trace;
+use tracing::{trace, warn};
 
 pub(super) const T1: Duration = Duration::from_millis(500);
 pub(super) const T1X64: Duration = Duration::from_secs(64 * 500);
@@ -66,6 +66,8 @@ impl TransactionCore {
         let (transport_tx, transport_rx) = unbounded_channel();
 
         select! {
+            _ = self.cancel_token.cancelled() => {
+            },
             _ = self.process_timer() => {
             },
             _ = self.transport_layer.serve(transport_tx) => {
@@ -332,22 +334,20 @@ impl Transaction {
             "no transport found".to_string(),
             self.key.clone(),
         ))?;
-
         transport.send(response.to_owned().into()).await?;
-        match response.status_code.kind() {
-            rsip::StatusCodeKind::Provisional => {
-                self.transition(TransactionState::Proceeding).map(|_| ())
-            }
-            _ => {
-                self.last_response.replace(response.clone());
-                match self.transaction_type {
-                    TransactionType::ServerInvite => {
-                        self.transition(TransactionState::Completed).map(|_| ())
-                    }
-                    _ => self.transition(TransactionState::Terminated).map(|_| ()),
-                }
-            }
-        }
+
+        let new_state = match response.status_code.kind() {
+            rsip::StatusCodeKind::Provisional => match response.status_code {
+                rsip::StatusCode::Trying => TransactionState::Trying,
+                _ => TransactionState::Proceeding,
+            },
+            _ => match self.transaction_type {
+                TransactionType::ServerInvite => TransactionState::Completed,
+                _ => TransactionState::Terminated,
+            },
+        };
+        self.last_response.replace(response);
+        self.transition(new_state).map(|_| ())
     }
 
     pub async fn send_trying(&mut self) -> Result<()> {
@@ -357,24 +357,11 @@ impl Transaction {
                 self.key.clone(),
             ));
         }
-
-        let transport = self.transport.as_ref().ok_or(Error::TransactionError(
-            "no transport found".to_string(),
-            self.key.clone(),
-        ))?;
-
-        if self.state != TransactionState::Calling {
-            // ignore if not in Calling state
-            return Ok(());
-        }
-        transport
-            .send(
-                self.core
-                    .make_response(&self.original, rsip::StatusCode::Trying, None)
-                    .into(),
-            )
-            .await?;
-        self.transition(TransactionState::Trying).map(|_| ())
+        self.respond(
+            self.core
+                .make_response(&self.original, rsip::StatusCode::Trying, None),
+        )
+        .await
     }
 
     pub async fn send_ack(&mut self, ack: Request) -> Result<()> {
@@ -439,15 +426,17 @@ impl Transaction {
             self.transport.replace(transport.unwrap());
         }
         match self.state {
-            TransactionState::Calling | TransactionState::Trying => {
-                // retransmission of the trying response
-                self.respond(self.core.make_response(
-                    &self.original,
-                    rsip::StatusCode::Trying,
-                    None,
-                ))
-                .await
-                .ok();
+            TransactionState::Calling => {
+                return Some(SipMessage::Request(req));
+            }
+            TransactionState::Trying | TransactionState::Proceeding => {
+                // retransmission of last response
+                if let Some(last_response) = &self.last_response {
+                    self.respond(last_response.to_owned()).await.ok();
+                } else {
+                    warn!("received request before sending response");
+                    return Some(SipMessage::Request(req));
+                }
             }
             TransactionState::Completed => {
                 if req.method == Method::Ack {

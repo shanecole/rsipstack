@@ -1,7 +1,7 @@
-use std::fmt;
 use super::{udp::UdpTransport, ws_wasm::WsWasmTransport};
 use crate::Result;
 use rsip::SipMessage;
+use std::fmt;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 pub enum TransportEvent {
@@ -24,24 +24,7 @@ pub enum Transport {
 }
 
 impl Transport {
-    pub fn is_secure(&self) -> bool {
-        match self {
-            //Transport::Tcp(_) => false,
-            //Transport::Tls(_) => true,
-            Transport::Udp(_) => false,
-            Transport::WsWasm(_) => true,
-            //Transport::Ws(_) => false,
-        }
-    }
-
     pub fn is_reliable(&self) -> bool {
-        match self {
-            Transport::Udp(_) => false,
-            _ => true,
-        }
-    }
-
-    pub fn is_stream(&self) -> bool {
         match self {
             Transport::Udp(_) => false,
             _ => true,
