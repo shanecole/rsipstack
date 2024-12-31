@@ -1,8 +1,7 @@
+use super::endpoint::EndpointInner;
 use rsip::{headers::UserAgent, prelude::UntypedHeader, Request, Response, StatusCode};
 
-use super::transaction::TransactionCore;
-
-impl TransactionCore {
+impl EndpointInner {
     pub fn make_response(
         &self,
         req: &Request,

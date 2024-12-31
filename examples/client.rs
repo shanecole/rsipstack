@@ -40,7 +40,6 @@ async fn main() -> rsipstack::Result<()> {
             let mut tx = user_agent_ref.server_transaction(request, transport)?;
 
             tokio::spawn(async move {
-                tx.send_trying().await?;
                 let done_response = rsip::Response {
                     status_code: rsip::StatusCode::NotAcceptable,
                     version: rsip::Version::V2,

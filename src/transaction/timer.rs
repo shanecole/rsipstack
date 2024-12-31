@@ -19,7 +19,7 @@ impl Ord for TimerKey {
     }
 }
 
-pub(super) struct Timer<T> {
+pub struct Timer<T> {
     tasks: RwLock<BTreeMap<TimerKey, T>>,
     id_to_tasks: RwLock<HashMap<u64, Instant>>,
     last_task_id: AtomicU64,
