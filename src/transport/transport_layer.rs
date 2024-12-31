@@ -98,12 +98,9 @@ impl TransportLayerInner {
                     _ = transport.serve_loop(sender_clone.clone()) => {
                     }
                 }
-                inner_tx_clone
-                    .send(TransportEvent::TransportClosed(transport.clone()))
-                    .ok(); // for transport_inner
-                sender_clone
-                    .send(TransportEvent::TransportClosed(transport))
-                    .ok();
+                let close_event = TransportEvent::TransportClosed(transport);
+                inner_tx_clone.send(close_event.clone()).ok(); // for transport_inner
+                sender_clone.send(close_event).ok();
             });
         }
 

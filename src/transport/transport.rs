@@ -4,6 +4,7 @@ use rsip::{prelude::HeadersExt, HostWithPort, Param, SipMessage};
 use std::{fmt, net::SocketAddr};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
+#[derive(Clone)]
 pub enum TransportEvent {
     IncomingMessage(SipMessage, Transport),
     NewTransport(Transport),
