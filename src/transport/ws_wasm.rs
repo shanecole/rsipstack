@@ -1,7 +1,8 @@
+use super::transport::TransportSender;
+use crate::{transport::TransportEvent, Result};
 use std::sync::Arc;
 
-struct WsWasmTransportInner {
-}
+struct WsWasmTransportInner {}
 
 #[derive(Clone)]
 pub struct WsWasmTransport {
@@ -10,6 +11,13 @@ pub struct WsWasmTransport {
 
 impl WsWasmTransport {
     pub async fn send(&self, msg: rsip::SipMessage) -> crate::Result<()> {
+        todo!()
+    }
+    pub fn get_addr(&self) -> &std::net::SocketAddr {
+        todo!()
+    }
+
+    pub async fn serve_loop(&self, sender: TransportSender) -> Result<()> {
         todo!()
     }
 }

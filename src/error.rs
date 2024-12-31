@@ -1,9 +1,11 @@
+use std::net::SocketAddr;
+
 use crate::transaction::key::TransactionKey;
 use wasm_bindgen::prelude::*;
 #[derive(Debug, Eq, PartialEq, Clone)]
 pub enum Error {
     SipMessageError(String),
-    TransportLayerError(String),
+    TransportLayerError(String, SocketAddr),
     TransactionError(String, TransactionKey),
     EndpointError(String),
     DialogError(String),
@@ -14,7 +16,7 @@ impl Into<JsValue> for Error {
     fn into(self) -> JsValue {
         match self {
             Error::SipMessageError(e) => e.into(),
-            Error::TransportLayerError(e) => e.into(),
+            Error::TransportLayerError(e, _) => e.into(),
             Error::TransactionError(e, key) => format!("{}: {}", e, key.to_string()).into(),
             Error::EndpointError(e) => e.into(),
             Error::DialogError(e) => e.into(),
@@ -30,6 +32,12 @@ impl From<rsip::Error> for Error {
 
 impl<T> From<tokio::sync::mpsc::error::SendError<T>> for Error {
     fn from(e: tokio::sync::mpsc::error::SendError<T>) -> Self {
+        Error::Error(e.to_string())
+    }
+}
+
+impl From<std::io::Error> for Error {
+    fn from(e: std::io::Error) -> Self {
         Error::Error(e.to_string())
     }
 }

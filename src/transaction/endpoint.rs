@@ -97,6 +97,7 @@ impl EndpointInner {
                 }
                 TransportEvent::TransportClosed(t) => {
                     trace!("transport closed {} ", t);
+                    //self.transport_layer.del_transport(&t.get_addr());
                 }
                 TransportEvent::Terminate => {
                     break;

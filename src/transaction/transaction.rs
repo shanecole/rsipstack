@@ -5,7 +5,7 @@ use crate::{Error, Result};
 use rsip::{Method, Request, Response, SipMessage};
 use std::time::Duration;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
-use tracing::{info, trace, warn};
+use tracing::{trace, warn};
 
 pub const T1: Duration = Duration::from_millis(500);
 pub const T1X64: Duration = Duration::from_secs(64 * 500);
