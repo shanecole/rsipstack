@@ -11,6 +11,11 @@ pub enum TransportEvent {
     TransportClosed(Transport),
     Terminate, // Terminate the transport layer
 }
+#[derive(Debug, Eq, PartialEq, Clone, Hash)]
+pub struct SipAddr {
+    pub r#type: Option<rsip::transport::Transport>,
+    pub addr: SocketAddr,
+}
 
 pub type TransportReceiver = UnboundedReceiver<TransportEvent>;
 pub type TransportSender = UnboundedSender<TransportEvent>;
@@ -31,7 +36,7 @@ impl Transport {
             _ => true,
         }
     }
-    pub fn get_addr(&self) -> &SocketAddr {
+    pub fn get_addr(&self) -> &SipAddr {
         match self {
             //Transport::Tcp(transport) => transport.get_addr(),
             //Transport::Tls(transport) => transport.get_addr(),
@@ -94,5 +99,37 @@ impl fmt::Display for Transport {
             Transport::WsWasm(t) => write!(f, "WS-WASM {}", t),
             //Transport::Ws(_) => write!(f, "WS"),
         }
+    }
+}
+
+impl fmt::Display for SipAddr {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            SipAddr {
+                r#type: Some(r#type),
+                addr,
+            } => write!(f, "{} {}", r#type, addr),
+            SipAddr { r#type: None, addr } => write!(f, "{}", addr),
+        }
+    }
+}
+
+impl From<SocketAddr> for SipAddr {
+    fn from(addr: SocketAddr) -> Self {
+        SipAddr { r#type: None, addr }
+    }
+}
+
+impl TryFrom<rsip::host_with_port::HostWithPort> for SipAddr {
+    type Error = crate::Error;
+    fn try_from(host_with_port: rsip::host_with_port::HostWithPort) -> Result<Self> {
+        let addr = host_with_port.try_into()?;
+        Ok(SipAddr { r#type: None, addr })
+    }
+}
+
+impl From<UdpTransport> for Transport {
+    fn from(transport: UdpTransport) -> Self {
+        Transport::Udp(transport)
     }
 }

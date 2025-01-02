@@ -1,26 +1,25 @@
 use super::{
-    transport::{TransportReceiver, TransportSender},
+    transport::{SipAddr, TransportSender},
     Transport,
 };
 use crate::{transport::TransportEvent, Result};
+use rsip::headers::to;
 use std::{
     collections::HashMap,
-    net::SocketAddr,
     sync::{Arc, Mutex},
 };
-use tokio::{select, sync::mpsc::unbounded_channel};
+use tokio::select;
 use tokio_util::sync::CancellationToken;
-use tracing::info;
 
 #[derive(Default)]
 pub struct TransportLayerInner {
     cancel_token: CancellationToken,
-    transports: Mutex<HashMap<SocketAddr, Transport>>,
-    transport_sender: Mutex<Option<TransportSender>>,
+    listens: Arc<Mutex<HashMap<SipAddr, Transport>>>, // Listen transports
 }
 #[derive(Default)]
 
 pub struct TransportLayer {
+    pub outbound: Option<SipAddr>,
     inner: Arc<TransportLayerInner>,
 }
 
@@ -28,10 +27,10 @@ impl TransportLayer {
     pub fn new(cancel_token: CancellationToken) -> Self {
         let inner = TransportLayerInner {
             cancel_token,
-            transports: Mutex::new(HashMap::new()),
-            transport_sender: Mutex::new(None),
+            listens: Arc::new(Mutex::new(HashMap::new())),
         };
         Self {
+            outbound: None,
             inner: Arc::new(inner),
         }
     }
@@ -40,12 +39,12 @@ impl TransportLayer {
         self.inner.add_transport(transport)
     }
 
-    pub fn del_transport(&self, addr: &SocketAddr) {
+    pub fn del_transport(&self, addr: &SipAddr) {
         self.inner.del_transport(addr)
     }
 
     pub async fn lookup(&self, uri: &rsip::uri::Uri) -> Result<Transport> {
-        self.inner.lookup(uri).await
+        self.inner.lookup(uri, self.outbound.as_ref()).await
     }
 
     pub async fn serve(&self, sender: TransportSender) -> Result<()> {
@@ -55,42 +54,63 @@ impl TransportLayer {
 
 impl TransportLayerInner {
     pub fn add_transport(&self, transport: Transport) {
-        self.transports
+        self.listens
             .lock()
             .unwrap()
             .insert(transport.get_addr().to_owned(), transport);
     }
 
-    pub fn del_transport(&self, addr: &SocketAddr) {
-        self.transports.lock().unwrap().remove(addr);
+    pub fn del_transport(&self, addr: &SipAddr) {
+        self.listens.lock().unwrap().remove(addr);
     }
 
-    async fn lookup(&self, uri: &rsip::uri::Uri) -> Result<Transport> {
-        let target = uri.host_with_port.clone().try_into()?;
-        let transports = self.transports.lock().unwrap();
-        if let Some(transport) = transports.get(&target) {
+    async fn lookup(&self, uri: &rsip::uri::Uri, outbound: Option<&SipAddr>) -> Result<Transport> {
+        let target = if outbound.is_none() {
+            let target_host_port = uri.host_with_port.to_owned();
+            SipAddr {
+                r#type: Some(rsip::transport::Transport::Udp),
+                addr: target_host_port.try_into()?,
+            }
+        } else {
+            outbound.unwrap().to_owned()
+        };
+
+        if let Some(transport) = self.listens.lock().unwrap().get(&target) {
             return Ok(transport.clone());
         }
-        Err(crate::Error::TransportLayerError(
-            format!("transport not found: {}", target),
+
+        match target.r#type {
+            Some(rsip::transport::Transport::Udp) => {
+                let listens = self.listens.lock().unwrap();
+                // lookup first udp transport
+                for (_, transport) in listens.iter() {
+                    if transport.get_addr().r#type == Some(rsip::transport::Transport::Udp) {
+                        return Ok(transport.clone());
+                    }
+                }
+            }
+            Some(rsip::transport::Transport::Tcp)
+            | Some(rsip::transport::Transport::Tls)
+            | Some(rsip::transport::Transport::Ws) => {
+                // create new transport and serve it
+                todo!()
+            }
+            _ => {}
+        }
+        return Err(crate::Error::TransportLayerError(
+            format!("unsupported transport type: {:?}", target.r#type),
             target,
-        ))
+        ));
     }
 
     async fn serve(&self, sender: TransportSender) -> Result<()> {
-        let transports = self.transports.lock().unwrap().clone();
+        let listens = self.listens.lock().unwrap().clone();
 
-        let (inner_tx, mut inner_rx) = unbounded_channel();
-        self.transport_sender
-            .lock()
-            .unwrap()
-            .replace(inner_tx.clone());
-
-        for (_, transport) in transports {
+        for (_, transport) in listens {
             let sender = sender.clone();
             let sub_token = self.cancel_token.child_token();
             let sender_clone = sender.clone();
-            let inner_tx_clone = inner_tx.clone();
+            let listens_ref = self.listens.clone();
 
             tokio::spawn(async move {
                 select! {
@@ -98,28 +118,13 @@ impl TransportLayerInner {
                     _ = transport.serve_loop(sender_clone.clone()) => {
                     }
                 }
-                let close_event = TransportEvent::TransportClosed(transport);
-                inner_tx_clone.send(close_event.clone()).ok(); // for transport_inner
-                sender_clone.send(close_event).ok();
+                listens_ref.lock().unwrap().remove(transport.get_addr());
+                sender_clone
+                    .send(TransportEvent::TransportClosed(transport))
+                    .ok();
             });
         }
-
-        let inner_transport_loop = async move {
-            while let Some(event) = inner_rx.recv().await {
-                match event {
-                    TransportEvent::TransportClosed(transport) => {
-                        info!("transport closed: {}", transport.get_addr());
-                        self.transports.lock().unwrap().remove(transport.get_addr());
-                    }
-                    _ => {}
-                }
-            }
-        };
-
-        select! {
-             _ = inner_transport_loop => { }
-             _ = self.cancel_token.cancelled() => { }
-        }
+        self.cancel_token.cancelled().await;
         Ok(())
     }
 }

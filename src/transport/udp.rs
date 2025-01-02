@@ -3,12 +3,16 @@ use std::{net::SocketAddr, sync::Arc};
 use tokio::net::UdpSocket;
 use tracing::{error, info, trace};
 
-use super::{transport::TransportSender, Transport};
+use super::{
+    transport::{SipAddr, TransportSender},
+    Transport,
+};
 
 struct UdpTransportInner {
     pub(self) conn: UdpSocket,
     pub external: Option<SocketAddr>,
     pub local: SocketAddr,
+    pub(self) addr: SipAddr,
 }
 
 #[derive(Clone)]
@@ -22,8 +26,15 @@ impl UdpTransport {
         external: Option<SocketAddr>,
     ) -> Result<Self> {
         let conn = UdpSocket::bind(local).await?;
+
+        let addr = SipAddr {
+            r#type: Some(rsip::transport::Transport::Udp),
+            addr: external.unwrap_or(local),
+        };
+
         let t = UdpTransport {
             inner: Arc::new(UdpTransportInner {
+                addr,
                 conn,
                 external,
                 local,
@@ -109,8 +120,8 @@ impl UdpTransport {
             .map(|_| ())
     }
 
-    pub fn get_addr(&self) -> &std::net::SocketAddr {
-        self.inner.external.as_ref().unwrap_or(&self.inner.local)
+    pub fn get_addr(&self) -> &SipAddr {
+        &self.inner.addr
     }
 }
 

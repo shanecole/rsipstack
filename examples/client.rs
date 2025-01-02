@@ -1,13 +1,30 @@
-use rsipstack::{transaction::IncomingRequest, EndpointBuilder, Error};
+use rsipstack::{
+    transaction::IncomingRequest,
+    transport::{udp::UdpTransport, TransportLayer},
+    EndpointBuilder, Error,
+};
 use std::sync::Arc;
 use tokio::select;
+use tokio_util::sync::CancellationToken;
 use tracing::info;
 
 // A sip client example, that sends a REGISTER request to a sip server.
 #[tokio::main]
 async fn main() -> rsipstack::Result<()> {
     tracing_subscriber::fmt::init();
-    let user_agent = Arc::new(EndpointBuilder::new().build());
+    let token = CancellationToken::new();
+    let transport_layer = TransportLayer::new(token.clone());
+
+    let transport = UdpTransport::create_connection("0.0.0.0:15060".parse()?, None).await?;
+    transport_layer.add_transport(transport.into());
+
+    let user_agent = Arc::new(
+        EndpointBuilder::new()
+            .cancel_token(token)
+            .transport_layer(transport_layer)
+            .build(),
+    );
+
     let user_agent_ref = user_agent.clone();
 
     tokio::spawn(async move {

@@ -1,16 +1,17 @@
 use super::{
     key::TransactionKey,
     timer::Timer,
-    transaction::{
-        Transaction, TransactionEvent, TransactionEventSender, T1X64, T4, TIMER_INTERVAL,
-    },
+    transaction::{Transaction, TransactionEvent, TransactionEventSender},
     IncomingRequest, RequestReceiver, RequestSender, TransactionTimer, Transport,
 };
 use crate::{
-    transport::{transport::TransportReceiver, TransportEvent, TransportLayer},
+    transport::{
+        transport::{SipAddr, TransportReceiver},
+        TransportEvent, TransportLayer,
+    },
     Error, Result, USER_AGENT,
 };
-use rsip::{Method, SipMessage};
+use rsip::{host_with_port, Method, SipMessage};
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex},
@@ -33,6 +34,10 @@ pub struct EndpointInner {
     incoming_sender: Mutex<Option<RequestSender>>,
     cancel_token: CancellationToken,
     timer_interval: Duration,
+
+    pub t1: Duration,
+    pub t4: Duration,
+    pub t1x64: Duration,
 }
 pub type EndpointInnerRef = Arc<EndpointInner>;
 
@@ -62,9 +67,12 @@ impl EndpointInner {
             transport_layer,
             transactions: Mutex::new(HashMap::new()),
             finished_transactions: Mutex::new(HashMap::new()),
-            timer_interval: timer_interval.unwrap_or(TIMER_INTERVAL),
+            timer_interval: timer_interval.unwrap_or(Duration::from_millis(20)),
             cancel_token,
             incoming_sender: Mutex::new(None),
+            t1: Duration::from_millis(500),
+            t4: Duration::from_secs(4),
+            t1x64: Duration::from_secs(64 * 500),
         })
     }
 
@@ -206,9 +214,9 @@ impl EndpointInner {
             }
 
             let timer_k_duration = if let SipMessage::Request(_) = msg {
-                T4
+                self.t4
             } else {
-                T1X64
+                self.t1x64
             };
 
             self.timers.timeout(
@@ -255,9 +263,13 @@ impl EndpointBuilder {
     }
 
     pub fn build(&mut self) -> Endpoint {
-        let transport_layer = self.transport_layer.take().unwrap_or_default();
-
         let cancel_token = self.cancel_token.take().unwrap_or_default();
+
+        let transport_layer = self
+            .transport_layer
+            .take()
+            .unwrap_or(TransportLayer::new(cancel_token.child_token()));
+
         let core = EndpointInner::new(
             self.user_agent.clone(),
             transport_layer,

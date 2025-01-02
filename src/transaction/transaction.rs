@@ -3,14 +3,8 @@ use super::key::TransactionKey;
 use super::{TransactionState, TransactionTimer, TransactionType, Transport};
 use crate::{Error, Result};
 use rsip::{Method, Request, Response, SipMessage};
-use std::time::Duration;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tracing::{trace, warn};
-
-pub const T1: Duration = Duration::from_millis(500);
-pub const T1X64: Duration = Duration::from_secs(64 * 500);
-pub const T4: Duration = Duration::from_secs(4); // server invite only
-pub const TIMER_INTERVAL: Duration = Duration::from_millis(20);
 
 pub type TransactionEventReceiver = UnboundedReceiver<TransactionEvent>;
 pub type TransactionEventSender = UnboundedSender<TransactionEvent>;
@@ -330,7 +324,7 @@ impl Transaction {
                         transport.send(self.original.to_owned().into()).await?;
                     }
                     // Restart Timer A with an upper limit
-                    let duration = (duration * 2).min(T1X64);
+                    let duration = (duration * 2).min(self.endpoint_inner.t1x64);
                     let timer_a = self
                         .endpoint_inner
                         .timers
@@ -368,7 +362,7 @@ impl Transaction {
                         }
                     }
                     // restart Timer G with an upper limit
-                    let duration = (duration * 2).min(T1X64);
+                    let duration = (duration * 2).min(self.endpoint_inner.t1x64);
                     let timer_g = self
                         .endpoint_inner
                         .timers
@@ -406,30 +400,28 @@ impl Transaction {
                     self.timer_a
                         .take()
                         .map(|id| self.endpoint_inner.timers.cancel(id));
-                    self.timer_a.replace(
-                        self.endpoint_inner
-                            .timers
-                            .timeout(T1, TransactionTimer::TimerA(self.key.clone(), T1)),
-                    );
+                    self.timer_a.replace(self.endpoint_inner.timers.timeout(
+                        self.endpoint_inner.t1,
+                        TransactionTimer::TimerA(self.key.clone(), self.endpoint_inner.t1),
+                    ));
                 }
                 self.timer_b
                     .take()
                     .map(|id| self.endpoint_inner.timers.cancel(id));
-                self.timer_b.replace(
-                    self.endpoint_inner
-                        .timers
-                        .timeout(T1X64, TransactionTimer::TimerB(self.key.clone())),
-                );
+                self.timer_b.replace(self.endpoint_inner.timers.timeout(
+                    self.endpoint_inner.t1x64,
+                    TransactionTimer::TimerB(self.key.clone()),
+                ));
             }
             TransactionState::Proceeding => {
                 self.timer_a
                     .take()
                     .map(|id| self.endpoint_inner.timers.cancel(id));
                 // start Timer B
-                let timer_b = self
-                    .endpoint_inner
-                    .timers
-                    .timeout(T1X64, TransactionTimer::TimerB(self.key.clone()));
+                let timer_b = self.endpoint_inner.timers.timeout(
+                    self.endpoint_inner.t1x64,
+                    TransactionTimer::TimerB(self.key.clone()),
+                );
                 self.timer_b.replace(timer_b);
             }
             TransactionState::Completed => {
@@ -447,28 +439,28 @@ impl Transaction {
                         self.key.clone(),
                     ))?;
                     if !transport.is_reliable() {
-                        let timer_g = self
-                            .endpoint_inner
-                            .timers
-                            .timeout(T1, TransactionTimer::TimerG(self.key.clone(), T1));
+                        let timer_g = self.endpoint_inner.timers.timeout(
+                            self.endpoint_inner.t1,
+                            TransactionTimer::TimerG(self.key.clone(), self.endpoint_inner.t1),
+                        );
                         self.timer_g.replace(timer_g);
                     }
                 }
 
                 // start Timer D
-                let timer_d = self
-                    .endpoint_inner
-                    .timers
-                    .timeout(T1X64, TransactionTimer::TimerD(self.key.clone()));
+                let timer_d = self.endpoint_inner.timers.timeout(
+                    self.endpoint_inner.t1x64,
+                    TransactionTimer::TimerD(self.key.clone()),
+                );
                 self.timer_d.replace(timer_d);
             }
             TransactionState::Confirmed => {
                 self.cleanup_timer();
                 // start Timer K, wait for ACK
-                let timer_k = self
-                    .endpoint_inner
-                    .timers
-                    .timeout(T4, TransactionTimer::TimerK(self.key.clone()));
+                let timer_k = self.endpoint_inner.timers.timeout(
+                    self.endpoint_inner.t4,
+                    TransactionTimer::TimerK(self.key.clone()),
+                );
                 self.timer_k.replace(timer_k);
             }
             TransactionState::Terminated => {

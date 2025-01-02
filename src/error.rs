@@ -1,11 +1,9 @@
-use std::net::SocketAddr;
-
-use crate::transaction::key::TransactionKey;
+use crate::{transaction::key::TransactionKey, transport::transport::SipAddr};
 use wasm_bindgen::prelude::*;
 #[derive(Debug, Eq, PartialEq, Clone)]
 pub enum Error {
     SipMessageError(String),
-    TransportLayerError(String, SocketAddr),
+    TransportLayerError(String, SipAddr),
     TransactionError(String, TransactionKey),
     EndpointError(String),
     DialogError(String),
@@ -36,8 +34,19 @@ impl<T> From<tokio::sync::mpsc::error::SendError<T>> for Error {
     }
 }
 
+impl From<tokio::sync::broadcast::error::RecvError> for Error {
+    fn from(e: tokio::sync::broadcast::error::RecvError) -> Self {
+        Error::Error(e.to_string())
+    }
+}
 impl From<std::io::Error> for Error {
     fn from(e: std::io::Error) -> Self {
+        Error::Error(e.to_string())
+    }
+}
+
+impl From<std::net::AddrParseError> for Error {
+    fn from(e: std::net::AddrParseError) -> Self {
         Error::Error(e.to_string())
     }
 }
