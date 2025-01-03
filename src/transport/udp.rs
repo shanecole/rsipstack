@@ -1,7 +1,13 @@
-use crate::{transport::TransportEvent, Result};
+use crate::{
+    transport::{
+        transport::{KEEPALIVE_REQUEST, KEEPALIVE_RESPONSE},
+        TransportEvent,
+    },
+    Result,
+};
 use std::{net::SocketAddr, sync::Arc};
 use tokio::net::UdpSocket;
-use tracing::{error, info, instrument, trace};
+use tracing::{debug, error, info, instrument, trace};
 
 use super::{
     transport::{SipAddr, TransportSender},
@@ -48,19 +54,24 @@ impl UdpTransport {
                 }
             };
 
-            // '\r\n' is the keepalive message
-            if len == 2 && buf[0] == 13 && buf[1] == 10 {
-                // '\r\n'
-                continue;
-            } else if len == 1 && buf[0].is_ascii_whitespace() {
-                continue;
+            match &buf[..len] {
+                KEEPALIVE_REQUEST => {
+                    self.inner.conn.send_to(KEEPALIVE_RESPONSE, addr).await.ok();
+                    continue;
+                }
+                KEEPALIVE_RESPONSE => continue,
+                _ => {
+                    if buf.iter().all(|&b| b.is_ascii_whitespace()) {
+                        continue;
+                    }
+                }
             }
 
             let undecoded = match std::str::from_utf8(&buf[..len]) {
                 Ok(s) => s,
                 Err(e) => {
                     info!(
-                        "Error decoding SIP message from: {} error: {} buf: {:?}",
+                        "Decoding text from: {} error: {} buf: {:?}",
                         addr,
                         e,
                         &buf[..len]
@@ -80,7 +91,7 @@ impl UdpTransport {
                 }
             };
 
-            trace!(
+            debug!(
                 "received {} {} -> {} {}",
                 len,
                 addr,

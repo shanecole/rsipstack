@@ -76,7 +76,7 @@ impl EndpointInner {
         })
     }
 
-    pub async fn serve(&self) -> Result<()> {
+    pub async fn serve(&self) {
         let (transport_tx, transport_rx) = unbounded_channel();
 
         select! {
@@ -89,7 +89,6 @@ impl EndpointInner {
             _ = self.process_transport_layer(transport_rx) => {
             },
         }
-        Ok(())
     }
 
     // process transport layer, receive message from transport layer
@@ -287,13 +286,7 @@ impl EndpointBuilder {
 
 impl Endpoint {
     pub async fn serve(&self) {
-        select! {
-            _ = self.cancel_token.cancelled() => {
-                info!("endpoint cancelled");
-            },
-            _ = self.inner.serve() => {},
-
-        }
+        self.inner.serve().await;
         info!("endpoint shutdown");
     }
 

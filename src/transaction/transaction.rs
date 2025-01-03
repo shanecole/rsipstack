@@ -93,6 +93,8 @@ impl Transaction {
     // send client request
     #[instrument(skip(self))]
     pub async fn send(&mut self) -> Result<()> {
+        let span = self.span.clone();
+        let _enter = span.enter();
         match self.transaction_type {
             TransactionType::ClientInvite | TransactionType::ClientNonInvite => {}
             _ => {
@@ -125,6 +127,8 @@ impl Transaction {
     // send server response
     #[instrument(skip(self))]
     pub async fn respond(&mut self, response: Response) -> Result<()> {
+        let span = self.span.clone();
+        let _enter = span.or_current();
         match self.transaction_type {
             TransactionType::ServerInvite | TransactionType::ServerNonInvite => {}
             _ => {
@@ -184,6 +188,8 @@ impl Transaction {
     }
     #[instrument(skip(self))]
     pub async fn send_ack(&mut self, ack: Request) -> Result<()> {
+        let span = self.span.clone();
+        let _enter = span.or_current();
         if self.transaction_type != TransactionType::ClientInvite {
             return Err(Error::TransactionError(
                 "send_ack is only valid for client invite transactions".to_string(),
@@ -325,9 +331,9 @@ impl Transaction {
             return None;
         }
 
-        self.transition(new_state).ok();
         debug!("received response {:?} <- {}", transport, resp);
         self.last_response.replace(resp.clone());
+        self.transition(new_state).ok();
         return Some(SipMessage::Response(resp));
     }
 
@@ -395,7 +401,7 @@ impl Transaction {
         }
         Ok(())
     }
-    #[instrument(skip(self), fields(key = %self.key))]
+
     fn transition(&mut self, state: TransactionState) -> Result<TransactionState> {
         if self.state == state {
             return Ok(self.state.clone());

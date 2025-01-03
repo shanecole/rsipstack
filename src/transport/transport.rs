@@ -20,6 +20,9 @@ pub struct SipAddr {
 pub type TransportReceiver = UnboundedReceiver<TransportEvent>;
 pub type TransportSender = UnboundedSender<TransportEvent>;
 
+pub const KEEPALIVE_REQUEST: &[u8] = b"\r\n\r\n";
+pub const KEEPALIVE_RESPONSE: &[u8] = b"\r\n";
+
 #[derive(Clone, Debug)]
 pub enum Transport {
     //Tcp(tcp::TcpTransport),
