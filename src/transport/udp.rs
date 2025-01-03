@@ -1,7 +1,7 @@
 use crate::{transport::TransportEvent, Result};
 use std::{net::SocketAddr, sync::Arc};
 use tokio::net::UdpSocket;
-use tracing::{error, info, trace};
+use tracing::{error, info, instrument, trace};
 
 use super::{
     transport::{SipAddr, TransportSender},
@@ -10,8 +10,6 @@ use super::{
 
 struct UdpTransportInner {
     pub(self) conn: UdpSocket,
-    pub external: Option<SocketAddr>,
-    pub local: SocketAddr,
     pub(self) addr: SipAddr,
 }
 
@@ -33,12 +31,7 @@ impl UdpTransport {
         };
 
         let t = UdpTransport {
-            inner: Arc::new(UdpTransportInner {
-                addr,
-                conn,
-                external,
-                local,
-            }),
+            inner: Arc::new(UdpTransportInner { addr, conn }),
         };
         info!("created UDP transport: {} external: {:?}", t, external);
         Ok(t)
@@ -58,6 +51,8 @@ impl UdpTransport {
             // '\r\n' is the keepalive message
             if len == 2 && buf[0] == 13 && buf[1] == 10 {
                 // '\r\n'
+                continue;
+            } else if len == 1 && buf[0].is_ascii_whitespace() {
                 continue;
             }
 
@@ -98,17 +93,12 @@ impl UdpTransport {
         }
     }
 
+    #[instrument(skip(self, msg), fields(addr = %self.get_addr()))]
     pub async fn send(&self, msg: rsip::SipMessage) -> crate::Result<()> {
         let target = Transport::get_target(&msg)?;
         let buf = msg.to_string();
 
-        trace!(
-            "sending {} {} -> {} {}",
-            buf.len(),
-            self.get_addr(),
-            target,
-            buf
-        );
+        trace!("sending {} -> {} {}", buf.len(), target, buf);
 
         self.inner
             .conn
@@ -134,8 +124,14 @@ impl std::fmt::Display for UdpTransport {
     }
 }
 
-impl Drop for UdpTransport {
+impl std::fmt::Debug for UdpTransport {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.inner.addr)
+    }
+}
+
+impl Drop for UdpTransportInner {
     fn drop(&mut self) {
-        info!("dropping UDP transport: {}", self);
+        info!("dropping UDP transport: {}", self.addr);
     }
 }

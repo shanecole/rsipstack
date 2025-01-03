@@ -4,7 +4,8 @@ use super::{TransactionState, TransactionTimer, TransactionType, Transport};
 use crate::{Error, Result};
 use rsip::{Method, Request, Response, SipMessage};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
-use tracing::{trace, warn};
+use tracing::{debug, info, instrument, span, warn, Level, Span};
+use tracing_subscriber::field::debug;
 
 pub type TransactionEventReceiver = UnboundedReceiver<TransactionEvent>;
 pub type TransactionEventSender = UnboundedSender<TransactionEvent>;
@@ -30,6 +31,7 @@ pub struct Transaction {
     pub timer_d: Option<u64>,
     pub timer_k: Option<u64>, // server invite only
     pub timer_g: Option<u64>, // server invite only
+    span: Span,
 }
 
 impl Transaction {
@@ -41,6 +43,8 @@ impl Transaction {
         endpoint_inner: EndpointInnerRef,
     ) -> Self {
         let (tu_sender, tu_receiver) = unbounded_channel();
+        let span = span!(Level::INFO, "transaction", key = %key);
+        info!("transaction created {:?} {}", transaction_type, key);
         Self {
             transaction_type,
             endpoint_inner,
@@ -57,6 +61,7 @@ impl Transaction {
             timer_g: None,
             tu_receiver,
             tu_sender,
+            span,
         }
     }
 
@@ -86,6 +91,7 @@ impl Transaction {
         Transaction::new(tx_type, key, original, transport, endpoint_inner)
     }
     // send client request
+    #[instrument(skip(self))]
     pub async fn send(&mut self) -> Result<()> {
         match self.transaction_type {
             TransactionType::ClientInvite | TransactionType::ClientNonInvite => {}
@@ -110,7 +116,6 @@ impl Transaction {
             "no transport found".to_string(),
             self.key.clone(),
         ))?;
-
         transport.send(self.original.to_owned().into()).await?;
         self.endpoint_inner
             .attach_transaction(&self.key, self.tu_sender.clone());
@@ -118,6 +123,7 @@ impl Transaction {
     }
 
     // send server response
+    #[instrument(skip(self))]
     pub async fn respond(&mut self, response: Response) -> Result<()> {
         match self.transaction_type {
             TransactionType::ServerInvite | TransactionType::ServerNonInvite => {}
@@ -176,7 +182,7 @@ impl Transaction {
             }
         }
     }
-
+    #[instrument(skip(self))]
     pub async fn send_ack(&mut self, ack: Request) -> Result<()> {
         if self.transaction_type != TransactionType::ClientInvite {
             return Err(Error::TransactionError(
@@ -207,12 +213,16 @@ impl Transaction {
     }
 
     pub async fn receive(&mut self) -> Option<SipMessage> {
+        let span = self.span.clone();
+        let _enter = span.enter();
         while let Some(event) = self.tu_receiver.recv().await {
             match event {
                 TransactionEvent::Received(msg, transport) => {
                     if let Some(msg) = match msg {
                         SipMessage::Request(req) => self.on_received_request(req, transport).await,
-                        SipMessage::Response(resp) => self.on_received_response(resp).await,
+                        SipMessage::Response(resp) => {
+                            self.on_received_response(resp, transport).await
+                        }
                     } {
                         return Some(msg);
                     }
@@ -221,6 +231,7 @@ impl Transaction {
                     self.on_timer(t).await.ok();
                 }
                 TransactionEvent::Terminate => {
+                    debug!("received terminate event");
                     return None;
                 }
             }
@@ -280,7 +291,11 @@ impl Transaction {
         None
     }
 
-    async fn on_received_response(&mut self, resp: Response) -> Option<SipMessage> {
+    async fn on_received_response(
+        &mut self,
+        resp: Response,
+        transport: Option<Transport>,
+    ) -> Option<SipMessage> {
         match self.transaction_type {
             TransactionType::ServerInvite | TransactionType::ServerNonInvite => return None,
             _ => {}
@@ -311,6 +326,7 @@ impl Transaction {
         }
 
         self.transition(new_state).ok();
+        debug!("received response {:?} <- {}", transport, resp);
         self.last_response.replace(resp.clone());
         return Some(SipMessage::Response(resp));
     }
@@ -331,7 +347,6 @@ impl Transaction {
                         .timeout(duration, TransactionTimer::TimerA(key, duration));
                     self.timer_a.replace(timer_a);
                 } else if let TransactionTimer::TimerB(_) = timer {
-                    self.transition(TransactionState::Terminated)?;
                     // Inform TU about timeout
                     let timeout_response = self.endpoint_inner.make_response(
                         &self.original,
@@ -343,7 +358,6 @@ impl Transaction {
             }
             TransactionState::Proceeding => {
                 if let TransactionTimer::TimerB(_) = timer {
-                    self.transition(TransactionState::Terminated)?;
                     // Inform TU about timeout
                     let timeout_response = self.endpoint_inner.make_response(
                         &self.original,
@@ -381,7 +395,7 @@ impl Transaction {
         }
         Ok(())
     }
-
+    #[instrument(skip(self), fields(key = %self.key))]
     fn transition(&mut self, state: TransactionState) -> Result<TransactionState> {
         if self.state == state {
             return Ok(self.state.clone());
@@ -468,7 +482,7 @@ impl Transaction {
                 self.tu_sender.send(TransactionEvent::Terminate).ok(); // tell TU to terminate
             }
         }
-        trace!("{} transition: {:?} -> {:?}", self.key, self.state, state);
+        debug!("transition: {:?} -> {:?}", self.state, state);
         self.state = state;
         Ok(self.state.clone())
     }
@@ -515,5 +529,7 @@ impl Transaction {
 impl Drop for Transaction {
     fn drop(&mut self) {
         self.cleanup();
+        let _enter = self.span.enter();
+        info!("transaction dropped");
     }
 }

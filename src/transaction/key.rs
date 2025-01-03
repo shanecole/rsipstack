@@ -57,15 +57,15 @@ impl std::fmt::Display for TransactionKey {
         match self {
             TransactionKey::RFC3261(rfc3261) => write!(
                 f,
-                "{} {}/{} {}({})",
-                rfc3261.call_id, rfc3261.method, rfc3261.cseq, rfc3261.from_tag, rfc3261.branch,
+                "{}/{}_{}_{}_{}",
+                rfc3261.method, rfc3261.cseq, rfc3261.call_id, rfc3261.from_tag, rfc3261.branch,
             ),
             TransactionKey::RFC2543(rfc2543) => write!(
                 f,
-                "{} {}/{} {}[{}]",
-                rfc2543.call_id,
+                "{}/{}_{}_{}_{}",
                 rfc2543.method,
                 rfc2543.cseq,
+                rfc2543.call_id,
                 rfc2543.from_tag,
                 rfc2543.via_host_port
             ),

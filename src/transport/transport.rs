@@ -20,7 +20,7 @@ pub struct SipAddr {
 pub type TransportReceiver = UnboundedReceiver<TransportEvent>;
 pub type TransportSender = UnboundedSender<TransportEvent>;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum Transport {
     //Tcp(tcp::TcpTransport),
     //Tls(tls::TlsTransport),

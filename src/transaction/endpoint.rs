@@ -72,7 +72,7 @@ impl EndpointInner {
             incoming_sender: Mutex::new(None),
             t1: Duration::from_millis(500),
             t4: Duration::from_secs(4),
-            t1x64: Duration::from_secs(64 * 500),
+            t1x64: Duration::from_millis(64 * 500),
         })
     }
 

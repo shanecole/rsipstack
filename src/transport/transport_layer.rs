@@ -10,6 +10,7 @@ use std::{
 };
 use tokio::select;
 use tokio_util::sync::CancellationToken;
+use tracing::info;
 
 #[derive(Default)]
 pub struct TransportLayerInner {
@@ -67,6 +68,7 @@ impl TransportLayerInner {
     async fn lookup(&self, uri: &rsip::uri::Uri, outbound: Option<&SipAddr>) -> Result<Transport> {
         let target = if outbound.is_none() {
             let target_host_port = uri.host_with_port.to_owned();
+            info!("lookup target: {}", target_host_port);
             SipAddr {
                 r#type: Some(rsip::transport::Transport::Udp),
                 addr: target_host_port.try_into()?,

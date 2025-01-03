@@ -1,5 +1,5 @@
 use super::transport::{SipAddr, TransportSender};
-use crate::{transport::TransportEvent, Result};
+use crate::Result;
 use std::sync::Arc;
 
 struct WsWasmTransportInner {}
@@ -23,6 +23,11 @@ impl WsWasmTransport {
 }
 
 impl std::fmt::Display for WsWasmTransport {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "*:*")
+    }
+}
+impl std::fmt::Debug for WsWasmTransport {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "*:*")
     }
