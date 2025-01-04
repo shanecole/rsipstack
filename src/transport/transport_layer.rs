@@ -45,7 +45,7 @@ impl TransportLayer {
     }
 
     pub async fn lookup(&self, uri: &rsip::uri::Uri) -> Result<Transport> {
-        self.inner.lookup(uri, self.outbound.as_ref()).await
+        self.inner.lookup(uri, self.outbound.clone()).await
     }
 
     pub async fn serve(&self, sender: TransportSender) -> Result<()> {
@@ -65,17 +65,15 @@ impl TransportLayerInner {
         self.listens.lock().unwrap().remove(addr);
     }
 
-    async fn lookup(&self, uri: &rsip::uri::Uri, outbound: Option<&SipAddr>) -> Result<Transport> {
-        let target = if outbound.is_none() {
+    async fn lookup(&self, uri: &rsip::uri::Uri, outbound: Option<SipAddr>) -> Result<Transport> {
+        let target = outbound.unwrap_or_else(|| {
             let target_host_port = uri.host_with_port.to_owned();
             info!("lookup target: {}", target_host_port);
             SipAddr {
                 r#type: Some(rsip::transport::Transport::Udp),
-                addr: target_host_port.try_into()?,
+                addr: target_host_port.try_into().unwrap(),
             }
-        } else {
-            outbound.unwrap().to_owned()
-        };
+        });
 
         if let Some(transport) = self.listens.lock().unwrap().get(&target) {
             return Ok(transport.clone());

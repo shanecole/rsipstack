@@ -32,6 +32,7 @@ pub struct Transaction {
     pub timer_k: Option<u64>, // server invite only
     pub timer_g: Option<u64>, // server invite only
     span: Span,
+    is_cleaned_up: bool,
 }
 
 impl Transaction {
@@ -45,7 +46,7 @@ impl Transaction {
         let (tu_sender, tu_receiver) = unbounded_channel();
         let span = span!(Level::INFO, "transaction", key = %key);
         info!("transaction created {:?} {}", transaction_type, key);
-        Self {
+        let tx = Self {
             transaction_type,
             endpoint_inner,
             transport,
@@ -62,7 +63,11 @@ impl Transaction {
             tu_receiver,
             tu_sender,
             span,
-        }
+            is_cleaned_up: false,
+        };
+        tx.endpoint_inner
+            .attach_transaction(&tx.key, tx.tu_sender.clone());
+        tx
     }
 
     pub fn new_client(
@@ -119,8 +124,6 @@ impl Transaction {
             self.key.clone(),
         ))?;
         transport.send(self.original.to_owned().into()).await?;
-        self.endpoint_inner
-            .attach_transaction(&self.key, self.tu_sender.clone());
         self.transition(TransactionState::Trying).map(|_| ())
     }
 
@@ -512,6 +515,10 @@ impl Transaction {
     }
 
     fn cleanup(&mut self) {
+        if self.is_cleaned_up {
+            return;
+        }
+        self.is_cleaned_up = true;
         if self.state == TransactionState::Calling {
             return;
         }

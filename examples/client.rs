@@ -39,8 +39,8 @@ async fn main() -> rsipstack::Result<()> {
             let register_req = rsip::message::Request {
                 method: rsip::method::Method::Register,
                 uri: rsip::Uri {
-                    scheme: Some(rsip::Scheme::Sips),
-                    host_with_port: rsip::HostWithPort::try_from("127.0.0.1:5060")?.into(),
+                    scheme: Some(rsip::Scheme::Sip),
+                    host_with_port: rsip::HostWithPort::try_from("121.41.137.130:8880")?.into(),
                     ..Default::default()
                 },
                 headers: vec![

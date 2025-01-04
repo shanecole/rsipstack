@@ -9,7 +9,7 @@ pub mod message;
 mod timer;
 pub mod transaction;
 pub use endpoint::EndpointBuilder;
-
+mod tests;
 pub struct IncomingRequest {
     pub request: rsip::Request,
     pub transport: Transport,
