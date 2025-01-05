@@ -120,6 +120,29 @@ impl UdpTransport {
             .map(|_| ())
     }
 
+    #[instrument(skip(self, buf), fields(addr = %self.get_addr()))]
+    pub async fn send_raw(&self, buf: &[u8], target: SipAddr) -> Result<()> {
+        trace!("sending {} -> {}", buf.len(), target);
+        self.inner
+            .conn
+            .send_to(buf, target.addr)
+            .await
+            .map_err(|e| {
+                crate::Error::TransportLayerError(e.to_string(), self.get_addr().to_owned())
+            })
+            .map(|_| ())
+    }
+    
+    #[instrument(skip(self, buf), fields(addr = %self.get_addr()))]
+    pub async fn recv_raw(&self, buf: &mut [u8]) -> Result<(usize, SipAddr)> {
+        let (len, addr) = self.inner.conn.recv_from(buf).await?;
+        trace!("received {} -> {}", len, addr);
+        Ok((len, SipAddr {
+            r#type: Some(rsip::transport::Transport::Udp),
+            addr,
+        }))
+    }
+
     pub fn get_addr(&self) -> &SipAddr {
         &self.inner.addr
     }
