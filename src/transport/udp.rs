@@ -8,7 +8,6 @@ use crate::{
 use std::{net::SocketAddr, sync::Arc};
 use tokio::net::UdpSocket;
 use tracing::{debug, error, info, instrument, trace};
-
 use super::{
     transport::{SipAddr, TransportSender},
     Transport,

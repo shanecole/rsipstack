@@ -1,4 +1,4 @@
-use super::{udp::UdpTransport, ws_wasm::WsWasmTransport};
+use super::{channel::ChannelTransport, udp::UdpTransport, ws_wasm::WsWasmTransport};
 use crate::Result;
 use rsip::{prelude::HeadersExt, HostWithPort, Param, SipMessage};
 use std::{fmt, net::SocketAddr};
@@ -29,6 +29,7 @@ pub enum Transport {
     //Tls(tls::TlsTransport),
     Udp(UdpTransport),
     WsWasm(WsWasmTransport),
+    Channel(ChannelTransport),
     //Ws(ws::WsTransport),
 }
 
@@ -45,6 +46,8 @@ impl Transport {
             //Transport::Tls(transport) => transport.get_addr(),
             Transport::Udp(transport) => transport.get_addr(),
             Transport::WsWasm(transport) => transport.get_addr(),
+            Transport::Channel(transport) => transport.get_addr(),
+
             //Transport::Ws(transport) => transport.get_addr(),
         }
     }
@@ -54,6 +57,7 @@ impl Transport {
             //Transport::Tls(transport) => transport.send(msg).await,
             Transport::Udp(transport) => transport.send(msg).await,
             Transport::WsWasm(transport) => transport.send(msg).await,
+            Transport::Channel(transport) => transport.send(msg).await,
             //Transport::Ws(transport) => transport.send(msg).await,
         }
     }
@@ -63,6 +67,7 @@ impl Transport {
             //Transport::Tls(transport) => transport.server_loop(sender).await,
             Transport::Udp(transport) => transport.serve_loop(sender).await,
             Transport::WsWasm(transport) => transport.serve_loop(sender).await,
+            Transport::Channel(transport) => transport.serve_loop(sender).await,
             //Transport::Ws(transport) => transport.server_loop(sender).await,
         }
     }
@@ -100,6 +105,7 @@ impl fmt::Display for Transport {
             //Transport::Tls(_) => write!(f, "TLS"),
             Transport::Udp(t) => write!(f, "UDP {}", t),
             Transport::WsWasm(t) => write!(f, "WS-WASM {}", t),
+            Transport::Channel(t) => write!(f, "CHANNEL {}", t),
             //Transport::Ws(_) => write!(f, "WS"),
         }
     }

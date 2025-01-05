@@ -3,12 +3,11 @@ use super::{
     Transport,
 };
 use crate::{transport::TransportEvent, Result};
-use rsip::headers::to;
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex},
 };
-use tokio::select;
+use tokio::{ select};
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 
@@ -66,14 +65,35 @@ impl TransportLayerInner {
     }
 
     async fn lookup(&self, uri: &rsip::uri::Uri, outbound: Option<SipAddr>) -> Result<Transport> {
-        let target = outbound.unwrap_or_else(|| {
+        let target = if outbound.is_some(){
             let target_host_port = uri.host_with_port.to_owned();
-            info!("lookup target: {}", target_host_port);
+            let mut r#type = uri.scheme.as_ref().map(|scheme| match scheme {
+                rsip::Scheme::Sip => rsip::transport::Transport::Udp,
+                rsip::Scheme::Sips => rsip::transport::Transport::Tls,
+                rsip::Scheme::Other(schema) => {
+                    if schema.eq_ignore_ascii_case("ws") {
+                        rsip::transport::Transport::Ws
+                    } else if schema.eq_ignore_ascii_case("wss")  {
+                        rsip::transport::Transport::Wss
+                    } else {
+                        rsip::transport::Transport::Udp
+                    }
+                }
+            });
+            uri.params.iter().for_each(|param| {
+                if let rsip::common::uri::Param::Transport(transport) = param {
+                    r#type = Some(transport.clone());
+                }
+            });
+            let addr = target_host_port.try_into()?;
             SipAddr {
-                r#type: Some(rsip::transport::Transport::Udp),
-                addr: target_host_port.try_into().unwrap(),
+                r#type,
+                addr,
             }
-        });
+        } else {
+            outbound.unwrap()
+        };
+        info!("lookup target: {} -> {}", uri, target);
 
         if let Some(transport) = self.listens.lock().unwrap().get(&target) {
             return Ok(transport.clone());

@@ -4,6 +4,7 @@ pub mod transport_layer;
 pub mod udp;
 pub mod ws;
 pub mod ws_wasm;
+pub mod channel;
 pub mod transport;
 pub use transport_layer::TransportLayer;
 pub use transport::Transport;
