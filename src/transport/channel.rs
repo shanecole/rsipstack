@@ -5,7 +5,7 @@ use super::{
 use crate::Result;
 use std::sync::{Arc, Mutex};
 
-struct ChannelTransportInner {
+struct ChannelInner {
     incoming: Mutex<Option<TransportReceiver>>,
     outgoing: TransportSender,
     addr: SipAddr,
@@ -13,7 +13,7 @@ struct ChannelTransportInner {
 
 #[derive(Clone)]
 pub struct ChannelConnection {
-    inner: Arc<ChannelTransportInner>,
+    inner: Arc<ChannelInner>,
 }
 
 impl ChannelConnection {
@@ -23,7 +23,7 @@ impl ChannelConnection {
         addr: SipAddr,
     ) -> Result<Self> {
         let t = ChannelConnection {
-            inner: Arc::new(ChannelTransportInner {
+            inner: Arc::new(ChannelInner {
                 incoming: Mutex::new(Some(incoming)),
                 outgoing,
                 addr,

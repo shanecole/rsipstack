@@ -17,7 +17,8 @@ async fn main() -> rsipstack::Result<()> {
         .with_file(true)
         .with_line_number(true)
         .with_timer(tracing_subscriber::fmt::time::LocalTime::rfc_3339())
-        .init();
+        .try_init()
+        .ok();
 
     let token = CancellationToken::new();
     let transport_layer = TransportLayer::new(token.clone());
@@ -70,27 +71,20 @@ async fn main() -> rsipstack::Result<()> {
     });
 
     let user_agent_ref = user_agent.clone();
-    let mut incoming = user_agent_ref.incoming_requests();
+    let mut incoming = user_agent_ref.incoming_transactions();
 
     let serve_loop = async move {
-        while let Some(Some(IncomingRequest {
-            request,
-            connection,
-            from,
-        })) = incoming.recv().await
-        {
-            info!("Received request: {} {:?}", from, request);
-            let mut tx = user_agent_ref.server_transaction(request, connection)?;
-
-            tokio::spawn(async move {
+        while let Some(Some(mut tx)) = incoming.recv().await {
+            info!("Received transaction: {:?}", tx.key);
+            while let Some(msg) = tx.receive().await {
+                info!("Received message: {:?}", msg);
                 let done_response = rsip::Response {
                     status_code: rsip::StatusCode::NotAcceptable,
                     version: rsip::Version::V2,
                     ..Default::default()
                 };
                 tx.respond(done_response).await?;
-                Ok::<_, Error>(())
-            });
+            }
         }
         Ok::<_, Error>(())
     };

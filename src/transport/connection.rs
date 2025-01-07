@@ -9,7 +9,6 @@ pub enum TransportEvent {
     Incoming(SipMessage, SipConnection, SipAddr),
     New(SipConnection),
     Closed(SipConnection),
-    Terminate, // Terminate the transport layer
 }
 #[derive(Debug, Eq, PartialEq, Clone, Hash)]
 pub struct SipAddr {
@@ -85,7 +84,7 @@ impl SipConnection {
         Ok(host_with_port)
     }
 
-    pub fn get_target(msg: &rsip::SipMessage) -> Result<SocketAddr> {
+    pub fn get_target_socketaddr(msg: &rsip::SipMessage) -> Result<SocketAddr> {
         let host_with_port = match msg {
             rsip::SipMessage::Request(req) => req.uri().host_with_port.clone(),
             rsip::SipMessage::Response(res) => Self::parse_target_from_via(res.via_header()?)?,
@@ -134,7 +133,13 @@ impl TryFrom<rsip::host_with_port::HostWithPort> for SipAddr {
 }
 
 impl From<UdpConnection> for SipConnection {
-    fn from(transport: UdpConnection) -> Self {
-        SipConnection::Udp(transport)
+    fn from(connection: UdpConnection) -> Self {
+        SipConnection::Udp(connection)
+    }
+}
+
+impl From<ChannelConnection> for SipConnection {
+    fn from(connection: ChannelConnection) -> Self {
+        SipConnection::Channel(connection)
     }
 }

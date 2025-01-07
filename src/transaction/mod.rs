@@ -2,6 +2,7 @@ use crate::transport::{connection::SipAddr, SipConnection};
 use key::TransactionKey;
 use std::time::Duration;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
+use transaction::Transaction;
 
 pub mod endpoint;
 pub mod key;
@@ -9,6 +10,7 @@ pub mod message;
 mod timer;
 pub mod transaction;
 pub use endpoint::EndpointBuilder;
+#[cfg(test)]
 mod tests;
 pub struct IncomingRequest {
     pub request: rsip::Request,
@@ -16,8 +18,8 @@ pub struct IncomingRequest {
     pub from: SipAddr,
 }
 
-pub type RequestReceiver = UnboundedReceiver<Option<IncomingRequest>>;
-pub type RequestSender = UnboundedSender<Option<IncomingRequest>>;
+pub type TransactionReceiver = UnboundedReceiver<Option<Transaction>>;
+pub type TransactionSender = UnboundedSender<Option<Transaction>>;
 
 #[derive(Debug, Clone, PartialEq, Copy)]
 pub enum TransactionState {

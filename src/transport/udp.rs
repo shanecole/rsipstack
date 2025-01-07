@@ -47,7 +47,7 @@ impl UdpConnection {
             let (len, addr) = match self.inner.conn.recv_from(&mut buf).await {
                 Ok((len, addr)) => (len, addr),
                 Err(e) => {
-                    error!("Error receiving UDP packet: {}", e);
+                    error!("error receiving UDP packet: {}", e);
                     continue;
                 }
             };
@@ -110,7 +110,7 @@ impl UdpConnection {
 
     #[instrument(skip(self, msg), fields(addr = %self.get_addr()))]
     pub async fn send(&self, msg: rsip::SipMessage) -> crate::Result<()> {
-        let target = SipConnection::get_target(&msg)?;
+        let target = SipConnection::get_target_socketaddr(&msg)?;
         let buf = msg.to_string();
 
         trace!("sending {} -> {} {}", buf.len(), target, buf);
@@ -223,12 +223,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_udp_recv_sip_message() -> Result<()> {
-        tracing_subscriber::fmt()
-            .with_max_level(tracing::Level::TRACE)
-            .with_file(true)
-            .with_line_number(true)
-            .try_init()
-            .ok();
         let peer_bob = UdpConnection::create_connection("127.0.0.1:0".parse()?, None).await?;
         let peer_alice = UdpConnection::create_connection("127.0.0.1:0".parse()?, None).await?;
         let (alice_tx, _) = unbounded_channel();

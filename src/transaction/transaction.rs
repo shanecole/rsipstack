@@ -258,7 +258,7 @@ impl Transaction {
             .map_err(|e| Error::TransactionError(e.to_string(), self.key.clone()))
     }
 
-    async fn on_received_request(
+    pub async fn on_received_request(
         &mut self,
         req: Request,
         connection: Option<SipConnection>,
@@ -267,7 +267,7 @@ impl Transaction {
             TransactionType::ClientInvite | TransactionType::ClientNonInvite => return None,
             _ => {}
         }
-        if self.connection.is_none() {
+        if self.connection.is_none() && connection.is_some() {
             self.connection = connection;
         }
         match self.state {

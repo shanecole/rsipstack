@@ -2,7 +2,7 @@ use super::{
     key::TransactionKey,
     timer::Timer,
     transaction::{Transaction, TransactionEvent, TransactionEventSender},
-    IncomingRequest, RequestReceiver, RequestSender, SipConnection, TransactionTimer,
+    IncomingRequest, SipConnection, TransactionReceiver, TransactionSender, TransactionTimer,
 };
 use crate::{
     transport::{
@@ -31,7 +31,7 @@ pub struct EndpointInner {
     pub transport_layer: TransportLayer,
     pub finished_transactions: Mutex<HashMap<TransactionKey, Option<SipMessage>>>,
     pub transactions: Mutex<HashMap<TransactionKey, TransactionEventSender>>,
-    incoming_sender: Mutex<Option<RequestSender>>,
+    incoming_sender: Mutex<Option<TransactionSender>>,
     cancel_token: CancellationToken,
     timer_interval: Duration,
 
@@ -51,7 +51,6 @@ pub struct EndpointBuilder {
 pub struct Endpoint {
     inner: EndpointInnerRef,
     cancel_token: CancellationToken,
-    incoming_sender: Mutex<Option<RequestSender>>,
 }
 
 impl EndpointInner {
@@ -76,7 +75,7 @@ impl EndpointInner {
         })
     }
 
-    pub async fn serve(&self) {
+    pub async fn serve(&self, core: EndpointInnerRef) {
         let (transport_tx, transport_rx) = unbounded_channel();
 
         select! {
@@ -86,27 +85,29 @@ impl EndpointInner {
             },
             _ = self.transport_layer.serve(transport_tx) => {
             },
-            _ = self.process_transport_layer(transport_rx) => {
+            _ = self.process_transport_layer(transport_rx, core) => {
             },
         }
     }
 
     // process transport layer, receive message from transport layer
-    async fn process_transport_layer(&self, mut transport_rx: TransportReceiver) -> Result<()> {
+    async fn process_transport_layer(
+        &self,
+        mut transport_rx: TransportReceiver,
+        core: EndpointInnerRef,
+    ) -> Result<()> {
         while let Some(event) = transport_rx.recv().await {
             match event {
                 TransportEvent::Incoming(msg, connection, from) => {
                     trace!("incoming message {} <- {} {}", connection, from, msg);
-                    self.on_received_message(msg, connection, from).await?;
+                    self.on_received_message(msg, connection, from, &core)
+                        .await?;
                 }
                 TransportEvent::New(t) => {
                     trace!("new connection {} ", t);
                 }
                 TransportEvent::Closed(t) => {
                     trace!("connection closed {} ", t);
-                }
-                TransportEvent::Terminate => {
-                    break;
                 }
             }
         }
@@ -142,7 +143,7 @@ impl EndpointInner {
         Ok(())
     }
 
-    pub fn attach_incoming_sender(&self, sender: Option<RequestSender>) {
+    pub fn attach_incoming_sender(&self, sender: Option<TransactionSender>) {
         *self.incoming_sender.lock().unwrap() = sender;
     }
 
@@ -152,36 +153,38 @@ impl EndpointInner {
         msg: SipMessage,
         connection: SipConnection,
         from: SipAddr,
+        core: &EndpointInnerRef,
     ) -> Result<()> {
-        if let SipMessage::Request(ref req) = msg {
-            if req.method != Method::Ack {
-                if self.incoming_sender.lock().unwrap().is_none() {
-                    let resp = self.make_response(req, rsip::StatusCode::ServerInternalError, None);
-                    connection.send(resp.into()).await?;
-                    return Err(Error::TransactionError(
-                        "incoming_sender not set".to_string(),
-                        TransactionKey::Invalid,
-                    ));
-                }
-                let event = IncomingRequest {
-                    request: msg.try_into()?,
-                    connection,
-                    from,
-                };
-                self.incoming_sender
-                    .lock()
-                    .unwrap()
-                    .as_ref()
-                    .map(|s| s.send(Some(event)));
-                return Ok(());
-            }
-        }
-
         let key = match &msg {
-            SipMessage::Request(req) => TransactionKey::try_from(req)?,
-            SipMessage::Response(resp) => TransactionKey::try_from(resp)?,
+            SipMessage::Request(req) => {
+                TransactionKey::from_request(req, super::key::TransactionRole::Server)?
+            }
+            SipMessage::Response(resp) => {
+                TransactionKey::from_response(resp, super::key::TransactionRole::Server)?
+            }
         };
 
+        match &msg {
+            SipMessage::Request(req) => {
+                if req.method() == &Method::Cancel {
+                    // Match transaction https://datatracker.ietf.org/doc/html/rfc3261#section-9.2
+                    //    The CANCEL method requests that the TU at the server side cancel a
+                    //    pending transaction.  The TU determines the transaction to be
+                    //    cancelled by taking the CANCEL request, and then assuming that the
+                    //    request method is anything but CANCEL or ACK and applying the
+                    //    transaction matching procedures of Section 17.2.3.  The matching
+                    //    transaction is the one to be cancelled.
+                    let existing_transaction = self.transactions.lock().unwrap().contains_key(&key);
+                    if existing_transaction {
+                        let resp = self.make_response(&req, rsip::StatusCode::OK, None);
+                        connection.send(resp.into()).await?;
+                    }
+                }
+            }
+            _ => {}
+        };
+
+        // check is the termination of an existing transaction
         let last_message = self
             .finished_transactions
             .lock()
@@ -198,8 +201,39 @@ impl EndpointInner {
         if let Some(tu) = { self.transactions.lock().unwrap().get(&key) } {
             tu.send(TransactionEvent::Received(msg, Some(connection)))
                 .map_err(|e| Error::TransactionError(e.to_string(), key))?;
+            return Ok(());
         }
-        Ok(())
+        // if the transaction is not exist, create a new transaction
+        let request = match msg {
+            SipMessage::Request(req) => req,
+            _ => {
+                return Err(Error::TransactionError(
+                    "unexpected response".to_string(),
+                    key,
+                ))
+            }
+        };
+
+        if self.incoming_sender.lock().unwrap().is_none() {
+            let resp = self.make_response(&request, rsip::StatusCode::ServerInternalError, None);
+            connection.send(resp.into()).await?;
+            return Err(Error::TransactionError(
+                "incoming_sender not set".to_string(),
+                key,
+            ));
+        }
+
+        let tx =
+            Transaction::new_server(key.clone(), request.clone(), core.clone(), Some(connection));
+        tx.tu_sender
+            .send(TransactionEvent::Received(request.into(), None))?;
+
+        self.incoming_sender
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|s| s.send(Some(tx)));
+        return Ok(());
     }
 
     pub fn attach_transaction(&self, key: &TransactionKey, tu_sender: TransactionEventSender) {
@@ -279,7 +313,6 @@ impl EndpointBuilder {
 
         Endpoint {
             inner: core,
-            incoming_sender: Mutex::new(None),
             cancel_token,
         }
     }
@@ -287,43 +320,31 @@ impl EndpointBuilder {
 
 impl Endpoint {
     pub async fn serve(&self) {
-        self.inner.serve().await;
+        let core = self.inner.clone();
+        self.inner.serve(core).await;
         info!("endpoint shutdown");
     }
 
     pub fn shutdown(&self) {
         info!("endpoint shutdown requested");
         self.cancel_token.cancel();
-        self.incoming_sender
-            .lock()
-            .unwrap()
-            .as_ref()
-            .map(|incoming| incoming.send(None).ok()); // send None to incoming_sender to shutdown
     }
 
     pub fn client_transaction(&self, request: rsip::Request) -> Result<Transaction> {
-        let key = (&request).try_into()?;
+        let key = TransactionKey::from_request(&request, super::key::TransactionRole::Client)?;
         let tx = Transaction::new_client(key, request, self.inner.clone(), None);
-        Ok(tx)
-    }
-
-    pub fn server_transaction(
-        &self,
-        request: rsip::Request,
-        connection: SipConnection,
-    ) -> Result<Transaction> {
-        let key = (&request).try_into()?;
-        let tx = Transaction::new_server(key, request, self.inner.clone(), Some(connection));
         Ok(tx)
     }
 
     //
     // get incoming requests from the endpoint
     //
-    pub fn incoming_requests(&self) -> RequestReceiver {
+    pub fn incoming_transactions(&self) -> TransactionReceiver {
         let (tx, rx) = unbounded_channel();
         self.inner.attach_incoming_sender(Some(tx.clone()));
-        self.incoming_sender.lock().unwrap().replace(tx);
         rx
+    }
+    pub fn contacts(&self) -> Vec<SipAddr> {
+        self.inner.transport_layer.contacts()
     }
 }

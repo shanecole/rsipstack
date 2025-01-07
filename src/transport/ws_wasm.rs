@@ -2,11 +2,11 @@ use super::connection::{SipAddr, TransportSender};
 use crate::Result;
 use std::sync::Arc;
 
-struct WsWasmTransportInner {}
+struct WsWasmInner {}
 
 #[derive(Clone)]
 pub struct WsWasmConnection {
-    inner: Arc<WsWasmTransportInner>,
+    inner: Arc<WsWasmInner>,
 }
 
 impl WsWasmConnection {

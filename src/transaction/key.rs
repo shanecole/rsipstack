@@ -5,6 +5,7 @@ use rsip::{
     prelude::{HeadersExt, ToTypedHeader},
     HostWithPort, Method,
 };
+use rsip::{Request, Response};
 use std::hash::Hash;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -46,94 +47,120 @@ impl Hash for Rfc3261 {
 }
 
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
+pub enum TransactionRole {
+    Client,
+    Server,
+}
+
+impl std::fmt::Display for TransactionRole {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TransactionRole::Client => write!(f, "c"),
+            TransactionRole::Server => write!(f, "s"),
+        }
+    }
+}
+
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub enum TransactionKey {
-    RFC3261(Rfc3261),
-    RFC2543(Rfc2543),
-    Invalid,
+    RFC3261(Rfc3261, TransactionRole),
+    RFC2543(Rfc2543, TransactionRole),
 }
 
 impl std::fmt::Display for TransactionKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            TransactionKey::RFC3261(rfc3261) => write!(
+            TransactionKey::RFC3261(rfc3261, role) => write!(
                 f,
-                "{}/{}_{}_{}_{}",
-                rfc3261.method, rfc3261.cseq, rfc3261.call_id, rfc3261.from_tag, rfc3261.branch,
+                "{}.{}/{}_{}_{}_{}",
+                role,
+                rfc3261.method,
+                rfc3261.cseq,
+                rfc3261.call_id,
+                rfc3261.from_tag,
+                rfc3261.branch,
             ),
-            TransactionKey::RFC2543(rfc2543) => write!(
+            TransactionKey::RFC2543(rfc2543, role) => write!(
                 f,
-                "{}/{}_{}_{}_{}",
+                "{}.{}/{}_{}_{}_{}",
+                role,
                 rfc2543.method,
                 rfc2543.cseq,
                 rfc2543.call_id,
                 rfc2543.from_tag,
                 rfc2543.via_host_port
             ),
-            TransactionKey::Invalid => write!(f, "INVALID"),
         }
     }
 }
 
-impl TryFrom<&rsip::Request> for TransactionKey {
-    type Error = crate::error::Error;
-
-    fn try_from(req: &rsip::Request) -> Result<Self> {
+impl TransactionKey {
+    pub fn from_request(req: &Request, role: TransactionRole) -> Result<Self> {
         let via = req.via_header()?.typed()?;
         let mut method = req.method().clone();
-        if method == Method::Ack {
+
+        if method == Method::Ack || (method == Method::Cancel && role == TransactionRole::Server) {
             method = Method::Invite;
         }
-        let from_tag = req.from_header()?.tag()?.ok_or(Error::TransactionError(
-            "from tags missing".to_string(),
-            TransactionKey::Invalid,
-        ))?;
+
+        let from_tag = req
+            .from_header()?
+            .tag()?
+            .ok_or(Error::Error("from tags missing".to_string()))?;
         let call_id = req.call_id_header()?.value().to_string();
         match via.branch() {
-            Some(branch) => Ok(TransactionKey::RFC3261(Rfc3261 {
-                branch: branch.to_string(),
-                method,
-                cseq: req.cseq_header()?.seq()?,
-                from_tag,
-                call_id,
-            })),
-            None => Ok(TransactionKey::RFC2543(Rfc2543 {
-                method,
-                cseq: req.cseq_header()?.seq()?,
-                from_tag,
-                call_id,
-                via_host_port: via.uri.host_with_port,
-            })),
+            Some(branch) => Ok(TransactionKey::RFC3261(
+                Rfc3261 {
+                    branch: branch.to_string(),
+                    method,
+                    cseq: req.cseq_header()?.seq()?,
+                    from_tag,
+                    call_id,
+                },
+                role,
+            )),
+            None => Ok(TransactionKey::RFC2543(
+                Rfc2543 {
+                    method,
+                    cseq: req.cseq_header()?.seq()?,
+                    from_tag,
+                    call_id,
+                    via_host_port: via.uri.host_with_port,
+                },
+                role,
+            )),
         }
     }
-}
-
-impl TryFrom<&rsip::Response> for TransactionKey {
-    type Error = crate::error::Error;
-
-    fn try_from(resp: &rsip::Response) -> Result<Self> {
+    pub fn from_response(resp: &Response, role: TransactionRole) -> Result<Self> {
         let via = resp.via_header()?.typed()?;
         let cseq = resp.cseq_header()?;
         let method = cseq.method()?;
-        let from_tag = resp.from_header()?.tag()?.ok_or(Error::TransactionError(
-            "from tags missing".to_string(),
-            TransactionKey::Invalid,
-        ))?;
+        let from_tag = resp
+            .from_header()?
+            .tag()?
+            .ok_or(Error::Error("from tags missing".to_string()))?;
         let call_id = resp.call_id_header()?.value().to_string();
         match via.branch() {
-            Some(branch) => Ok(TransactionKey::RFC3261(Rfc3261 {
-                branch: branch.to_string(),
-                method,
-                cseq: cseq.seq()?,
-                from_tag,
-                call_id,
-            })),
-            None => Ok(TransactionKey::RFC2543(Rfc2543 {
-                method,
-                cseq: cseq.seq()?,
-                from_tag,
-                call_id,
-                via_host_port: via.uri.host_with_port,
-            })),
+            Some(branch) => Ok(TransactionKey::RFC3261(
+                Rfc3261 {
+                    branch: branch.to_string(),
+                    method,
+                    cseq: cseq.seq()?,
+                    from_tag,
+                    call_id,
+                },
+                role,
+            )),
+            None => Ok(TransactionKey::RFC2543(
+                Rfc2543 {
+                    method,
+                    cseq: cseq.seq()?,
+                    from_tag,
+                    call_id,
+                    via_host_port: via.uri.host_with_port,
+                },
+                role,
+            )),
         }
     }
 }
@@ -158,16 +185,19 @@ fn test_transaction_key() -> Result<()> {
         version: rsip::Version::V2,
         body: Default::default(),
     };
-    let key = TransactionKey::try_from(&register_req)?;
+    let key = TransactionKey::from_request(&register_req, TransactionRole::Client)?;
     assert_eq!(
         key,
-        TransactionKey::RFC3261(Rfc3261 {
-            branch: "z9hG4bKnashd92".to_string(),
-            method: Method::Register,
-            cseq: 2,
-            from_tag: Tag::new("ja743ks76zlflH"),
-            call_id: "1j9FpLxk3uxtm8tn@sip.restsend.com".to_string(),
-        })
+        TransactionKey::RFC3261(
+            Rfc3261 {
+                branch: "z9hG4bKnashd92".to_string(),
+                method: Method::Register,
+                cseq: 2,
+                from_tag: Tag::new("ja743ks76zlflH"),
+                call_id: "1j9FpLxk3uxtm8tn@sip.restsend.com".to_string(),
+            },
+            TransactionRole::Client
+        )
     );
     let register_resp = rsip::message::Response {
         status_code: rsip::StatusCode::OK,
@@ -181,32 +211,38 @@ fn test_transaction_key() -> Result<()> {
         .into(),
         body: Default::default(),
     };
-    let key = TransactionKey::try_from(&register_resp)?;
+    let key = TransactionKey::from_response(&register_resp, TransactionRole::Server)?;
     assert_eq!(
         key,
-        TransactionKey::RFC3261(Rfc3261 {
-            branch: "z9hG4bKnashd92".to_string(),
-            method: Method::Register,
-            cseq: 2,
-            from_tag: Tag::new("ja743ks76zlflH"),
-            call_id: "1j9FpLxk3uxtm8tn@sip.restsend.com".to_string(),
-        })
+        TransactionKey::RFC3261(
+            Rfc3261 {
+                branch: "z9hG4bKnashd92".to_string(),
+                method: Method::Register,
+                cseq: 2,
+                from_tag: Tag::new("ja743ks76zlflH"),
+                call_id: "1j9FpLxk3uxtm8tn@sip.restsend.com".to_string(),
+            },
+            TransactionRole::Server
+        )
     );
 
     let mut ack_req = register_req.clone();
     ack_req.method = Method::Ack;
     ack_req.headers.unique_push(CSeq::new("2 ACK").into());
 
-    let key = TransactionKey::try_from(&ack_req)?;
+    let key = TransactionKey::from_request(&ack_req, TransactionRole::Server)?;
     assert_eq!(
         key,
-        TransactionKey::RFC3261(Rfc3261 {
-            branch: "z9hG4bKnashd92".to_string(),
-            method: Method::Invite,
-            cseq: 2,
-            from_tag: Tag::new("ja743ks76zlflH"),
-            call_id: "1j9FpLxk3uxtm8tn@sip.restsend.com".to_string(),
-        })
+        TransactionKey::RFC3261(
+            Rfc3261 {
+                branch: "z9hG4bKnashd92".to_string(),
+                method: Method::Invite,
+                cseq: 2,
+                from_tag: Tag::new("ja743ks76zlflH"),
+                call_id: "1j9FpLxk3uxtm8tn@sip.restsend.com".to_string(),
+            },
+            TransactionRole::Server
+        )
     );
     Ok(())
 }

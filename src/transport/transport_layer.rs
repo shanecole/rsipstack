@@ -50,6 +50,9 @@ impl TransportLayer {
     pub async fn serve(&self, sender: TransportSender) -> Result<()> {
         self.inner.serve(sender).await
     }
+    pub fn contacts(&self) -> Vec<SipAddr> {
+        self.inner.listens.lock().unwrap().keys().cloned().collect()
+    }
 }
 
 impl TransportLayerInner {
