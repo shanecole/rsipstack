@@ -2,16 +2,16 @@ use super::{
     key::TransactionKey,
     timer::Timer,
     transaction::{Transaction, TransactionEvent, TransactionEventSender},
-    IncomingRequest, RequestReceiver, RequestSender, TransactionTimer, Transport,
+    IncomingRequest, RequestReceiver, RequestSender, SipConnection, TransactionTimer,
 };
 use crate::{
     transport::{
-        transport::{SipAddr, TransportReceiver},
+        connection::{SipAddr, TransportReceiver},
         TransportEvent, TransportLayer,
     },
     Error, Result, USER_AGENT,
 };
-use rsip::{host_with_port, Method, SipMessage};
+use rsip::{Method, SipMessage};
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex},
@@ -95,16 +95,15 @@ impl EndpointInner {
     async fn process_transport_layer(&self, mut transport_rx: TransportReceiver) -> Result<()> {
         while let Some(event) = transport_rx.recv().await {
             match event {
-                TransportEvent::IncomingMessage(msg, transport, from) => {
-                    trace!("incoming message {} from {} <- {}", msg, transport, from);
-                    self.on_received_message(msg, transport, from).await?;
+                TransportEvent::Incoming(msg, connection, from) => {
+                    trace!("incoming message {} <- {} {}", connection, from, msg);
+                    self.on_received_message(msg, connection, from).await?;
                 }
-                TransportEvent::NewTransport(t) => {
-                    trace!("new transport {} ", t);
+                TransportEvent::New(t) => {
+                    trace!("new connection {} ", t);
                 }
-                TransportEvent::TransportClosed(t) => {
-                    trace!("transport closed {} ", t);
-                    //self.transport_layer.del_transport(&t.get_addr());
+                TransportEvent::Closed(t) => {
+                    trace!("connection closed {} ", t);
                 }
                 TransportEvent::Terminate => {
                     break;
@@ -151,14 +150,14 @@ impl EndpointInner {
     pub async fn on_received_message(
         &self,
         msg: SipMessage,
-        transport: Transport,
+        connection: SipConnection,
         from: SipAddr,
     ) -> Result<()> {
         if let SipMessage::Request(ref req) = msg {
             if req.method != Method::Ack {
                 if self.incoming_sender.lock().unwrap().is_none() {
                     let resp = self.make_response(req, rsip::StatusCode::ServerInternalError, None);
-                    transport.send(resp.into()).await?;
+                    connection.send(resp.into()).await?;
                     return Err(Error::TransactionError(
                         "incoming_sender not set".to_string(),
                         TransactionKey::Invalid,
@@ -166,7 +165,7 @@ impl EndpointInner {
                 }
                 let event = IncomingRequest {
                     request: msg.try_into()?,
-                    transport,
+                    connection,
                     from,
                 };
                 self.incoming_sender
@@ -192,12 +191,12 @@ impl EndpointInner {
             .flatten();
 
         if let Some(last_message) = last_message {
-            transport.send(last_message).await?;
+            connection.send(last_message).await?;
             return Ok(());
         }
 
         if let Some(tu) = { self.transactions.lock().unwrap().get(&key) } {
-            tu.send(TransactionEvent::Received(msg, Some(transport)))
+            tu.send(TransactionEvent::Received(msg, Some(connection)))
                 .map_err(|e| Error::TransactionError(e.to_string(), key))?;
         }
         Ok(())
@@ -311,10 +310,10 @@ impl Endpoint {
     pub fn server_transaction(
         &self,
         request: rsip::Request,
-        transport: Transport,
+        connection: SipConnection,
     ) -> Result<Transaction> {
         let key = (&request).try_into()?;
-        let tx = Transaction::new_server(key, request, self.inner.clone(), Some(transport));
+        let tx = Transaction::new_server(key, request, self.inner.clone(), Some(connection));
         Ok(tx)
     }
 

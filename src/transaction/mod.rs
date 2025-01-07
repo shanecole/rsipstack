@@ -1,4 +1,4 @@
-use crate::transport::{transport::SipAddr, Transport};
+use crate::transport::{connection::SipAddr, SipConnection};
 use key::TransactionKey;
 use std::time::Duration;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
@@ -12,7 +12,7 @@ pub use endpoint::EndpointBuilder;
 mod tests;
 pub struct IncomingRequest {
     pub request: rsip::Request,
-    pub transport: Transport,
+    pub connection: SipConnection,
     pub from: SipAddr,
 }
 

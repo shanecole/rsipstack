@@ -1,15 +1,15 @@
-use super::transport::{SipAddr, TransportSender};
+use super::connection::{SipAddr, TransportSender};
 use crate::Result;
 use std::sync::Arc;
 
 struct WsWasmTransportInner {}
 
 #[derive(Clone)]
-pub struct WsWasmTransport {
+pub struct WsWasmConnection {
     inner: Arc<WsWasmTransportInner>,
 }
 
-impl WsWasmTransport {
+impl WsWasmConnection {
     pub async fn send(&self, msg: rsip::SipMessage) -> crate::Result<()> {
         todo!()
     }
@@ -22,12 +22,12 @@ impl WsWasmTransport {
     }
 }
 
-impl std::fmt::Display for WsWasmTransport {
+impl std::fmt::Display for WsWasmConnection {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "*:*")
     }
 }
-impl std::fmt::Debug for WsWasmTransport {
+impl std::fmt::Debug for WsWasmConnection {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "*:*")
     }

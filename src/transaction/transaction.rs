@@ -1,16 +1,15 @@
 use super::endpoint::EndpointInnerRef;
 use super::key::TransactionKey;
-use super::{TransactionState, TransactionTimer, TransactionType, Transport};
+use super::{SipConnection, TransactionState, TransactionTimer, TransactionType};
 use crate::{Error, Result};
 use rsip::{Method, Request, Response, SipMessage};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tracing::{debug, info, instrument, span, warn, Level, Span};
-use tracing_subscriber::field::debug;
 
 pub type TransactionEventReceiver = UnboundedReceiver<TransactionEvent>;
 pub type TransactionEventSender = UnboundedSender<TransactionEvent>;
 pub enum TransactionEvent {
-    Received(SipMessage, Option<Transport>),
+    Received(SipMessage, Option<SipConnection>),
     Timer(TransactionTimer),
     Terminate,
 }
@@ -21,7 +20,7 @@ pub struct Transaction {
     pub original: Request,
     pub state: TransactionState,
     pub endpoint_inner: EndpointInnerRef,
-    pub transport: Option<Transport>,
+    pub connection: Option<SipConnection>,
     pub last_response: Option<Response>,
     pub last_ack: Option<Request>,
     pub tu_receiver: TransactionEventReceiver,
@@ -40,7 +39,7 @@ impl Transaction {
         transaction_type: TransactionType,
         key: TransactionKey,
         original: Request,
-        transport: Option<Transport>,
+        connection: Option<SipConnection>,
         endpoint_inner: EndpointInnerRef,
     ) -> Self {
         let (tu_sender, tu_receiver) = unbounded_channel();
@@ -49,7 +48,7 @@ impl Transaction {
         let tx = Self {
             transaction_type,
             endpoint_inner,
-            transport,
+            connection,
             key,
             original,
             state: TransactionState::Calling,
@@ -74,26 +73,26 @@ impl Transaction {
         key: TransactionKey,
         original: Request,
         endpoint_inner: EndpointInnerRef,
-        transport: Option<Transport>,
+        connection: Option<SipConnection>,
     ) -> Self {
         let tx_type = match original.method {
             Method::Invite => TransactionType::ClientInvite,
             _ => TransactionType::ClientNonInvite,
         };
-        Transaction::new(tx_type, key, original, transport, endpoint_inner)
+        Transaction::new(tx_type, key, original, connection, endpoint_inner)
     }
 
     pub fn new_server(
         key: TransactionKey,
         original: Request,
         endpoint_inner: EndpointInnerRef,
-        transport: Option<Transport>,
+        connection: Option<SipConnection>,
     ) -> Self {
         let tx_type = match original.method {
             Method::Invite => TransactionType::ServerInvite,
             _ => TransactionType::ServerNonInvite,
         };
-        Transaction::new(tx_type, key, original, transport, endpoint_inner)
+        Transaction::new(tx_type, key, original, connection, endpoint_inner)
     }
     // send client request
     #[instrument(skip(self))]
@@ -110,20 +109,20 @@ impl Transaction {
             }
         }
 
-        if let None = self.transport {
-            let transport = self
+        if let None = self.connection {
+            let connection = self
                 .endpoint_inner
                 .transport_layer
                 .lookup(&self.original.uri)
                 .await?;
-            self.transport.replace(transport.clone());
+            self.connection.replace(connection.clone());
         }
 
-        let transport = self.transport.as_ref().ok_or(Error::TransactionError(
-            "no transport found".to_string(),
+        let connection = self.connection.as_ref().ok_or(Error::TransactionError(
+            "no connection found".to_string(),
             self.key.clone(),
         ))?;
-        transport.send(self.original.to_owned().into()).await?;
+        connection.send(self.original.to_owned().into()).await?;
         self.transition(TransactionState::Trying).map(|_| ())
     }
 
@@ -155,11 +154,11 @@ impl Transaction {
         // check an transition to new state
         self.can_transition(&new_state)?;
 
-        let transport = self.transport.as_ref().ok_or(Error::TransactionError(
-            "no transport found".to_string(),
+        let connection = self.connection.as_ref().ok_or(Error::TransactionError(
+            "no connection found".to_string(),
             self.key.clone(),
         ))?;
-        transport.send(response.to_owned().into()).await?;
+        connection.send(response.to_owned().into()).await?;
         self.last_response.replace(response);
         self.transition(new_state).map(|_| ())
     }
@@ -200,8 +199,8 @@ impl Transaction {
             ));
         }
 
-        let transport = self.transport.as_ref().ok_or(Error::TransactionError(
-            "no transport found".to_string(),
+        let connection = self.connection.as_ref().ok_or(Error::TransactionError(
+            "no connection found".to_string(),
             self.key.clone(),
         ))?;
 
@@ -215,7 +214,7 @@ impl Transaction {
             }
         }
 
-        transport.send(ack.to_owned().into()).await?;
+        connection.send(ack.to_owned().into()).await?;
         self.last_ack.replace(ack);
         // client send ack and transition to Terminated
         self.transition(TransactionState::Terminated).map(|_| ())
@@ -226,11 +225,11 @@ impl Transaction {
         let _enter = span.enter();
         while let Some(event) = self.tu_receiver.recv().await {
             match event {
-                TransactionEvent::Received(msg, transport) => {
+                TransactionEvent::Received(msg, connection) => {
                     if let Some(msg) = match msg {
-                        SipMessage::Request(req) => self.on_received_request(req, transport).await,
+                        SipMessage::Request(req) => self.on_received_request(req, connection).await,
                         SipMessage::Response(resp) => {
-                            self.on_received_response(resp, transport).await
+                            self.on_received_response(resp, connection).await
                         }
                     } {
                         return Some(msg);
@@ -262,14 +261,14 @@ impl Transaction {
     async fn on_received_request(
         &mut self,
         req: Request,
-        transport: Option<Transport>,
+        connection: Option<SipConnection>,
     ) -> Option<SipMessage> {
         match self.transaction_type {
             TransactionType::ClientInvite | TransactionType::ClientNonInvite => return None,
             _ => {}
         }
-        if self.transport.is_none() {
-            self.transport = transport;
+        if self.connection.is_none() {
+            self.connection = connection;
         }
         match self.state {
             TransactionState::Calling => {
@@ -303,7 +302,7 @@ impl Transaction {
     async fn on_received_response(
         &mut self,
         resp: Response,
-        transport: Option<Transport>,
+        connection: Option<SipConnection>,
     ) -> Option<SipMessage> {
         match self.transaction_type {
             TransactionType::ServerInvite | TransactionType::ServerNonInvite => return None,
@@ -334,7 +333,7 @@ impl Transaction {
             return None;
         }
 
-        debug!("received response {:?} <- {}", transport, resp);
+        debug!("received response {:?} <- {}", connection, resp);
         self.last_response.replace(resp.clone());
         self.transition(new_state).ok();
         return Some(SipMessage::Response(resp));
@@ -345,8 +344,8 @@ impl Transaction {
             TransactionState::Trying => {
                 if let TransactionTimer::TimerA(key, duration) = timer {
                     // Resend the INVITE request
-                    if let Some(transport) = &self.transport {
-                        transport.send(self.original.to_owned().into()).await?;
+                    if let Some(connection) = &self.connection {
+                        connection.send(self.original.to_owned().into()).await?;
                     }
                     // Restart Timer A with an upper limit
                     let duration = (duration * 2).min(self.endpoint_inner.t1x64);
@@ -380,8 +379,8 @@ impl Transaction {
                 if let TransactionTimer::TimerG(key, duration) = timer {
                     // resend the response
                     if let Some(last_response) = &self.last_response {
-                        if let Some(transport) = &self.transport {
-                            transport.send(last_response.to_owned().into()).await?;
+                        if let Some(connection) = &self.connection {
+                            connection.send(last_response.to_owned().into()).await?;
                         }
                     }
                     // restart Timer G with an upper limit
@@ -414,12 +413,12 @@ impl Transaction {
                 // not state can transition to Calling
             }
             TransactionState::Trying => {
-                let transport = self.transport.as_ref().ok_or(Error::TransactionError(
-                    "no transport found".to_string(),
+                let connection = self.connection.as_ref().ok_or(Error::TransactionError(
+                    "no connection found".to_string(),
                     self.key.clone(),
                 ))?;
 
-                if !transport.is_reliable() {
+                if !connection.is_reliable() {
                     self.timer_a
                         .take()
                         .map(|id| self.endpoint_inner.timers.cancel(id));
@@ -457,11 +456,11 @@ impl Transaction {
 
                 if self.transaction_type == TransactionType::ServerInvite {
                     // start Timer G for server invite only
-                    let transport = self.transport.as_ref().ok_or(Error::TransactionError(
-                        "no transport found".to_string(),
+                    let connection = self.connection.as_ref().ok_or(Error::TransactionError(
+                        "no connection found".to_string(),
                         self.key.clone(),
                     ))?;
-                    if !transport.is_reliable() {
+                    if !connection.is_reliable() {
                         let timer_g = self.endpoint_inner.timers.timeout(
                             self.endpoint_inner.t1,
                             TransactionTimer::TimerG(self.key.clone(), self.endpoint_inner.t1),

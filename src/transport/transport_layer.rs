@@ -1,6 +1,6 @@
 use super::{
-    transport::{SipAddr, TransportSender},
-    Transport,
+    connection::{SipAddr, TransportSender},
+    SipConnection,
 };
 use crate::{transport::TransportEvent, Result};
 use std::{
@@ -14,7 +14,7 @@ use tracing::{info, warn};
 #[derive(Default)]
 pub struct TransportLayerInner {
     cancel_token: CancellationToken,
-    listens: Arc<Mutex<HashMap<SipAddr, Transport>>>, // Listen transports
+    listens: Arc<Mutex<HashMap<SipAddr, SipConnection>>>, // Listen transports
 }
 #[derive(Default)]
 
@@ -35,15 +35,15 @@ impl TransportLayer {
         }
     }
 
-    pub fn add_transport(&self, transport: Transport) {
-        self.inner.add_transport(transport)
+    pub fn add_transport(&self, transport: SipConnection) {
+        self.inner.add_connection(transport)
     }
 
     pub fn del_transport(&self, addr: &SipAddr) {
-        self.inner.del_transport(addr)
+        self.inner.del_connection(addr)
     }
 
-    pub async fn lookup(&self, uri: &rsip::uri::Uri) -> Result<Transport> {
+    pub async fn lookup(&self, uri: &rsip::uri::Uri) -> Result<SipConnection> {
         self.inner.lookup(uri, self.outbound.clone()).await
     }
 
@@ -53,18 +53,22 @@ impl TransportLayer {
 }
 
 impl TransportLayerInner {
-    pub fn add_transport(&self, transport: Transport) {
+    pub fn add_connection(&self, connection: SipConnection) {
         self.listens
             .lock()
             .unwrap()
-            .insert(transport.get_addr().to_owned(), transport);
+            .insert(connection.get_addr().to_owned(), connection);
     }
 
-    pub fn del_transport(&self, addr: &SipAddr) {
+    pub fn del_connection(&self, addr: &SipAddr) {
         self.listens.lock().unwrap().remove(addr);
     }
 
-    async fn lookup(&self, uri: &rsip::uri::Uri, outbound: Option<SipAddr>) -> Result<Transport> {
+    async fn lookup(
+        &self,
+        uri: &rsip::uri::Uri,
+        outbound: Option<SipAddr>,
+    ) -> Result<SipConnection> {
         let target = if outbound.is_none() {
             let target_host_port = uri.host_with_port.to_owned();
             let mut r#type = uri.scheme.as_ref().map(|scheme| match scheme {
@@ -137,9 +141,7 @@ impl TransportLayerInner {
                 }
                 listens_ref.lock().unwrap().remove(transport.get_addr());
                 warn!("transport serve_loop exited: {}", transport.get_addr());
-                sender_clone
-                    .send(TransportEvent::TransportClosed(transport))
-                    .ok();
+                sender_clone.send(TransportEvent::Closed(transport)).ok();
             });
         }
         self.cancel_token.cancelled().await;
@@ -148,25 +150,27 @@ impl TransportLayerInner {
 }
 #[cfg(test)]
 mod tests {
-    use crate::{transport::udp::UdpTransport, Result};
+    use crate::{transport::udp::UdpConnection, Result};
     #[tokio::test]
     async fn test_lookup() -> Result<()> {
         let mut tl = super::TransportLayer::new(tokio_util::sync::CancellationToken::new());
 
         let first_uri = "sip:bob@127.0.0.1:5060".try_into().expect("parse uri");
         assert!(tl.lookup(&first_uri).await.is_err());
-        let udp_peer = UdpTransport::create_connection("127.0.0.1:0".parse()?, None).await?;
+        let udp_peer = UdpConnection::create_connection("127.0.0.1:0".parse()?, None).await?;
         let udp_peer_addr = udp_peer.get_addr().to_owned();
         tl.add_transport(udp_peer.into());
 
         let target = tl.lookup(&first_uri).await?;
         assert_eq!(target.get_addr(), &udp_peer_addr);
 
-        let outbound_peer = UdpTransport::create_connection("127.0.0.1:0".parse()?, None).await?;
+        // test outbound
+        let outbound_peer = UdpConnection::create_connection("127.0.0.1:0".parse()?, None).await?;
         let outbound = outbound_peer.get_addr().to_owned();
         tl.add_transport(outbound_peer.into());
         tl.outbound = Some(outbound.clone());
 
+        // must return the outbound transport
         let target = tl.lookup(&first_uri).await?;
         assert_eq!(target.get_addr(), &outbound);
         Ok(())

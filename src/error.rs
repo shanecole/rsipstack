@@ -1,4 +1,4 @@
-use crate::{transaction::key::TransactionKey, transport::transport::SipAddr};
+use crate::{transaction::key::TransactionKey, transport::connection::SipAddr};
 use wasm_bindgen::prelude::*;
 #[derive(Debug, Eq, PartialEq, Clone)]
 pub enum Error {

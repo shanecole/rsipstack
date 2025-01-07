@@ -145,14 +145,14 @@ fn test_transaction_key() -> Result<()> {
         method: rsip::method::Method::Register,
         uri: rsip::Uri {
             scheme: Some(rsip::Scheme::Sips),
-            host_with_port: rsip::Domain::from("example.com").into(),
+            host_with_port: rsip::Domain::from("restsend.com").into(),
             ..Default::default()
         },
         headers: vec![
-            Via::new("SIP/2.0/TLS client.biloxi.example.com:5061;branch=z9hG4bKnashd92").into(),
+            Via::new("SIP/2.0/TLS sip.restsend.com:5061;branch=z9hG4bKnashd92").into(),
             CSeq::new("2 REGISTER").into(),
-            From::new("Bob <sips:bob@biloxi.example.com>;tag=ja743ks76zlflH").into(),
-            CallId::new("1j9FpLxk3uxtm8tn@biloxi.example.com").into(),
+            From::new("Bob <sips:bob@sip.restsend.com>;tag=ja743ks76zlflH").into(),
+            CallId::new("1j9FpLxk3uxtm8tn@sip.restsend.com").into(),
         ]
         .into(),
         version: rsip::Version::V2,
@@ -166,17 +166,17 @@ fn test_transaction_key() -> Result<()> {
             method: Method::Register,
             cseq: 2,
             from_tag: Tag::new("ja743ks76zlflH"),
-            call_id: "1j9FpLxk3uxtm8tn@biloxi.example.com".to_string(),
+            call_id: "1j9FpLxk3uxtm8tn@sip.restsend.com".to_string(),
         })
     );
     let register_resp = rsip::message::Response {
         status_code: rsip::StatusCode::OK,
         version: rsip::Version::V2,
         headers: vec![
-            Via::new("SIP/2.0/TLS client.biloxi.example.com:5061;branch=z9hG4bKnashd92").into(),
+            Via::new("SIP/2.0/TLS client.sip.restsend.com:5061;branch=z9hG4bKnashd92").into(),
             CSeq::new("2 REGISTER").into(),
-            From::new("Bob <sips:bob@biloxi.example.com>;tag=ja743ks76zlflH").into(),
-            CallId::new("1j9FpLxk3uxtm8tn@biloxi.example.com").into(),
+            From::new("Bob <sips:bob@sip.restsend.com>;tag=ja743ks76zlflH").into(),
+            CallId::new("1j9FpLxk3uxtm8tn@sip.restsend.com").into(),
         ]
         .into(),
         body: Default::default(),
@@ -189,7 +189,7 @@ fn test_transaction_key() -> Result<()> {
             method: Method::Register,
             cseq: 2,
             from_tag: Tag::new("ja743ks76zlflH"),
-            call_id: "1j9FpLxk3uxtm8tn@biloxi.example.com".to_string(),
+            call_id: "1j9FpLxk3uxtm8tn@sip.restsend.com".to_string(),
         })
     );
 
@@ -205,7 +205,7 @@ fn test_transaction_key() -> Result<()> {
             method: Method::Invite,
             cseq: 2,
             from_tag: Tag::new("ja743ks76zlflH"),
-            call_id: "1j9FpLxk3uxtm8tn@biloxi.example.com".to_string(),
+            call_id: "1j9FpLxk3uxtm8tn@sip.restsend.com".to_string(),
         })
     );
     Ok(())

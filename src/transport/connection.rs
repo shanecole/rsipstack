@@ -1,4 +1,4 @@
-use super::{channel::ChannelTransport, udp::UdpTransport, ws_wasm::WsWasmTransport};
+use super::{channel::ChannelConnection, udp::UdpConnection, ws_wasm::WsWasmConnection};
 use crate::Result;
 use rsip::{prelude::HeadersExt, HostWithPort, Param, SipMessage};
 use std::{fmt, net::SocketAddr};
@@ -6,9 +6,9 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 #[derive(Clone)]
 pub enum TransportEvent {
-    IncomingMessage(SipMessage, Transport, SipAddr),
-    NewTransport(Transport),
-    TransportClosed(Transport),
+    Incoming(SipMessage, SipConnection, SipAddr),
+    New(SipConnection),
+    Closed(SipConnection),
     Terminate, // Terminate the transport layer
 }
 #[derive(Debug, Eq, PartialEq, Clone, Hash)]
@@ -24,19 +24,16 @@ pub const KEEPALIVE_REQUEST: &[u8] = b"\r\n\r\n";
 pub const KEEPALIVE_RESPONSE: &[u8] = b"\r\n";
 
 #[derive(Clone, Debug)]
-pub enum Transport {
-    //Tcp(tcp::TcpTransport),
-    //Tls(tls::TlsTransport),
-    Udp(UdpTransport),
-    WsWasm(WsWasmTransport),
-    Channel(ChannelTransport),
-    //Ws(ws::WsTransport),
+pub enum SipConnection {
+    Udp(UdpConnection),
+    WsWasm(WsWasmConnection),
+    Channel(ChannelConnection),
 }
 
-impl Transport {
+impl SipConnection {
     pub fn is_reliable(&self) -> bool {
         match self {
-            Transport::Udp(_) => false,
+            SipConnection::Udp(_) => false,
             _ => true,
         }
     }
@@ -44,9 +41,9 @@ impl Transport {
         match self {
             //Transport::Tcp(transport) => transport.get_addr(),
             //Transport::Tls(transport) => transport.get_addr(),
-            Transport::Udp(transport) => transport.get_addr(),
-            Transport::WsWasm(transport) => transport.get_addr(),
-            Transport::Channel(transport) => transport.get_addr(),
+            SipConnection::Udp(transport) => transport.get_addr(),
+            SipConnection::WsWasm(transport) => transport.get_addr(),
+            SipConnection::Channel(transport) => transport.get_addr(),
             //Transport::Ws(transport) => transport.get_addr(),
         }
     }
@@ -54,9 +51,9 @@ impl Transport {
         match self {
             //Transport::Tcp(transport) => transport.send(msg).await,
             //Transport::Tls(transport) => transport.send(msg).await,
-            Transport::Udp(transport) => transport.send(msg).await,
-            Transport::WsWasm(transport) => transport.send(msg).await,
-            Transport::Channel(transport) => transport.send(msg).await,
+            SipConnection::Udp(transport) => transport.send(msg).await,
+            SipConnection::WsWasm(transport) => transport.send(msg).await,
+            SipConnection::Channel(transport) => transport.send(msg).await,
             //Transport::Ws(transport) => transport.send(msg).await,
         }
     }
@@ -64,15 +61,15 @@ impl Transport {
         match self {
             //Transport::Tcp(transport) => transport.server_loop(sender).await,
             //Transport::Tls(transport) => transport.server_loop(sender).await,
-            Transport::Udp(transport) => transport.serve_loop(sender).await,
-            Transport::WsWasm(transport) => transport.serve_loop(sender).await,
-            Transport::Channel(transport) => transport.serve_loop(sender).await,
+            SipConnection::Udp(transport) => transport.serve_loop(sender).await,
+            SipConnection::WsWasm(transport) => transport.serve_loop(sender).await,
+            SipConnection::Channel(transport) => transport.serve_loop(sender).await,
             //Transport::Ws(transport) => transport.server_loop(sender).await,
         }
     }
 }
 
-impl Transport {
+impl SipConnection {
     fn parse_target_from_via(via: &rsip::headers::untyped::Via) -> Result<HostWithPort> {
         let mut host_with_port = via.uri()?.host_with_port;
         if let Ok(params) = via.params() {
@@ -97,14 +94,14 @@ impl Transport {
     }
 }
 
-impl fmt::Display for Transport {
+impl fmt::Display for SipConnection {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             //Transport::Tcp(_) => write!(f, "TCP"),
             //Transport::Tls(_) => write!(f, "TLS"),
-            Transport::Udp(t) => write!(f, "UDP {}", t),
-            Transport::WsWasm(t) => write!(f, "WS-WASM {}", t),
-            Transport::Channel(t) => write!(f, "CHANNEL {}", t),
+            SipConnection::Udp(t) => write!(f, "UDP {}", t),
+            SipConnection::WsWasm(t) => write!(f, "WS-WASM {}", t),
+            SipConnection::Channel(t) => write!(f, "CHANNEL {}", t),
             //Transport::Ws(_) => write!(f, "WS"),
         }
     }
@@ -136,8 +133,8 @@ impl TryFrom<rsip::host_with_port::HostWithPort> for SipAddr {
     }
 }
 
-impl From<UdpTransport> for Transport {
-    fn from(transport: UdpTransport) -> Self {
-        Transport::Udp(transport)
+impl From<UdpConnection> for SipConnection {
+    fn from(transport: UdpConnection) -> Self {
+        SipConnection::Udp(transport)
     }
 }

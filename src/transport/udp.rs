@@ -1,10 +1,10 @@
 use super::{
-    transport::{SipAddr, TransportSender},
-    Transport,
+    connection::{SipAddr, TransportSender},
+    SipConnection,
 };
 use crate::{
     transport::{
-        transport::{KEEPALIVE_REQUEST, KEEPALIVE_RESPONSE},
+        connection::{KEEPALIVE_REQUEST, KEEPALIVE_RESPONSE},
         TransportEvent,
     },
     Result,
@@ -12,17 +12,17 @@ use crate::{
 use std::{net::SocketAddr, sync::Arc};
 use tokio::net::UdpSocket;
 use tracing::{debug, error, info, instrument, trace};
-struct UdpTransportInner {
+struct UdpInner {
     pub(self) conn: UdpSocket,
     pub(self) addr: SipAddr,
 }
 
 #[derive(Clone)]
-pub struct UdpTransport {
-    inner: Arc<UdpTransportInner>,
+pub struct UdpConnection {
+    inner: Arc<UdpInner>,
 }
 
-impl UdpTransport {
+impl UdpConnection {
     pub async fn create_connection(
         local: SocketAddr,
         external: Option<SocketAddr>,
@@ -34,10 +34,10 @@ impl UdpTransport {
             addr: external.unwrap_or(conn.local_addr()?),
         };
 
-        let t = UdpTransport {
-            inner: Arc::new(UdpTransportInner { addr, conn }),
+        let t = UdpConnection {
+            inner: Arc::new(UdpInner { addr, conn }),
         };
-        info!("created UDP transport: {} external: {:?}", t, external);
+        info!("created UDP connection: {} external: {:?}", t, external);
         Ok(t)
     }
 
@@ -96,18 +96,21 @@ impl UdpTransport {
                 self.get_addr(),
                 undecoded
             );
-            let from = SipAddr {
-                r#type: Some(rsip::transport::Transport::Udp),
-                addr,
-            };
-            let event = TransportEvent::IncomingMessage(msg, Transport::Udp(self.clone()), from);
-            sender.send(event)?;
+
+            sender.send(TransportEvent::Incoming(
+                msg,
+                SipConnection::Udp(self.clone()),
+                SipAddr {
+                    r#type: Some(rsip::transport::Transport::Udp),
+                    addr,
+                },
+            ))?;
         }
     }
 
     #[instrument(skip(self, msg), fields(addr = %self.get_addr()))]
     pub async fn send(&self, msg: rsip::SipMessage) -> crate::Result<()> {
-        let target = Transport::get_target(&msg)?;
+        let target = SipConnection::get_target(&msg)?;
         let buf = msg.to_string();
 
         trace!("sending {} -> {} {}", buf.len(), target, buf);
@@ -153,7 +156,7 @@ impl UdpTransport {
     }
 }
 
-impl std::fmt::Display for UdpTransport {
+impl std::fmt::Display for UdpConnection {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self.inner.conn.local_addr() {
             Ok(addr) => write!(f, "{}", addr),
@@ -162,13 +165,13 @@ impl std::fmt::Display for UdpTransport {
     }
 }
 
-impl std::fmt::Debug for UdpTransport {
+impl std::fmt::Debug for UdpConnection {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.inner.addr)
     }
 }
 
-impl Drop for UdpTransportInner {
+impl Drop for UdpInner {
     fn drop(&mut self) {
         info!("dropping UDP transport: {}", self.addr);
     }
@@ -178,8 +181,9 @@ impl Drop for UdpTransportInner {
 mod tests {
     use crate::{
         transport::{
-            transport::{KEEPALIVE_REQUEST, KEEPALIVE_RESPONSE},
-            udp::UdpTransport,
+            connection::{KEEPALIVE_REQUEST, KEEPALIVE_RESPONSE},
+            udp::UdpConnection,
+            TransportEvent,
         },
         Result,
     };
@@ -188,8 +192,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_udp_keepalive() -> Result<()> {
-        let peer_bob = UdpTransport::create_connection("127.0.0.1:0".parse()?, None).await?;
-        let peer_alice = UdpTransport::create_connection("127.0.0.1:0".parse()?, None).await?;
+        let peer_bob = UdpConnection::create_connection("127.0.0.1:0".parse()?, None).await?;
+        let peer_alice = UdpConnection::create_connection("127.0.0.1:0".parse()?, None).await?;
         let (alice_tx, _) = unbounded_channel();
 
         let bob_loop = async {
@@ -225,8 +229,8 @@ mod tests {
             .with_line_number(true)
             .try_init()
             .ok();
-        let peer_bob = UdpTransport::create_connection("127.0.0.1:0".parse()?, None).await?;
-        let peer_alice = UdpTransport::create_connection("127.0.0.1:0".parse()?, None).await?;
+        let peer_bob = UdpConnection::create_connection("127.0.0.1:0".parse()?, None).await?;
+        let peer_alice = UdpConnection::create_connection("127.0.0.1:0".parse()?, None).await?;
         let (alice_tx, _) = unbounded_channel();
         let (bob_tx, mut bob_rx) = unbounded_channel();
 
@@ -252,10 +256,10 @@ mod tests {
             }
             event = bob_rx.recv() => {
                 match event {
-                    Some(crate::transport::TransportEvent::IncomingMessage(msg, transport, from)) => {
+                    Some(TransportEvent::Incoming(msg, connection, from)) => {
                         assert!(msg.is_request());
                         assert_eq!(from, peer_alice.get_addr().to_owned());
-                        assert_eq!(transport.get_addr(), peer_bob.get_addr());
+                        assert_eq!(connection.get_addr(), peer_bob.get_addr());
                     }
                     _ => {
                         assert!(false, "unexpected event");

@@ -1,6 +1,6 @@
 use rsipstack::{
     transaction::IncomingRequest,
-    transport::{udp::UdpTransport, TransportLayer},
+    transport::{udp::UdpConnection, TransportLayer},
     EndpointBuilder, Error,
 };
 use std::sync::Arc;
@@ -22,8 +22,8 @@ async fn main() -> rsipstack::Result<()> {
     let token = CancellationToken::new();
     let transport_layer = TransportLayer::new(token.clone());
 
-    let transport = UdpTransport::create_connection("0.0.0.0:15060".parse()?, None).await?;
-    transport_layer.add_transport(transport.into());
+    let connection = UdpConnection::create_connection("0.0.0.0:15060".parse()?, None).await?;
+    transport_layer.add_transport(connection.into());
 
     let user_agent = Arc::new(
         EndpointBuilder::new()
@@ -75,12 +75,12 @@ async fn main() -> rsipstack::Result<()> {
     let serve_loop = async move {
         while let Some(Some(IncomingRequest {
             request,
-            transport,
+            connection,
             from,
         })) = incoming.recv().await
         {
             info!("Received request: {} {:?}", from, request);
-            let mut tx = user_agent_ref.server_transaction(request, transport)?;
+            let mut tx = user_agent_ref.server_transaction(request, connection)?;
 
             tokio::spawn(async move {
                 let done_response = rsip::Response {
