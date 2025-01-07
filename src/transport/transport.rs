@@ -6,7 +6,7 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 #[derive(Clone)]
 pub enum TransportEvent {
-    IncomingMessage(SipMessage, Transport),
+    IncomingMessage(SipMessage, Transport, SipAddr),
     NewTransport(Transport),
     TransportClosed(Transport),
     Terminate, // Terminate the transport layer
@@ -47,7 +47,6 @@ impl Transport {
             Transport::Udp(transport) => transport.get_addr(),
             Transport::WsWasm(transport) => transport.get_addr(),
             Transport::Channel(transport) => transport.get_addr(),
-
             //Transport::Ws(transport) => transport.get_addr(),
         }
     }

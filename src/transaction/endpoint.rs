@@ -95,9 +95,9 @@ impl EndpointInner {
     async fn process_transport_layer(&self, mut transport_rx: TransportReceiver) -> Result<()> {
         while let Some(event) = transport_rx.recv().await {
             match event {
-                TransportEvent::IncomingMessage(msg, transport) => {
-                    trace!("incoming message {} from {}", msg, transport);
-                    self.on_received_message(msg, transport).await?;
+                TransportEvent::IncomingMessage(msg, transport, from) => {
+                    trace!("incoming message {} from {} <- {}", msg, transport, from);
+                    self.on_received_message(msg, transport, from).await?;
                 }
                 TransportEvent::NewTransport(t) => {
                     trace!("new transport {} ", t);
@@ -148,7 +148,12 @@ impl EndpointInner {
     }
 
     // receive message from transport layer
-    pub async fn on_received_message(&self, msg: SipMessage, transport: Transport) -> Result<()> {
+    pub async fn on_received_message(
+        &self,
+        msg: SipMessage,
+        transport: Transport,
+        from: SipAddr,
+    ) -> Result<()> {
         if let SipMessage::Request(ref req) = msg {
             if req.method != Method::Ack {
                 if self.incoming_sender.lock().unwrap().is_none() {
@@ -161,7 +166,8 @@ impl EndpointInner {
                 }
                 let event = IncomingRequest {
                     request: msg.try_into()?,
-                    transport: transport,
+                    transport,
+                    from,
                 };
                 self.incoming_sender
                     .lock()
@@ -208,11 +214,7 @@ impl EndpointInner {
         self.transactions.lock().unwrap().remove(key);
 
         if let Some(msg) = last_message {
-            if self.finished_transactions.lock().unwrap().contains_key(key) {
-                return;
-            }
-
-            let timer_k_duration = if let SipMessage::Request(_) = msg {
+            let timer_k_duration = if msg.is_request() {
                 self.t4
             } else {
                 self.t1x64

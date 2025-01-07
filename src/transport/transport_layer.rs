@@ -7,9 +7,9 @@ use std::{
     collections::HashMap,
     sync::{Arc, Mutex},
 };
-use tokio::{ select};
+use tokio::select;
 use tokio_util::sync::CancellationToken;
-use tracing::info;
+use tracing::{info, warn};
 
 #[derive(Default)]
 pub struct TransportLayerInner {
@@ -65,7 +65,7 @@ impl TransportLayerInner {
     }
 
     async fn lookup(&self, uri: &rsip::uri::Uri, outbound: Option<SipAddr>) -> Result<Transport> {
-        let target = if outbound.is_some(){
+        let target = if outbound.is_none() {
             let target_host_port = uri.host_with_port.to_owned();
             let mut r#type = uri.scheme.as_ref().map(|scheme| match scheme {
                 rsip::Scheme::Sip => rsip::transport::Transport::Udp,
@@ -73,7 +73,7 @@ impl TransportLayerInner {
                 rsip::Scheme::Other(schema) => {
                     if schema.eq_ignore_ascii_case("ws") {
                         rsip::transport::Transport::Ws
-                    } else if schema.eq_ignore_ascii_case("wss")  {
+                    } else if schema.eq_ignore_ascii_case("wss") {
                         rsip::transport::Transport::Wss
                     } else {
                         rsip::transport::Transport::Udp
@@ -86,10 +86,7 @@ impl TransportLayerInner {
                 }
             });
             let addr = target_host_port.try_into()?;
-            SipAddr {
-                r#type,
-                addr,
-            }
+            SipAddr { r#type, addr }
         } else {
             outbound.unwrap()
         };
@@ -139,12 +136,39 @@ impl TransportLayerInner {
                     }
                 }
                 listens_ref.lock().unwrap().remove(transport.get_addr());
+                warn!("transport serve_loop exited: {}", transport.get_addr());
                 sender_clone
                     .send(TransportEvent::TransportClosed(transport))
                     .ok();
             });
         }
         self.cancel_token.cancelled().await;
+        Ok(())
+    }
+}
+#[cfg(test)]
+mod tests {
+    use crate::{transport::udp::UdpTransport, Result};
+    #[tokio::test]
+    async fn test_lookup() -> Result<()> {
+        let mut tl = super::TransportLayer::new(tokio_util::sync::CancellationToken::new());
+
+        let first_uri = "sip:bob@127.0.0.1:5060".try_into().expect("parse uri");
+        assert!(tl.lookup(&first_uri).await.is_err());
+        let udp_peer = UdpTransport::create_connection("127.0.0.1:0".parse()?, None).await?;
+        let udp_peer_addr = udp_peer.get_addr().to_owned();
+        tl.add_transport(udp_peer.into());
+
+        let target = tl.lookup(&first_uri).await?;
+        assert_eq!(target.get_addr(), &udp_peer_addr);
+
+        let outbound_peer = UdpTransport::create_connection("127.0.0.1:0".parse()?, None).await?;
+        let outbound = outbound_peer.get_addr().to_owned();
+        tl.add_transport(outbound_peer.into());
+        tl.outbound = Some(outbound.clone());
+
+        let target = tl.lookup(&first_uri).await?;
+        assert_eq!(target.get_addr(), &outbound);
         Ok(())
     }
 }

@@ -1,4 +1,4 @@
-use crate::transport::Transport;
+use crate::transport::{transport::SipAddr, Transport};
 use key::TransactionKey;
 use std::time::Duration;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
@@ -13,6 +13,7 @@ mod tests;
 pub struct IncomingRequest {
     pub request: rsip::Request,
     pub transport: Transport,
+    pub from: SipAddr,
 }
 
 pub type RequestReceiver = UnboundedReceiver<Option<IncomingRequest>>;

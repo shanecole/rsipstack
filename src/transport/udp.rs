@@ -1,3 +1,7 @@
+use super::{
+    transport::{SipAddr, TransportSender},
+    Transport,
+};
 use crate::{
     transport::{
         transport::{KEEPALIVE_REQUEST, KEEPALIVE_RESPONSE},
@@ -8,11 +12,6 @@ use crate::{
 use std::{net::SocketAddr, sync::Arc};
 use tokio::net::UdpSocket;
 use tracing::{debug, error, info, instrument, trace};
-use super::{
-    transport::{SipAddr, TransportSender},
-    Transport,
-};
-
 struct UdpTransportInner {
     pub(self) conn: UdpSocket,
     pub(self) addr: SipAddr,
@@ -32,7 +31,7 @@ impl UdpTransport {
 
         let addr = SipAddr {
             r#type: Some(rsip::transport::Transport::Udp),
-            addr: external.unwrap_or(local),
+            addr: external.unwrap_or(conn.local_addr()?),
         };
 
         let t = UdpTransport {
@@ -70,7 +69,7 @@ impl UdpTransport {
                 Ok(s) => s,
                 Err(e) => {
                     info!(
-                        "Decoding text from: {} error: {} buf: {:?}",
+                        "decoding text from: {} error: {} buf: {:?}",
                         addr,
                         e,
                         &buf[..len]
@@ -83,7 +82,7 @@ impl UdpTransport {
                 Ok(msg) => msg,
                 Err(e) => {
                     info!(
-                        "Error parsing SIP message from: {} error: {} buf: {}",
+                        "error parsing SIP message from: {} error: {} buf: {}",
                         addr, e, undecoded
                     );
                     continue;
@@ -97,8 +96,11 @@ impl UdpTransport {
                 self.get_addr(),
                 undecoded
             );
-
-            let event = TransportEvent::IncomingMessage(msg, Transport::Udp(self.clone()));
+            let from = SipAddr {
+                r#type: Some(rsip::transport::Transport::Udp),
+                addr,
+            };
+            let event = TransportEvent::IncomingMessage(msg, Transport::Udp(self.clone()), from);
             sender.send(event)?;
         }
     }
@@ -132,15 +134,18 @@ impl UdpTransport {
             })
             .map(|_| ())
     }
-    
+
     #[instrument(skip(self, buf), fields(addr = %self.get_addr()))]
     pub async fn recv_raw(&self, buf: &mut [u8]) -> Result<(usize, SipAddr)> {
         let (len, addr) = self.inner.conn.recv_from(buf).await?;
         trace!("received {} -> {}", len, addr);
-        Ok((len, SipAddr {
-            r#type: Some(rsip::transport::Transport::Udp),
-            addr,
-        }))
+        Ok((
+            len,
+            SipAddr {
+                r#type: Some(rsip::transport::Transport::Udp),
+                addr,
+            },
+        ))
     }
 
     pub fn get_addr(&self) -> &SipAddr {
@@ -166,5 +171,101 @@ impl std::fmt::Debug for UdpTransport {
 impl Drop for UdpTransportInner {
     fn drop(&mut self) {
         info!("dropping UDP transport: {}", self.addr);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        transport::{
+            transport::{KEEPALIVE_REQUEST, KEEPALIVE_RESPONSE},
+            udp::UdpTransport,
+        },
+        Result,
+    };
+    use std::time::Duration;
+    use tokio::{select, sync::mpsc::unbounded_channel, time::sleep};
+
+    #[tokio::test]
+    async fn test_udp_keepalive() -> Result<()> {
+        let peer_bob = UdpTransport::create_connection("127.0.0.1:0".parse()?, None).await?;
+        let peer_alice = UdpTransport::create_connection("127.0.0.1:0".parse()?, None).await?;
+        let (alice_tx, _) = unbounded_channel();
+
+        let bob_loop = async {
+            sleep(Duration::from_millis(20)).await; // wait for serve_loop to start
+                                                    // send keep alive
+            peer_bob
+                .send_raw(KEEPALIVE_REQUEST, peer_alice.get_addr().to_owned())
+                .await
+                .expect("send_raw");
+            // wait for keep alive response
+            let buf = &mut [0u8; 2048];
+            let (n, _) = peer_bob.recv_raw(buf).await.expect("recv_raw");
+            assert_eq!(&buf[..n], KEEPALIVE_RESPONSE);
+        };
+
+        select! {
+            _ = peer_alice.serve_loop(alice_tx) => {
+                assert!(false, "serve_loop exited");
+            }
+            _ = bob_loop => {}
+            _= sleep(Duration::from_millis(200)) => {
+                assert!(false, "timeout waiting for keep alive response");
+            }
+        };
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_udp_recv_sip_message() -> Result<()> {
+        tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::TRACE)
+            .with_file(true)
+            .with_line_number(true)
+            .try_init()
+            .ok();
+        let peer_bob = UdpTransport::create_connection("127.0.0.1:0".parse()?, None).await?;
+        let peer_alice = UdpTransport::create_connection("127.0.0.1:0".parse()?, None).await?;
+        let (alice_tx, _) = unbounded_channel();
+        let (bob_tx, mut bob_rx) = unbounded_channel();
+
+        let send_loop = async {
+            sleep(Duration::from_millis(20)).await; // wait for serve_loop to start
+            let msg_1 = "REGISTER sip:bob@restsend.com SIP/2.0\r\nCSeq: 1 REGISTER\r\n\r\n";
+            peer_alice
+                .send_raw(msg_1.as_bytes(), peer_bob.get_addr().to_owned())
+                .await
+                .expect("send_raw");
+            sleep(Duration::from_secs(3)).await;
+        };
+
+        select! {
+            _ = peer_alice.serve_loop(alice_tx) => {
+                assert!(false, "alice serve_loop exited");
+            }
+            _ = peer_bob.serve_loop(bob_tx) => {
+                assert!(false, "bob serve_loop exited");
+            }
+            _ = send_loop => {
+                assert!(false, "send_loop exited");
+            }
+            event = bob_rx.recv() => {
+                match event {
+                    Some(crate::transport::TransportEvent::IncomingMessage(msg, transport, from)) => {
+                        assert!(msg.is_request());
+                        assert_eq!(from, peer_alice.get_addr().to_owned());
+                        assert_eq!(transport.get_addr(), peer_bob.get_addr());
+                    }
+                    _ => {
+                        assert!(false, "unexpected event");
+                    }
+                }
+            }
+            _= sleep(Duration::from_millis(500)) => {
+                assert!(false, "timeout waiting");
+            }
+        };
+        Ok(())
     }
 }

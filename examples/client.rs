@@ -73,8 +73,13 @@ async fn main() -> rsipstack::Result<()> {
     let mut incoming = user_agent_ref.incoming_requests();
 
     let serve_loop = async move {
-        while let Some(Some(IncomingRequest { request, transport })) = incoming.recv().await {
-            info!("Received request: {:?}", request);
+        while let Some(Some(IncomingRequest {
+            request,
+            transport,
+            from,
+        })) = incoming.recv().await
+        {
+            info!("Received request: {} {:?}", from, request);
             let mut tx = user_agent_ref.server_transaction(request, transport)?;
 
             tokio::spawn(async move {
