@@ -26,7 +26,7 @@ async fn test_endpoint_recvrequests() {
         .expect("create_test_endpoint");
 
     let addr = endpoint
-        .contacts()
+        .get_contacts()
         .get(0)
         .expect("must has connection")
         .to_owned();
@@ -38,7 +38,7 @@ async fn test_endpoint_recvrequests() {
         )
         .await
         .expect("create_connection");
-        let buf = "REGISTER sips:bob@restsend.com SIP/2.0\r\n\r\n".as_bytes();
+        let buf = "REGISTER sips:bob@restsend.com SIP/2.0\r\nVia: SIP/2.0/UDP 127.0.0.1:5061;branch=z9hG4bKnashd92\r\n\r\n".as_bytes();
         test_conn.send_raw(buf, addr).await.expect("send_raw");
         sleep(Duration::from_secs(1)).await;
     };

@@ -7,6 +7,7 @@ use rsip::headers::*;
 use std::time::Duration;
 use tokio::{select, sync::mpsc::unbounded_channel, time::sleep};
 use tokio_util::sync::CancellationToken;
+use tracing::info;
 
 #[tokio::test]
 async fn test_server_transaction() {
@@ -22,7 +23,7 @@ async fn test_server_transaction() {
         r#type: Some(rsip::transport::Transport::Udp),
         addr: "127.0.0.1:2025".parse().expect("parse addr"),
     };
-    let (incoming_tx, mut incoming_rx) = unbounded_channel();
+    let (incoming_tx, incoming_rx) = unbounded_channel();
     let (outgoing_tx, mut outgoing_rx) = unbounded_channel();
 
     let mock_conn: SipConnection =
@@ -40,7 +41,7 @@ async fn test_server_transaction() {
         .build();
 
     let addr = endpoint
-        .contacts()
+        .get_contacts()
         .get(0)
         .expect("must has connection")
         .to_owned();
@@ -76,8 +77,9 @@ async fn test_server_transaction() {
         // wait 100 tring
         let resp_1xx = outgoing_rx.recv().await.expect("outgoing_rx");
         match resp_1xx {
-            TransportEvent::Incoming(msg, conn, addr) => match msg {
+            TransportEvent::Incoming(msg, _, _) => match msg {
                 rsip::SipMessage::Response(resp) => {
+                    info!("resp: {:?}", resp);
                     assert_eq!(resp.status_code, rsip::StatusCode::Trying);
                 }
                 _ => {
@@ -88,38 +90,49 @@ async fn test_server_transaction() {
                 assert!(false, "unexpected event");
             }
         };
+
+        let must_200_resp = async {
+            let resp_200 = outgoing_rx.recv().await.expect("outgoing_rx");
+            match resp_200 {
+                TransportEvent::Incoming(msg, _, _) => match msg {
+                    rsip::SipMessage::Response(resp) => {
+                        assert_eq!(resp.status_code, rsip::StatusCode::OK);
+                    }
+                    _ => {
+                        assert!(false, "unexpected message");
+                    }
+                },
+                _ => {
+                    assert!(false, "unexpected event");
+                }
+            }
+        };
+
+        select! {
+            _ = must_200_resp => {}
+            _ = sleep(Duration::from_millis(500)) => {
+                assert!(false, "timeout waiting");
+            }
+        };
     };
 
     let incoming_loop = async {
         let mut incoming = endpoint.incoming_transactions();
         let mut tx = incoming.recv().await.unwrap().expect("incoming");
-
-        while let Some(msg) = tx.receive().await {
-            match msg {
-                rsip::SipMessage::Request(req) => {
-                    assert_eq!(req.method, rsip::method::Method::Register);
-
-                    let headers = req.headers.clone();
-                    let done_response = rsip::Response {
-                        status_code: rsip::StatusCode::OK,
-                        version: rsip::Version::V2,
-                        headers,
-                        ..Default::default()
-                    };
-                    tx.respond(done_response).await.expect("respond 200");
-                    sleep(Duration::from_secs(2)).await;
-                }
-                _ => {
-                    assert!(false, "unexpected message");
-                }
-            }
-        }
+        assert_eq!(tx.original.method, rsip::method::Method::Register);
+        let headers = tx.original.headers.clone();
+        let done_response = rsip::Response {
+            status_code: rsip::StatusCode::OK,
+            version: rsip::Version::V2,
+            headers,
+            ..Default::default()
+        };
+        tx.respond(done_response).await.expect("respond 200");
         sleep(Duration::from_secs(2)).await;
     };
 
     select! {
         _ = send_loop => {
-            assert!(false, "must not reach here");
         }
         _ = endpoint.serve()=> {}
         _ = incoming_loop => {

@@ -9,6 +9,7 @@ use crate::{
     },
     Result,
 };
+use rsip::prelude::HeadersExt;
 use std::{net::SocketAddr, sync::Arc};
 use tokio::net::UdpSocket;
 use tracing::{debug, error, info, instrument, trace};
@@ -83,6 +84,17 @@ impl UdpConnection {
                 Err(e) => {
                     info!(
                         "error parsing SIP message from: {} error: {} buf: {}",
+                        addr, e, undecoded
+                    );
+                    continue;
+                }
+            };
+
+            let msg = match SipConnection::update_msg_received(msg, addr) {
+                Ok(msg) => msg,
+                Err(e) => {
+                    info!(
+                        "error updating SIP via from: {} error: {:?} buf: {}",
                         addr, e, undecoded
                     );
                     continue;
@@ -230,7 +242,7 @@ mod tests {
 
         let send_loop = async {
             sleep(Duration::from_millis(20)).await; // wait for serve_loop to start
-            let msg_1 = "REGISTER sip:bob@restsend.com SIP/2.0\r\nCSeq: 1 REGISTER\r\n\r\n";
+            let msg_1 = "REGISTER sip:bob@restsend.com SIP/2.0\r\nVia: SIP/2.0/UDP 127.0.0.1:5061;branch=z9hG4bKnashd92\r\nCSeq: 1 REGISTER\r\n\r\n";
             peer_alice
                 .send_raw(msg_1.as_bytes(), peer_bob.get_addr().to_owned())
                 .await

@@ -47,10 +47,10 @@ impl TransportLayer {
         self.inner.lookup(uri, self.outbound.clone()).await
     }
 
-    pub async fn serve(&self, sender: TransportSender) -> Result<()> {
-        self.inner.serve(sender).await
+    pub async fn serve_listens(&self, sender: TransportSender) -> Result<()> {
+        self.inner.serve_listens(sender).await
     }
-    pub fn contacts(&self) -> Vec<SipAddr> {
+    pub fn get_contacts(&self) -> Vec<SipAddr> {
         self.inner.listens.lock().unwrap().keys().cloned().collect()
     }
 }
@@ -127,9 +127,8 @@ impl TransportLayerInner {
         ));
     }
 
-    async fn serve(&self, sender: TransportSender) -> Result<()> {
+    async fn serve_listens(&self, sender: TransportSender) -> Result<()> {
         let listens = self.listens.lock().unwrap().clone();
-
         for (_, transport) in listens {
             let sender = sender.clone();
             let sub_token = self.cancel_token.child_token();
@@ -147,7 +146,6 @@ impl TransportLayerInner {
                 sender_clone.send(TransportEvent::Closed(transport)).ok();
             });
         }
-        self.cancel_token.cancelled().await;
         Ok(())
     }
 }

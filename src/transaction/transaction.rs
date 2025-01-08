@@ -4,7 +4,7 @@ use super::{SipConnection, TransactionState, TransactionTimer, TransactionType};
 use crate::{Error, Result};
 use rsip::{Method, Request, Response, SipMessage};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
-use tracing::{debug, info, instrument, span, warn, Level, Span};
+use tracing::{debug, info, instrument, span, Level, Span};
 
 pub type TransactionEventReceiver = UnboundedReceiver<TransactionEvent>;
 pub type TransactionEventSender = UnboundedSender<TransactionEvent>;
@@ -246,6 +246,13 @@ impl Transaction {
         }
         None
     }
+
+    pub async fn send_trying(&mut self) -> Result<()> {
+        let response =
+            self.endpoint_inner
+                .make_response(&self.original, rsip::StatusCode::Trying, None);
+        self.respond(response).await
+    }
 }
 
 impl Transaction {
@@ -258,7 +265,7 @@ impl Transaction {
             .map_err(|e| Error::TransactionError(e.to_string(), self.key.clone()))
     }
 
-    pub async fn on_received_request(
+    async fn on_received_request(
         &mut self,
         req: Request,
         connection: Option<SipConnection>,
@@ -271,21 +278,10 @@ impl Transaction {
             self.connection = connection;
         }
         match self.state {
-            TransactionState::Calling => {
-                // auto respond 100 Trying
-                let response =
-                    self.endpoint_inner
-                        .make_response(&req, rsip::StatusCode::Trying, None);
-                self.respond(response).await.ok();
-                return Some(SipMessage::Request(req));
-            }
             TransactionState::Trying | TransactionState::Proceeding => {
                 // retransmission of last response
                 if let Some(last_response) = &self.last_response {
                     self.respond(last_response.to_owned()).await.ok();
-                } else {
-                    warn!("received request before sending response");
-                    return Some(SipMessage::Request(req));
                 }
             }
             TransactionState::Completed => {

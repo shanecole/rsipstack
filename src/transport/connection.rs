@@ -1,6 +1,10 @@
 use super::{channel::ChannelConnection, udp::UdpConnection, ws_wasm::WsWasmConnection};
-use crate::Result;
-use rsip::{prelude::HeadersExt, HostWithPort, Param, SipMessage};
+use crate::{transaction::key, Result};
+use rsip::{
+    param::{OtherParam, OtherParamValue, Received},
+    prelude::{HeadersExt, ToTypedHeader},
+    HostWithPort, Param, SipMessage,
+};
 use std::{fmt, net::SocketAddr};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
@@ -69,15 +73,53 @@ impl SipConnection {
 }
 
 impl SipConnection {
+    pub fn update_msg_received(msg: SipMessage, addr: SocketAddr) -> Result<SipMessage> {
+        match msg {
+            SipMessage::Request(mut req) => {
+                let via = req.via_header_mut()?;
+                Self::build_via_received(via, addr)?;
+                Ok(req.into())
+            }
+            SipMessage::Response(mut resp) => {
+                let via = resp.via_header_mut()?;
+                Self::build_via_received(via, addr)?;
+                Ok(resp.into())
+            }
+        }
+    }
+
+    pub fn build_via_received(via: &mut rsip::headers::Via, addr: SocketAddr) -> Result<()> {
+        let received = addr.into();
+        let typed_via = via.typed()?;
+        if typed_via.uri.host_with_port == received {
+            return Ok(());
+        }
+        *via = typed_via
+            .with_param(Param::Received(Received::new(received.host.to_string())))
+            .with_param(Param::Other(
+                OtherParam::new("rport"),
+                Some(OtherParamValue::new(addr.port().to_string())),
+            ))
+            .into();
+        Ok(())
+    }
+
     fn parse_target_from_via(via: &rsip::headers::untyped::Via) -> Result<HostWithPort> {
         let mut host_with_port = via.uri()?.host_with_port;
-        if let Ok(params) = via.params() {
+        if let Ok(params) = via.params().as_ref() {
             for param in params {
-                if let Param::Received(v) = param {
-                    if let Ok(addr) = v.parse() {
-                        host_with_port.host = addr.into();
-                        break;
+                match param {
+                    Param::Received(v) => {
+                        if let Ok(addr) = v.parse() {
+                            host_with_port.host = addr.into();
+                        }
                     }
+                    Param::Other(key, Some(value)) if key.value().eq_ignore_ascii_case("rport") => {
+                        if let Ok(port) = value.value().try_into() {
+                            host_with_port.port = Some(port);
+                        }
+                    }
+                    _ => {}
                 }
             }
         }
@@ -141,5 +183,56 @@ impl From<UdpConnection> for SipConnection {
 impl From<ChannelConnection> for SipConnection {
     fn from(connection: ChannelConnection) -> Self {
         SipConnection::Channel(connection)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::net::SocketAddr;
+
+    use rsip::{headers::*, prelude::HeadersExt, HostWithPort, SipMessage};
+
+    use super::SipConnection;
+
+    #[test]
+    fn test_via_received() {
+        let register_req = rsip::message::Request {
+            method: rsip::method::Method::Register,
+            uri: rsip::Uri {
+                scheme: Some(rsip::Scheme::Sip),
+                host_with_port: rsip::HostWithPort::try_from("127.0.0.1:2025")
+                    .expect("host_port parse")
+                    .into(),
+                ..Default::default()
+            },
+            headers: vec![Via::new("SIP/2.0/TLS restsend.com:5061;branch=z9hG4bKnashd92").into()]
+                .into(),
+            version: rsip::Version::V2,
+            body: Default::default(),
+        };
+
+        let parse_addr =
+            SipConnection::parse_target_from_via(&register_req.via_header().expect("via_header"))
+                .expect("get_target_socketaddr");
+
+        let addr = HostWithPort {
+            host: "restsend.com".parse().unwrap(),
+            port: Some(5061.into()),
+        };
+        assert_eq!(parse_addr, addr);
+
+        let addr = "127.0.0.1:1234".parse().unwrap();
+        let msg = SipConnection::update_msg_received(register_req.into(), addr)
+            .expect("update_msg_received");
+
+        match msg {
+            SipMessage::Request(req) => {
+                let parse_addr =
+                    SipConnection::parse_target_from_via(&req.via_header().expect("via_header"))
+                        .expect("get_target_socketaddr");
+                assert_eq!(parse_addr, addr.into());
+            }
+            _ => {}
+        }
     }
 }

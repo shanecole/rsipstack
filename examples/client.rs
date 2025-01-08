@@ -1,5 +1,4 @@
 use rsipstack::{
-    transaction::IncomingRequest,
     transport::{udp::UdpConnection, TransportLayer},
     EndpointBuilder, Error,
 };
