@@ -111,7 +111,7 @@ async fn test_server_transaction() {
 
     let incoming_loop = async {
         let mut incoming = endpoint.incoming_transactions();
-        let mut tx = incoming.recv().await.unwrap().expect("incoming");
+        let mut tx = incoming.recv().await.expect("incoming");
         assert_eq!(tx.original.method, rsip::method::Method::Register);
         let headers = tx.original.headers.clone();
         let done_response = rsip::Response {

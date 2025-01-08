@@ -222,7 +222,7 @@ impl EndpointInner {
             .lock()
             .unwrap()
             .as_ref()
-            .map(|s| s.send(Some(tx)));
+            .map(|s| s.send(tx));
         return Ok(());
     }
 

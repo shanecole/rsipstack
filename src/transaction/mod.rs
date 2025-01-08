@@ -18,8 +18,8 @@ pub struct IncomingRequest {
     pub from: SipAddr,
 }
 
-pub type TransactionReceiver = UnboundedReceiver<Option<Transaction>>;
-pub type TransactionSender = UnboundedSender<Option<Transaction>>;
+pub type TransactionReceiver = UnboundedReceiver<Transaction>;
+pub type TransactionSender = UnboundedSender<Transaction>;
 
 #[derive(Debug, Clone, PartialEq, Copy)]
 pub enum TransactionState {

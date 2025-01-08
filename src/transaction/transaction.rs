@@ -228,9 +228,7 @@ impl Transaction {
                 TransactionEvent::Received(msg, connection) => {
                     if let Some(msg) = match msg {
                         SipMessage::Request(req) => self.on_received_request(req, connection).await,
-                        SipMessage::Response(resp) => {
-                            self.on_received_response(resp, connection).await
-                        }
+                        SipMessage::Response(resp) => self.on_received_response(resp).await,
                     } {
                         return Some(msg);
                     }
@@ -299,11 +297,7 @@ impl Transaction {
         None
     }
 
-    async fn on_received_response(
-        &mut self,
-        resp: Response,
-        connection: Option<SipConnection>,
-    ) -> Option<SipMessage> {
+    async fn on_received_response(&mut self, resp: Response) -> Option<SipMessage> {
         match self.transaction_type {
             TransactionType::ServerInvite | TransactionType::ServerNonInvite => return None,
             _ => {}

@@ -72,13 +72,7 @@ async fn test_endpoint_recvrequests() {
 
     let incoming_loop = async {
         let mut incoming = endpoint.incoming_transactions();
-        incoming
-            .recv()
-            .await
-            .unwrap()
-            .expect("incoming")
-            .original
-            .clone()
+        incoming.recv().await.expect("incoming").original.clone()
     };
 
     select! {

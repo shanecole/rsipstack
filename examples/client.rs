@@ -73,7 +73,7 @@ async fn main() -> rsipstack::Result<()> {
     let mut incoming = user_agent_ref.incoming_transactions();
 
     let serve_loop = async move {
-        while let Some(Some(mut tx)) = incoming.recv().await {
+        while let Some(mut tx) = incoming.recv().await {
             info!("Received transaction: {:?}", tx.key);
             while let Some(msg) = tx.receive().await {
                 info!("Received message: {:?}", msg);
