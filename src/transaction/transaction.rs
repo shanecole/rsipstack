@@ -239,7 +239,7 @@ impl Transaction {
                     self.on_timer(t).await.ok();
                 }
                 TransactionEvent::Terminate => {
-                    debug!("received terminate event");
+                    info!("received terminate event");
                     return None;
                 }
             }
@@ -248,6 +248,8 @@ impl Transaction {
     }
 
     pub async fn send_trying(&mut self) -> Result<()> {
+        let span = self.span.clone();
+        let _enter = span.or_current();
         let response =
             self.endpoint_inner
                 .make_response(&self.original, rsip::StatusCode::Trying, None);
@@ -274,9 +276,11 @@ impl Transaction {
             TransactionType::ClientInvite | TransactionType::ClientNonInvite => return None,
             _ => {}
         }
+
         if self.connection.is_none() && connection.is_some() {
             self.connection = connection;
         }
+
         match self.state {
             TransactionState::Trying | TransactionState::Proceeding => {
                 // retransmission of last response
@@ -329,7 +333,6 @@ impl Transaction {
             return None;
         }
 
-        debug!("received response {:?} <- {}", connection, resp);
         self.last_response.replace(resp.clone());
         self.transition(new_state).ok();
         return Some(SipMessage::Response(resp));

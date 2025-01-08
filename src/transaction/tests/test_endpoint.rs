@@ -1,3 +1,4 @@
+use rsip::headers::*;
 use std::time::Duration;
 use tokio::{select, time::sleep};
 
@@ -38,8 +39,34 @@ async fn test_endpoint_recvrequests() {
         )
         .await
         .expect("create_connection");
-        let buf = "REGISTER sips:bob@restsend.com SIP/2.0\r\nVia: SIP/2.0/UDP 127.0.0.1:5061;branch=z9hG4bKnashd92\r\n\r\n".as_bytes();
-        test_conn.send_raw(buf, addr).await.expect("send_raw");
+        let register_req = rsip::message::Request {
+            method: rsip::method::Method::Register,
+            uri: rsip::Uri {
+                scheme: Some(rsip::Scheme::Sips),
+                auth: Some(rsip::Auth {
+                    user: "bob".to_string(),
+                    password: None,
+                }),
+                host_with_port: rsip::HostWithPort::try_from("restsend.com")
+                    .expect("host_port parse")
+                    .into(),
+                ..Default::default()
+            },
+            headers: vec![
+                Via::new("SIP/2.0/TLS restsend.com:5061;branch=z9hG4bKnashd92").into(),
+                CSeq::new("1 REGISTER").into(),
+                From::new("Bob <sips:bob@restsend.com>;tag=ja743ks76zlflH").into(),
+                CallId::new("1j9FpLxk3uxtm8tn@restsend.com").into(),
+            ]
+            .into(),
+            version: rsip::Version::V2,
+            body: Default::default(),
+        };
+        let buf: String = register_req.try_into().expect("try_into");
+        test_conn
+            .send_raw(&buf.as_bytes(), addr)
+            .await
+            .expect("send_raw");
         sleep(Duration::from_secs(1)).await;
     };
 

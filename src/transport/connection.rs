@@ -1,5 +1,5 @@
 use super::{channel::ChannelConnection, udp::UdpConnection, ws_wasm::WsWasmConnection};
-use crate::{transaction::key, Result};
+use crate::Result;
 use rsip::{
     param::{OtherParam, OtherParamValue, Received},
     prelude::{HeadersExt, ToTypedHeader},
@@ -188,11 +188,8 @@ impl From<ChannelConnection> for SipConnection {
 
 #[cfg(test)]
 mod tests {
-    use std::net::SocketAddr;
-
-    use rsip::{headers::*, prelude::HeadersExt, HostWithPort, SipMessage};
-
     use super::SipConnection;
+    use rsip::{headers::*, prelude::HeadersExt, HostWithPort, SipMessage};
 
     #[test]
     fn test_via_received() {

@@ -11,13 +11,6 @@ use tracing::info;
 
 #[tokio::test]
 async fn test_server_transaction() {
-    tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::TRACE)
-        .with_file(true)
-        .with_line_number(true)
-        .with_timer(tracing_subscriber::fmt::time::LocalTime::rfc_3339())
-        .try_init()
-        .ok();
     let token = CancellationToken::new();
     let addr = SipAddr {
         r#type: Some(rsip::transport::Transport::Udp),
@@ -128,6 +121,13 @@ async fn test_server_transaction() {
             ..Default::default()
         };
         tx.respond(done_response).await.expect("respond 200");
+
+        assert!(tx
+            .endpoint_inner
+            .finished_transactions
+            .lock()
+            .unwrap()
+            .contains_key(&tx.key));
         sleep(Duration::from_secs(2)).await;
     };
 

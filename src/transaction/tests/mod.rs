@@ -7,8 +7,9 @@ use crate::{
 
 use super::{endpoint::Endpoint, EndpointBuilder};
 
-mod test_server;
+mod test_client;
 mod test_endpoint;
+mod test_server;
 
 pub(super) async fn create_test_endpoint(addr: Option<&str>) -> Result<Endpoint> {
     let token = CancellationToken::new();

@@ -23,7 +23,7 @@ use tokio::{
     time::sleep,
 };
 use tokio_util::sync::CancellationToken;
-use tracing::{info, trace};
+use tracing::{debug, info, trace, warn};
 
 pub struct EndpointInner {
     pub user_agent: String,
@@ -74,18 +74,21 @@ impl EndpointInner {
         })
     }
 
-    pub async fn serve(&self, endpoint_inner: EndpointInnerRef) {
+    pub async fn serve(&self, endpoint_inner: EndpointInnerRef) -> Result<()> {
         let (transport_tx, transport_rx) = unbounded_channel();
         self.transport_layer.serve_listens(transport_tx).await.ok();
 
         select! {
             _ = self.cancel_token.cancelled() => {
             },
-            _ = self.process_timer() => {
+            r = self.process_timer() => {
+                _ = r?
             },
-            _ = self.process_transport_layer(transport_rx, endpoint_inner) => {
+            r = self.process_transport_layer(transport_rx, endpoint_inner) => {
+                _ = r?
             },
         }
+        Ok(())
     }
 
     // process transport layer, receive message from transport layer
@@ -98,8 +101,15 @@ impl EndpointInner {
             match event {
                 TransportEvent::Incoming(msg, connection, from) => {
                     trace!("incoming message {} <- {} {}", connection, from, msg);
-                    self.on_received_message(msg, connection, &endpoint_inner)
-                        .await?;
+                    match self
+                        .on_received_message(msg, connection, &endpoint_inner)
+                        .await
+                    {
+                        Ok(()) => {}
+                        Err(e) => {
+                            warn!("on_received_message error:{} {:?}", from, e);
+                        }
+                    }
                 }
                 TransportEvent::New(t) => {
                     trace!("new connection {} ", t);
@@ -157,7 +167,7 @@ impl EndpointInner {
                 TransactionKey::from_request(req, super::key::TransactionRole::Server)?
             }
             SipMessage::Response(resp) => {
-                TransactionKey::from_response(resp, super::key::TransactionRole::Server)?
+                TransactionKey::from_response(resp, super::key::TransactionRole::Client)?
             }
         };
 
@@ -184,11 +194,9 @@ impl EndpointInner {
         // if the transaction is not exist, create a new transaction
         let request = match msg {
             SipMessage::Request(req) => req,
-            _ => {
-                return Err(Error::TransactionError(
-                    "unexpected response".to_string(),
-                    key,
-                ))
+            SipMessage::Response(resp) => {
+                debug!("the transaction is not exist {} {}", key, resp);
+                return Ok(());
             }
         };
 
@@ -300,8 +308,14 @@ impl EndpointBuilder {
 impl Endpoint {
     pub async fn serve(&self) {
         let endpoint_inner = self.inner.clone();
-        self.inner.serve(endpoint_inner).await;
-        info!("endpoint shutdown");
+        match self.inner.serve(endpoint_inner).await {
+            Ok(()) => {
+                info!("endpoint shutdown");
+            }
+            Err(e) => {
+                warn!("endpoint serve error: {:?}", e);
+            }
+        }
     }
 
     pub fn shutdown(&self) {
