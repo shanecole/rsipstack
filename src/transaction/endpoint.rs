@@ -164,6 +164,11 @@ impl EndpointInner {
     ) -> Result<()> {
         let key = match &msg {
             SipMessage::Request(req) => {
+                if req.method == rsip::Method::Cancel {
+                    // Cancel quick response, no transaction
+                    let resp = self.make_response(&req, rsip::StatusCode::OK, None);
+                    connection.send(resp.into()).await?;
+                }
                 TransactionKey::from_request(req, super::key::TransactionRole::Server)?
             }
             SipMessage::Response(resp) => {
@@ -209,10 +214,8 @@ impl EndpointInner {
             ));
         }
 
-        // if ack is received, but the transaction is not exist, ignore it
         match request.method {
             rsip::Method::Ack => {
-                info!("ack received, but the transaction is not exist");
                 let resp = self.make_response(
                     &request,
                     rsip::StatusCode::CallTransactionDoesNotExist,

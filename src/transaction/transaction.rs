@@ -2,7 +2,7 @@ use super::endpoint::EndpointInnerRef;
 use super::key::TransactionKey;
 use super::{SipConnection, TransactionState, TransactionTimer, TransactionType};
 use crate::{Error, Result};
-use rsip::{Method, Request, Response, SipMessage};
+use rsip::{Header, Method, Request, Response, SipMessage, StatusCode};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tracing::{debug, info, instrument, span, Level, Span};
 
@@ -11,6 +11,7 @@ pub type TransactionEventSender = UnboundedSender<TransactionEvent>;
 pub enum TransactionEvent {
     Received(SipMessage, Option<SipConnection>),
     Timer(TransactionTimer),
+    Respond(StatusCode, Option<Vec<Header>>, Option<Vec<u8>>),
     Terminate,
 }
 
@@ -239,6 +240,15 @@ impl Transaction {
                 TransactionEvent::Timer(t) => {
                     self.on_timer(t).await.ok();
                 }
+                TransactionEvent::Respond(status_code, headers, body) => {
+                    let mut response =
+                        self.endpoint_inner
+                            .make_response(&self.original, status_code, body);
+                    if let Some(headers) = headers {
+                        response.headers.extend(headers);
+                    }
+                    self.respond(response).await.ok();
+                }
                 TransactionEvent::Terminate => {
                     info!("received terminate event");
                     return None;
@@ -255,6 +265,10 @@ impl Transaction {
             self.endpoint_inner
                 .make_response(&self.original, rsip::StatusCode::Trying, None);
         self.respond(response).await
+    }
+
+    pub fn is_terminated(&self) -> bool {
+        self.state == TransactionState::Terminated
     }
 }
 
@@ -282,6 +296,16 @@ impl Transaction {
             self.connection = connection;
         }
 
+        if req.method == Method::Cancel {
+            match self.state {
+                TransactionState::Proceeding
+                | TransactionState::Trying
+                | TransactionState::Completed => return Some(req.into()),
+                _ => {}
+            };
+            return None;
+        }
+
         match self.state {
             TransactionState::Trying | TransactionState::Proceeding => {
                 // retransmission of last response
@@ -292,7 +316,7 @@ impl Transaction {
             TransactionState::Completed => {
                 if req.method == Method::Ack {
                     self.transition(TransactionState::Confirmed).ok();
-                    return Some(SipMessage::Request(req));
+                    return Some(req.into());
                 }
             }
             _ => {}

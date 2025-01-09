@@ -39,7 +39,7 @@ impl TransactionKey {
         let via = req.via_header()?.typed()?;
         let mut method = req.method().clone();
 
-        if method == Method::Ack {
+        if matches!(method, Method::Ack | Method::Cancel) {
             method = Method::Invite;
         }
 
