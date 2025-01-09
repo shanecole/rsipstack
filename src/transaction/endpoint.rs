@@ -209,14 +209,12 @@ impl EndpointInner {
             ));
         }
 
-        let mut tx = Transaction::new_server(
+        let tx = Transaction::new_server(
             key.clone(),
             request.clone(),
             endpoint_inner.clone(),
             Some(connection),
         );
-
-        tx.send_trying().await.ok();
 
         self.incoming_sender
             .lock()

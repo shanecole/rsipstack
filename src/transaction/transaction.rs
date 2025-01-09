@@ -166,6 +166,7 @@ impl Transaction {
     fn can_transition(&self, target: &TransactionState) -> Result<()> {
         match (self.state, target) {
             (TransactionState::Calling, TransactionState::Trying)
+            | (TransactionState::Calling, TransactionState::Terminated)
             | (TransactionState::Trying, TransactionState::Trying) // retransmission
             | (TransactionState::Trying, TransactionState::Proceeding)
             | (TransactionState::Trying, TransactionState::Completed)
@@ -511,9 +512,6 @@ impl Transaction {
             return;
         }
         self.is_cleaned_up = true;
-        if self.state == TransactionState::Calling {
-            return;
-        }
         self.cleanup_timer();
         let last_message = {
             match self.transaction_type {

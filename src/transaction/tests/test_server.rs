@@ -120,6 +120,7 @@ async fn test_server_transaction() {
             headers,
             ..Default::default()
         };
+        tx.send_trying().await.expect("send_trying");
         tx.respond(done_response).await.expect("respond 200");
 
         assert!(tx
