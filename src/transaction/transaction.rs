@@ -166,6 +166,8 @@ impl Transaction {
     fn can_transition(&self, target: &TransactionState) -> Result<()> {
         match (self.state, target) {
             (TransactionState::Calling, TransactionState::Trying)
+            | (TransactionState::Calling, TransactionState::Proceeding)
+            | (TransactionState::Calling, TransactionState::Completed)
             | (TransactionState::Calling, TransactionState::Terminated)
             | (TransactionState::Trying, TransactionState::Trying) // retransmission
             | (TransactionState::Trying, TransactionState::Proceeding)

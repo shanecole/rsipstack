@@ -201,12 +201,27 @@ impl EndpointInner {
         };
 
         if self.incoming_sender.lock().unwrap().is_none() {
-            let resp = self.make_response(&request, rsip::StatusCode::ServerInternalError, None);
+            let resp = self.make_response(&request, rsip::StatusCode::ServiceUnavailable, None);
             connection.send(resp.into()).await?;
             return Err(Error::TransactionError(
                 "incoming_sender not set".to_string(),
                 key,
             ));
+        }
+
+        // if ack is received, but the transaction is not exist, ignore it
+        match request.method {
+            rsip::Method::Ack => {
+                info!("ack received, but the transaction is not exist");
+                let resp = self.make_response(
+                    &request,
+                    rsip::StatusCode::CallTransactionDoesNotExist,
+                    None,
+                );
+                connection.send(resp.into()).await?;
+                return Ok(());
+            }
+            _ => {}
         }
 
         let tx = Transaction::new_server(
