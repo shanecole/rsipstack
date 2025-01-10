@@ -8,7 +8,7 @@ repository = "https://github.com/restsend/rsipstack"
 readme = "README.md"
 keywords = ["sip", "voip", "telephony", "sipstack"]
 authors = ["kui<kui@fourz.cn>"]
-categories = ["networking", "voip"]
+categories = ["network-programming", "multimedia"]
 
 
 [lib]
