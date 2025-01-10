@@ -11,7 +11,7 @@ pub type TransactionEventSender = UnboundedSender<TransactionEvent>;
 pub enum TransactionEvent {
     Received(SipMessage, Option<SipConnection>),
     Timer(TransactionTimer),
-    Respond(StatusCode, Option<Vec<Header>>, Option<Vec<u8>>),
+    Respond(Response),
     Terminate,
 }
 
@@ -240,13 +240,7 @@ impl Transaction {
                 TransactionEvent::Timer(t) => {
                     self.on_timer(t).await.ok();
                 }
-                TransactionEvent::Respond(status_code, headers, body) => {
-                    let mut response =
-                        self.endpoint_inner
-                            .make_response(&self.original, status_code, body);
-                    if let Some(headers) = headers {
-                        response.headers.extend(headers);
-                    }
+                TransactionEvent::Respond(response) => {
                     self.respond(response).await.ok();
                 }
                 TransactionEvent::Terminate => {

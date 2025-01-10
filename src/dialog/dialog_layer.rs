@@ -1,13 +1,11 @@
-use super::{dialog_handle::DialogHandle, DialogID};
-use crate::transaction::key::TransactionKey;
+use super::{dialog::DialogInnerRef, DialogId};
 use std::{
     collections::HashMap,
     sync::{Arc, RwLock},
 };
 
 pub struct DialogLayerInner {
-    tx_to_dialogs: RwLock<HashMap<TransactionKey, DialogID>>,
-    dialogs: RwLock<HashMap<DialogID, DialogHandle>>,
+    dialogs: RwLock<HashMap<DialogId, DialogInnerRef>>,
 }
 pub type DialogLayerInnerRef = Arc<DialogLayerInner>;
 
