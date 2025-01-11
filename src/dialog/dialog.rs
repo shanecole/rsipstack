@@ -1,6 +1,6 @@
 use super::{
-    authenticate::{handle_client_proxy_authenticate, Credential},
-    DialogId,
+    authenticate::{handle_client_authenticate, Credential},
+    random_text, DialogId, TO_TAG_LEN,
 };
 use crate::{
     transaction::{
@@ -11,7 +11,7 @@ use crate::{
     Result,
 };
 use rsip::{
-    headers::{typed, untyped},
+    headers::{route, typed, untyped, Route},
     message::request,
     param::Tag,
     prelude::{HeadersExt, ToTypedHeader},
@@ -46,6 +46,7 @@ pub struct DialogInner {
     pub remote_seq: AtomicU32,
     pub remote_uri: Mutex<To>,
     pub credential: Option<Credential>,
+    pub route_set: Vec<Route>,
     pub(super) endpoint_inner: EndpointInnerRef,
     pub(super) state_sender: DialogStateSender,
     pub(super) tu_sender: TuSenderRef,
@@ -83,6 +84,7 @@ impl DialogInner {
             remote_seq: AtomicU32::new(0),
             remote_uri: Mutex::new(remote_uri),
             credential,
+            route_set: vec![],
             endpoint_inner,
             state_sender,
             tu_sender: Mutex::new(None),
@@ -118,6 +120,11 @@ impl DialogInner {
         headers.push(Header::To(self.remote_uri.lock().unwrap().clone().into()));
         headers.push(Header::CSeq(cseq_header.into()));
 
+        for route in &self.route_set {
+            headers.push(Header::Route(route.clone()));
+        }
+        headers.push(Header::MaxForwards(70.into()));
+
         rsip::Request {
             method,
             uri: self.local_uri.clone().try_into().unwrap(),
@@ -134,8 +141,24 @@ impl DialogInner {
         headers: Option<Vec<rsip::Header>>,
         body: Option<Vec<u8>>,
     ) -> rsip::Response {
-        let mut resp_headers = request.headers.clone();
-        resp_headers.unique_push(Header::To(self.remote_uri.lock().unwrap().clone().into()));
+        if self.id.lock().unwrap().to_tag.is_empty() {
+            self.update_remote_tag(random_text(TO_TAG_LEN).into());
+        }
+
+        let mut resp_headers = rsip::Headers::default();
+        resp_headers.push(Header::From(self.local_uri.clone().into()));
+        resp_headers.push(Header::To(self.remote_uri.lock().unwrap().clone().into()));
+        resp_headers.push(Header::CallId(
+            self.id.lock().unwrap().call_id.clone().into(),
+        ));
+        let cseq = request.cseq_header().unwrap();
+        resp_headers.push(cseq.clone().into());
+        // copy record route headers
+        for header in request.headers.iter() {
+            if let Header::RecordRoute(route) = header {
+                resp_headers.push(Header::RecordRoute(route.clone()));
+            }
+        }
 
         if let Some(headers) = headers {
             for header in headers {
@@ -165,7 +188,7 @@ impl DialogInner {
                     }
                     StatusCode::ProxyAuthenticationRequired => {
                         if let Some(cred) = &self.credential {
-                            tx = handle_client_proxy_authenticate(
+                            tx = handle_client_authenticate(
                                 self.increment_local_seq(),
                                 tx,
                                 resp,

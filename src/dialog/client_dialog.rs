@@ -1,5 +1,5 @@
 use super::{authenticate::Credential, dialog::DialogInnerRef};
-use crate::dialog::{authenticate::handle_client_proxy_authenticate, dialog::DialogState};
+use crate::dialog::{authenticate::handle_client_authenticate, dialog::DialogState};
 use crate::transaction::transaction::Transaction;
 use crate::Result;
 use rsip::prelude::HeadersExt;
@@ -68,6 +68,7 @@ impl ClientInviteDialog {
 
         self.inner
             .transition(DialogState::Calling(tx.original.clone()))?;
+        let mut auth_sent = false;
 
         while let Some(msg) = tx.receive().await {
             match msg {
@@ -102,9 +103,16 @@ impl ClientInviteDialog {
                         self.inner
                             .transition(DialogState::Terminated(Some(resp.status_code)))?;
                     }
-                    StatusCode::ProxyAuthenticationRequired => {
+                    StatusCode::ProxyAuthenticationRequired | StatusCode::Unauthorized => {
+                        if auth_sent {
+                            info!("received {} response after auth sent", resp.status_code);
+                            self.inner
+                                .transition(DialogState::Terminated(Some(resp.status_code)))?;
+                            break;
+                        }
+                        auth_sent = true;
                         if let Some(auth_option) = &self.auth_option {
-                            tx = handle_client_proxy_authenticate(
+                            tx = handle_client_authenticate(
                                 self.inner.increment_local_seq(),
                                 tx,
                                 resp,

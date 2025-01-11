@@ -14,18 +14,20 @@ pub struct Credential {
     pub password: String,
 }
 
-pub async fn handle_client_proxy_authenticate(
+pub async fn handle_client_authenticate(
     new_seq: u32,
     tx: Transaction,
     resp: Response,
     cred: &Credential,
 ) -> Result<Transaction> {
-    let challenge = match resp.www_authenticate_header() {
-        Some(h) => h.typed()?,
+    let header = match resp.www_authenticate_header() {
+        Some(h) => Header::WwwAuthenticate(h.clone()),
         None => {
-            return Err(crate::Error::DialogError(
-                "received 407 response without auth option".to_string(),
-            ))
+            let proxy_header = rsip::header_opt!(resp.headers().iter(), Header::ProxyAuthenticate);
+            let proxy_header = proxy_header.ok_or(crate::Error::DialogError(
+                "missing proxy/www authenticate".to_string(),
+            ))?;
+            Header::ProxyAuthenticate(proxy_header.clone())
         }
     };
 
@@ -37,7 +39,13 @@ pub async fn handle_client_proxy_authenticate(
         nc: 1,
     };
 
-    let generator = DigestGenerator {
+    let challenge = match &header {
+        Header::WwwAuthenticate(h) => h.typed()?,
+        Header::ProxyAuthenticate(h) => h.typed()?.0,
+        _ => unreachable!(),
+    };
+
+    let response = DigestGenerator {
         username: cred.username.as_str(),
         password: cred.password.as_str(),
         algorithm: challenge.algorithm.unwrap_or_default(),
@@ -46,15 +54,16 @@ pub async fn handle_client_proxy_authenticate(
         qop: Some(&auth_qop),
         uri: &tx.original.uri,
         realm: challenge.realm.as_str(),
-    };
+    }
+    .compute();
 
     let auth = Authorization {
         scheme: challenge.scheme,
         username: cred.username.clone(),
-        realm: challenge.realm.clone(),
-        nonce: challenge.nonce.clone(),
+        realm: challenge.realm,
+        nonce: challenge.nonce,
         uri: tx.original.uri.clone(),
-        response: generator.compute(),
+        response,
         algorithm: challenge.algorithm,
         opaque: challenge.opaque,
         qop: Some(auth_qop),
@@ -68,12 +77,27 @@ pub async fn handle_client_proxy_authenticate(
     params.push(make_via_branch());
     new_req.headers_mut().unique_push(via_header.into());
 
-    new_req
-        .headers_mut()
-        .retain(|h| !matches!(h, Header::ProxyAuthenticate(_) | Header::Authorization(_)));
-    new_req
-        .headers_mut()
-        .unique_push(ProxyAuthorization(auth).into());
+    new_req.headers_mut().retain(|h| {
+        !matches!(
+            h,
+            Header::ProxyAuthenticate(_)
+                | Header::Authorization(_)
+                | Header::WwwAuthenticate(_)
+                | Header::ProxyAuthorization(_)
+        )
+    });
+
+    match header {
+        Header::WwwAuthenticate(_) => {
+            new_req.headers_mut().unique_push(auth.into());
+        }
+        Header::ProxyAuthenticate(_) => {
+            new_req
+                .headers_mut()
+                .unique_push(ProxyAuthorization(auth).into());
+        }
+        _ => unreachable!(),
+    }
 
     let new_tx = Transaction::new_client(
         tx.key.clone(),

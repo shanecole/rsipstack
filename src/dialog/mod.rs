@@ -58,7 +58,6 @@ pub fn random_text(count: usize) -> String {
         .take(count)
         .map(char::from)
         .collect::<String>()
-        .to_lowercase()
 }
 
 #[cfg(target_family = "wasm")]

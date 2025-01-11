@@ -14,8 +14,6 @@ pub struct ServerInviteDialog {
 impl ServerInviteDialog {
     pub fn accept(&self, headers: Option<Vec<Header>>, body: Vec<u8>) -> Result<()> {
         if let Some(sender) = self.inner.tu_sender.lock().unwrap().as_ref() {
-            self.inner.update_remote_tag(random_text(TO_TAG_LEN).into()); // use new tag
-
             let resp = self.inner.make_response(
                 &self.inner.initial_request,
                 rsip::StatusCode::OK,
@@ -35,7 +33,6 @@ impl ServerInviteDialog {
 
     pub fn reject(&self) -> Result<()> {
         if let Some(sender) = self.inner.tu_sender.lock().unwrap().as_ref() {
-            self.inner.update_remote_tag(random_text(TO_TAG_LEN).into()); // use new tag
             let resp = self.inner.make_response(
                 &self.inner.initial_request,
                 rsip::StatusCode::Decline,

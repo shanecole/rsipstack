@@ -2,7 +2,7 @@ use super::endpoint::EndpointInnerRef;
 use super::key::TransactionKey;
 use super::{SipConnection, TransactionState, TransactionTimer, TransactionType};
 use crate::{Error, Result};
-use rsip::{Header, Method, Request, Response, SipMessage, StatusCode};
+use rsip::{Method, Request, Response, SipMessage};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tracing::{debug, info, instrument, span, Level, Span};
 
