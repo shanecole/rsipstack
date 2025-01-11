@@ -26,3 +26,12 @@ pub(super) async fn create_test_endpoint(addr: Option<&str>) -> Result<Endpoint>
         .build();
     Ok(endpoint)
 }
+
+#[test]
+fn test_random_text() {
+    let text = super::random_text(10);
+    assert_eq!(text.len(), 10);
+    let branch = super::make_via_branch();
+    let branch = branch.to_string();
+    assert_eq!(branch.len(), 27); // ;branch=z9hG4bK
+}

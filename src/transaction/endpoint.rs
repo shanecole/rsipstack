@@ -1,5 +1,6 @@
 use super::{
     key::TransactionKey,
+    make_via_branch,
     timer::Timer,
     transaction::{Transaction, TransactionEvent, TransactionEventSender},
     SipConnection, TransactionReceiver, TransactionSender, TransactionTimer,
@@ -358,7 +359,7 @@ impl Endpoint {
             version: rsip::Version::V2,
             transport: contact.r#type.unwrap_or_default(),
             uri: contact.addr.into(),
-            params: vec![rsip::Param::Branch("z9hG4bK".into())].into(),
+            params: vec![make_via_branch()].into(),
         };
 
         self.inner.make_request(method, req_uri, via, from, to, seq)

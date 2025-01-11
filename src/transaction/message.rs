@@ -1,4 +1,4 @@
-use super::endpoint::EndpointInner;
+use super::{endpoint::EndpointInner, random_text};
 use rsip::{
     headers::{CallId, UserAgent},
     prelude::UntypedHeader,
@@ -20,7 +20,7 @@ impl EndpointInner {
             uri: req_uri,
             headers: vec![
                 Header::Via(via.into()),
-                Header::CallId(CallId::default().into()),
+                Header::CallId(random_text(32).into()),
                 Header::From(from.into()),
                 Header::To(to.into()),
                 Header::CSeq(rsip::typed::CSeq { seq, method }.into()),

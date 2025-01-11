@@ -116,3 +116,4 @@ pub fn random_text(count: usize) -> String {
         })
         .collect()
 }
+
