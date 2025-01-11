@@ -1,3 +1,4 @@
+use crate::transaction::key::{TransactionKey, TransactionRole};
 use crate::transaction::transaction::Transaction;
 use crate::transaction::{make_via_branch, random_text, CNONCE_LEN};
 use crate::Result;
@@ -72,8 +73,8 @@ pub async fn handle_client_authenticate(
 
     // update new branch
     let mut params = via_header.params().clone()?;
-    params.retain(|k| !matches!(k, Param::Branch(_)));
     params.push(make_via_branch());
+    params.push(Param::Other("rport".into(), None));
     new_req.headers_mut().unique_push(via_header.into());
 
     new_req.headers_mut().retain(|h| {
@@ -97,9 +98,9 @@ pub async fn handle_client_authenticate(
         }
         _ => unreachable!(),
     }
-
+    let key = TransactionKey::from_request(&new_req, TransactionRole::Client)?;
     let new_tx = Transaction::new_client(
-        tx.key.clone(),
+        key,
         new_req,
         tx.endpoint_inner.clone(),
         tx.connection.clone(),

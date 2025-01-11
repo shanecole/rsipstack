@@ -15,7 +15,7 @@ use tracing::{debug, info};
 #[command(author, version, about, long_about = None)]
 struct Args {
     /// SIP port
-    #[arg(long, default_value = "15060")]
+    #[arg(long, default_value = "25060")]
     port: u16,
 
     /// External IP address

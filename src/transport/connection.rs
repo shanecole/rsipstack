@@ -80,10 +80,8 @@ impl SipConnection {
                 Self::build_via_received(via, addr)?;
                 Ok(req.into())
             }
-            SipMessage::Response(mut resp) => {
-                let via = resp.via_header_mut()?;
-                Self::build_via_received(via, addr)?;
-                Ok(resp.into())
+            SipMessage::Response(_) => {
+                Ok(msg)
             }
         }
     }
