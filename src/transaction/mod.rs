@@ -1,5 +1,6 @@
 use crate::transport::{connection::SipAddr, SipConnection};
 use key::TransactionKey;
+use uuid::Uuid;
 use std::time::Duration;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use transaction::Transaction;
@@ -90,6 +91,14 @@ impl std::fmt::Display for TransactionTimer {
 
 pub fn make_via_branch() -> rsip::Param {
     rsip::Param::Branch(format!("z9hG4bK{}", random_text(BRANCH_LEN)).into())
+}
+
+pub fn make_call_id(domain:Option<&str>) -> rsip::headers::CallId {
+    format!(
+        "{}@{}",
+        Uuid::new_v4(),
+        domain.unwrap_or("restsend.com")
+    ).into()
 }
 
 #[cfg(not(target_family = "wasm"))]
