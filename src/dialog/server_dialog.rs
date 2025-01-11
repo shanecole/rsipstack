@@ -1,5 +1,4 @@
 use super::dialog::DialogInnerRef;
-use super::{random_text, TO_TAG_LEN};
 use crate::dialog::dialog::DialogState;
 use crate::transaction::transaction::{Transaction, TransactionEvent};
 use crate::Result;

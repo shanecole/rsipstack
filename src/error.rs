@@ -1,3 +1,5 @@
+use std::env::VarError;
+
 use crate::{transaction::key::TransactionKey, transport::connection::SipAddr};
 use wasm_bindgen::prelude::*;
 #[derive(Debug, Eq, PartialEq, Clone)]
@@ -47,6 +49,11 @@ impl From<std::io::Error> for Error {
 
 impl From<std::fmt::Error> for Error {
     fn from(e: std::fmt::Error) -> Self {
+        Error::Error(e.to_string())
+    }
+}
+impl From<VarError> for Error {
+    fn from(e: VarError) -> Self {
         Error::Error(e.to_string())
     }
 }

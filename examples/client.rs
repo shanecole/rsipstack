@@ -1,16 +1,43 @@
+use clap::Parser;
+use rsip::prelude::HeadersExt;
 use rsipstack::{
+    dialog::{authenticate::Credential, registration::Registration},
     transport::{udp::UdpConnection, TransportLayer},
     EndpointBuilder, Error,
 };
-use std::sync::Arc;
-use tokio::select;
+use std::{env, sync::Arc, time::Duration};
+use tokio::{select, time::sleep};
 use tokio_util::sync::CancellationToken;
-use tracing::info;
+use tracing::{debug, info};
+
+/// A SIP client example that sends a REGISTER request to a SIP server.
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+struct Args {
+    /// SIP port
+    #[arg(long, default_value = "15060")]
+    port: u16,
+
+    /// External IP address
+    #[arg(long, default_value = "")]
+    external_ip: Option<String>,
+
+    /// SIP server address
+    #[arg(long)]
+    sip_server: Option<String>,
+
+    /// SIP user
+    #[arg(long)]
+    user: Option<String>,
+
+    /// SIP password
+    #[arg(long)]
+    password: Option<String>,
+}
 
 // A sip client example, that sends a REGISTER request to a sip server.
 #[tokio::main]
 async fn main() -> rsipstack::Result<()> {
-    use rsip::headers::*;
     tracing_subscriber::fmt()
         .with_max_level(tracing::Level::TRACE)
         .with_file(true)
@@ -19,10 +46,22 @@ async fn main() -> rsipstack::Result<()> {
         .try_init()
         .ok();
 
+    if let Err(e) = dotenv::dotenv() {
+        info!("Failed to load .env file: {}", e);
+    }
+
+    let args = Args::parse();
+
+    info!("Starting SIP client");
+    let sip_server = args.sip_server.unwrap_or(env::var("SIP_SERVER")?);
+    let sip_username = args.user.unwrap_or(env::var("SIP_USERNAME")?);
+    let sip_password = args.password.unwrap_or(env::var("SIP_PASSWORD")?);
+
     let token = CancellationToken::new();
     let transport_layer = TransportLayer::new(token.clone());
 
-    let connection = UdpConnection::create_connection("0.0.0.0:15060".parse()?, None).await?;
+    let connection =
+        UdpConnection::create_connection(format!("0.0.0.0:{}", args.port).parse()?, None).await?;
     transport_layer.add_transport(connection.into());
 
     let user_agent = Arc::new(
@@ -34,41 +73,26 @@ async fn main() -> rsipstack::Result<()> {
 
     let user_agent_ref = user_agent.clone();
 
-    tokio::spawn(async move {
-        let register_loop = async {
-            let register_req = rsip::message::Request {
-                method: rsip::method::Method::Register,
-                uri: rsip::Uri {
-                    scheme: Some(rsip::Scheme::Sip),
-                    host_with_port: rsip::HostWithPort::try_from("127.0.0.1:8880")?.into(),
-                    ..Default::default()
-                },
-                headers: vec![
-                    Via::new("SIP/2.0/TLS restsend.com:5061;branch=z9hG4bKnashd92").into(),
-                    CSeq::new("1 REGISTER").into(),
-                    From::new("Bob <sips:bob@restsend.com>;tag=ja743ks76zlflH").into(),
-                    CallId::new("1j9FpLxk3uxtm8tn@restsend.com").into(),
-                ]
-                .into(),
-                version: rsip::Version::V2,
-                body: Default::default(),
-            };
-            let mut tx = user_agent_ref.client_transaction(register_req)?;
-            match tx.send().await {
-                Ok(_) => info!("Sent request"),
-                Err(e) => info!("Error sending request: {:?}", e),
-            }
-            while let Some(resp) = tx.receive().await {
-                info!("Received response: {:?}", resp);
-            }
-            Ok::<_, Error>(())
+    let register_loop = async {
+        let auth_option = Credential {
+            username: sip_username,
+            password: sip_password,
         };
-        match register_loop.await {
-            Ok(_) => info!("Register loop done"),
-            Err(e) => info!("Error in register loop: {:?}", e),
-        }
-    });
 
+        let mut registration = Registration::new(user_agent_ref, Some(auth_option));
+
+        loop {
+            let resp = registration.register(&sip_server).await?;
+            debug!("received response: {:?}", resp);
+            if resp.status_code != rsip::StatusCode::OK {
+                info!("Failed to register: {:?}", resp);
+                return Err(rsipstack::Error::Error("Failed to register".to_string()));
+            }
+            let expires = resp.expires_header().unwrap_or(&50.into()).seconds()?;
+            sleep(Duration::from_secs(expires as u64)).await;
+        }
+        Ok::<_, Error>(())
+    };
     let user_agent_ref = user_agent.clone();
     let mut incoming = user_agent_ref.incoming_transactions();
 
@@ -89,8 +113,15 @@ async fn main() -> rsipstack::Result<()> {
     };
 
     select! {
-        _ = user_agent.serve() => {}
-        _ = serve_loop => {}
+        _ = user_agent.serve() => {
+            info!("User agent finished");
+        }
+        r = register_loop => {
+            info!("Register loop finished {:?}", r);
+        }
+        _ = serve_loop => {
+            info!("Server loop finished");
+        }
     }
     Ok(())
 }

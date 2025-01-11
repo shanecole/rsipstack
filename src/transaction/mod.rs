@@ -12,6 +12,11 @@ pub mod transaction;
 pub use endpoint::EndpointBuilder;
 #[cfg(test)]
 mod tests;
+
+pub const TO_TAG_LEN: usize = 8;
+pub const BRANCH_LEN: usize = 12;
+pub const CNONCE_LEN: usize = 8;
+
 pub struct IncomingRequest {
     pub request: rsip::Request,
     pub connection: SipConnection,
@@ -81,4 +86,33 @@ impl std::fmt::Display for TransactionTimer {
             TransactionTimer::TimerCleanup(key) => write!(f, "TimerCleanup: {}", key),
         }
     }
+}
+
+pub fn make_via_branch() -> rsip::Param {
+    rsip::Param::Branch(format!("z9hG4bK{}", random_text(BRANCH_LEN)).into())
+}
+
+#[cfg(not(target_family = "wasm"))]
+pub fn random_text(count: usize) -> String {
+    use rand::Rng;
+    rand::thread_rng()
+        .sample_iter(rand::distributions::Alphanumeric)
+        .take(count)
+        .map(char::from)
+        .collect::<String>()
+}
+
+#[cfg(target_family = "wasm")]
+pub fn random_text(count: usize) -> String {
+    (0..count)
+        .map(|_| {
+            let r = js_sys::Math::random();
+            let c = (r * 16.0) as u8;
+            if c < 10 {
+                (c + 48) as char
+            } else {
+                (c + 87) as char
+            }
+        })
+        .collect()
 }

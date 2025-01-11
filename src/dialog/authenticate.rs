@@ -1,12 +1,11 @@
 use crate::transaction::transaction::Transaction;
+use crate::transaction::{make_via_branch, random_text, CNONCE_LEN};
 use crate::Result;
 use rsip::headers::auth::AuthQop;
 use rsip::prelude::{HasHeaders, HeadersExt, ToTypedHeader};
 use rsip::services::DigestGenerator;
 use rsip::typed::{Authorization, ProxyAuthorization};
 use rsip::{Header, Param, Response};
-
-use super::{make_via_branch, random_text, CNONCE_LEN};
 
 #[derive(Clone)]
 pub struct Credential {

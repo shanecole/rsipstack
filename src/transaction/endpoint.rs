@@ -339,6 +339,31 @@ impl Endpoint {
         self.inner.cancel_token.cancel();
     }
 
+    pub fn make_request(
+        &self,
+        method: rsip::Method,
+        req_uri: rsip::Uri,
+        from: rsip::typed::From,
+        to: rsip::typed::To,
+        seq: u32,
+    ) -> rsip::Request {
+        let contact = self
+            .get_contacts()
+            .get(0)
+            .ok_or(Error::EndpointError("not contacts".to_string()))
+            .cloned()
+            .unwrap();
+
+        let via = rsip::typed::Via {
+            version: rsip::Version::V2,
+            transport: contact.r#type.unwrap_or_default(),
+            uri: contact.addr.into(),
+            params: vec![rsip::Param::Branch("z9hG4bK".into())].into(),
+        };
+
+        self.inner.make_request(method, req_uri, via, from, to, seq)
+    }
+
     pub fn client_transaction(&self, request: rsip::Request) -> Result<Transaction> {
         let key = TransactionKey::from_request(&request, super::key::TransactionRole::Client)?;
         let tx = Transaction::new_client(key, request, self.inner.clone(), None);

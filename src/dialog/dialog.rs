@@ -1,12 +1,14 @@
 use super::{
     authenticate::{handle_client_authenticate, Credential},
-    random_text, DialogId, TO_TAG_LEN,
+    DialogId,
 };
 use crate::{
     transaction::{
         endpoint::EndpointInnerRef,
         key::{TransactionKey, TransactionRole},
+        random_text,
         transaction::{Transaction, TransactionEventSender},
+        TO_TAG_LEN,
     },
     Result,
 };
