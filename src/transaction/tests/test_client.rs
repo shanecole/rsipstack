@@ -9,7 +9,7 @@ use tracing::info;
 async fn test_client_transaction() -> Result<()> {
     let endpoint = super::create_test_endpoint(Some("127.0.0.1:0")).await?;
     let server_addr = endpoint
-        .get_contacts()
+        .get_addrs()
         .get(0)
         .expect("must has connection")
         .to_owned();

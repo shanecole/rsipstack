@@ -181,6 +181,7 @@ impl DialogInner {
         let mut tx =
             Transaction::new_client(key, request.clone(), self.endpoint_inner.clone(), None);
         tx.send().await?;
+        let mut auth_sent = false;
 
         while let Some(msg) = tx.receive().await {
             match msg {
@@ -188,7 +189,13 @@ impl DialogInner {
                     StatusCode::Trying => {
                         continue;
                     }
-                    StatusCode::ProxyAuthenticationRequired => {
+                    StatusCode::ProxyAuthenticationRequired | StatusCode::Unauthorized => {
+                        if auth_sent {
+                            info!("received {} response after auth sent", resp.status_code);
+                            self.transition(DialogState::Terminated(Some(resp.status_code)))?;
+                            break;
+                        }
+                        auth_sent = true;
                         if let Some(cred) = &self.credential {
                             tx = handle_client_authenticate(
                                 self.increment_local_seq(),

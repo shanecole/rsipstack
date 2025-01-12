@@ -1,6 +1,9 @@
 use std::sync::Arc;
 
-use rsip::{Response, SipMessage, StatusCode};
+use rsip::{
+    prelude::{HasHeaders, HeadersExt, ToTypedHeader},
+    Header, Response, SipMessage, StatusCode,
+};
 use tracing::info;
 
 use super::authenticate::{handle_client_authenticate, Credential};
@@ -12,16 +15,26 @@ use crate::{
 pub struct Registration {
     pub last_seq: u32,
     pub useragent: Arc<Endpoint>,
-    pub auth_option: Option<Credential>,
+    pub credential: Option<Credential>,
+    pub contact: Option<rsip::typed::Contact>,
 }
 
 impl Registration {
-    pub fn new(useragent: Arc<Endpoint>, auth_option: Option<Credential>) -> Self {
+    pub fn new(useragent: Arc<Endpoint>, credential: Option<Credential>) -> Self {
         Self {
             last_seq: 0,
             useragent,
-            auth_option,
+            credential,
+            contact: None,
         }
+    }
+
+    pub fn expires(&self) -> u32 {
+        self.contact
+            .as_ref()
+            .and_then(|c| c.expires())
+            .map(|e| e.seconds().unwrap_or(50))
+            .unwrap_or(50)
     }
 
     pub async fn register(&mut self, server: &String) -> Result<Response> {
@@ -35,7 +48,7 @@ impl Registration {
             params: vec![],
         };
 
-        if let Some(cred) = &self.auth_option {
+        if let Some(cred) = &self.credential {
             to.uri.auth = Some(rsip::auth::Auth {
                 user: cred.username.clone(),
                 password: None,
@@ -49,9 +62,20 @@ impl Registration {
         }
         .with_tag(random_text(TO_TAG_LEN).into());
 
-        let request =
+        let contact = self
+            .contact
+            .clone()
+            .unwrap_or_else(|| rsip::typed::Contact {
+                display_name: None,
+                uri: to.uri.clone(),
+                params: vec![],
+            });
+
+        let mut request =
             self.useragent
                 .make_request(rsip::Method::Register, recipient, form, to, self.last_seq);
+
+        request.headers.unique_push(contact.into());
 
         let mut tx = self.useragent.client_transaction(request)?;
         tx.send().await?;
@@ -66,22 +90,25 @@ impl Registration {
                     StatusCode::ProxyAuthenticationRequired | StatusCode::Unauthorized => {
                         if auth_sent {
                             info!("received {} response after auth sent", resp.status_code);
-                            return Ok(Response::default());
+                            return Ok(resp);
                         }
 
-                        if let Some(cred) = &self.auth_option {
+                        if let Some(cred) = &self.credential {
                             self.last_seq += 1;
                             tx = handle_client_authenticate(self.last_seq, tx, resp, cred).await?;
                             tx.send().await?;
                             auth_sent = true;
                             continue;
                         } else {
-                            info!("received {} response without auth option", resp.status_code);
-                            return Ok(Response::default());
+                            info!("received {} response without credential", resp.status_code);
+                            return Ok(resp);
                         }
                     }
                     _ => {
-                        info!("dialog do_request done: {:?}", resp.status_code);
+                        info!("registration do_request done: {:?}", resp.status_code);
+                        if let Ok(c) = resp.contact_header() {
+                            c.clone().into_typed().map(|c| self.contact = Some(c)).ok();
+                        }
                         return Ok(resp);
                     }
                 },
@@ -89,7 +116,7 @@ impl Registration {
             }
         }
         return Err(crate::Error::DialogError(
-            "transaction is already terminated".to_string(),
+            "registration transaction is already terminated".to_string(),
         ));
     }
 }

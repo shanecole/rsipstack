@@ -348,17 +348,17 @@ impl Endpoint {
         to: rsip::typed::To,
         seq: u32,
     ) -> rsip::Request {
-        let contact = self
-            .get_contacts()
+        let first_addr = self
+            .get_addrs()
             .get(0)
-            .ok_or(Error::EndpointError("not contacts".to_string()))
+            .ok_or(Error::EndpointError("not sipaddrs".to_string()))
             .cloned()
             .unwrap();
 
         let via = rsip::typed::Via {
             version: rsip::Version::V2,
-            transport: contact.r#type.unwrap_or_default(),
-            uri: contact.addr.into(),
+            transport: first_addr.r#type.unwrap_or_default(),
+            uri: first_addr.addr.into(),
             params: vec![make_via_branch()].into(),
         };
 
@@ -380,7 +380,7 @@ impl Endpoint {
         rx
     }
 
-    pub fn get_contacts(&self) -> Vec<SipAddr> {
-        self.inner.transport_layer.get_contacts()
+    pub fn get_addrs(&self) -> Vec<SipAddr> {
+        self.inner.transport_layer.get_addrs()
     }
 }

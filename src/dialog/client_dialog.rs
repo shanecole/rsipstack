@@ -1,4 +1,4 @@
-use super::{authenticate::Credential, dialog::DialogInnerRef};
+use super::{dialog::DialogInnerRef};
 use crate::dialog::{authenticate::handle_client_authenticate, dialog::DialogState};
 use crate::transaction::transaction::Transaction;
 use crate::Result;
@@ -8,7 +8,6 @@ use tracing::{info, info_span, trace};
 
 #[derive(Clone)]
 pub struct ClientInviteDialog {
-    pub auth_option: Option<Credential>,
     pub(super) inner: DialogInnerRef,
 }
 
@@ -102,31 +101,31 @@ impl ClientInviteDialog {
                         info!("received decline response: {}", resp.status_code);
                         self.inner
                             .transition(DialogState::Terminated(Some(resp.status_code)))?;
-                    }
-                    StatusCode::ProxyAuthenticationRequired | StatusCode::Unauthorized => {
-                        if auth_sent {
-                            info!("received {} response after auth sent", resp.status_code);
-                            self.inner
-                                .transition(DialogState::Terminated(Some(resp.status_code)))?;
-                            break;
                         }
-                        auth_sent = true;
-                        if let Some(auth_option) = &self.auth_option {
-                            tx = handle_client_authenticate(
-                                self.inner.increment_local_seq(),
-                                tx,
-                                resp,
-                                auth_option,
-                            )
-                            .await?;
-                            tx.send().await?;
-                            continue;
-                        } else {
-                            info!("received 407 response without auth option");
-                            self.inner
-                                .transition(DialogState::Terminated(Some(resp.status_code)))?;
+                        StatusCode::ProxyAuthenticationRequired | StatusCode::Unauthorized => {
+                            if auth_sent {
+                                info!("received {} response after auth sent", resp.status_code);
+                                self.inner
+                                    .transition(DialogState::Terminated(Some(resp.status_code)))?;
+                                break;
+                            }
+                            auth_sent = true;
+                            if let Some(credential) = &self.inner.credential {
+                                tx = handle_client_authenticate(
+                                    self.inner.increment_local_seq(),
+                                    tx,
+                                    resp,
+                                    credential,
+                                )
+                                .await?;
+                                tx.send().await?;
+                                continue;
+                            } else {
+                                info!("received 407 response without auth option");
+                                self.inner
+                                    .transition(DialogState::Terminated(Some(resp.status_code)))?;
+                            }
                         }
-                    }
                     _ => match resp.status_code.kind() {
                         rsip::StatusCodeKind::Redirection => {
                             self.inner

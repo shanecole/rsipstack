@@ -34,7 +34,7 @@ async fn test_server_transaction() {
         .build();
 
     let addr = endpoint
-        .get_contacts()
+        .get_addrs()
         .get(0)
         .expect("must has connection")
         .to_owned();

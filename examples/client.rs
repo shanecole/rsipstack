@@ -88,7 +88,7 @@ async fn main() -> rsipstack::Result<()> {
                 info!("Failed to register: {:?}", resp);
                 return Err(rsipstack::Error::Error("Failed to register".to_string()));
             }
-            let expires = resp.expires_header().unwrap_or(&50.into()).seconds()?;
+            let expires = registration.expires();
             sleep(Duration::from_secs(expires as u64)).await;
         }
         Ok::<_, Error>(())

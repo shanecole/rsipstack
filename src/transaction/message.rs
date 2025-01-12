@@ -1,9 +1,5 @@
 use super::{endpoint::EndpointInner, make_call_id};
-use rsip::{
-    headers::{UserAgent},
-    prelude::UntypedHeader,
-    Header, Request, Response, StatusCode,
-};
+use rsip::{headers::UserAgent, prelude::UntypedHeader, Header, Request, Response, StatusCode};
 
 impl EndpointInner {
     pub fn make_request(
@@ -15,19 +11,19 @@ impl EndpointInner {
         to: rsip::typed::To,
         seq: u32,
     ) -> rsip::Request {
+        let headers = vec![
+            Header::Via(via.into()),
+            Header::CallId(make_call_id(None)),
+            Header::From(from.into()),
+            Header::To(to.into()),
+            Header::CSeq(rsip::typed::CSeq { seq, method }.into()),
+            Header::MaxForwards(70.into()),
+            Header::UserAgent(self.user_agent.clone().into()),
+        ];
         rsip::Request {
             method,
             uri: req_uri,
-            headers: vec![
-                Header::Via(via.into()),
-                Header::CallId(make_call_id(None)),
-                Header::From(from.into()),
-                Header::To(to.into()),
-                Header::CSeq(rsip::typed::CSeq { seq, method }.into()),
-                Header::MaxForwards(70.into()),
-                Header::UserAgent(self.user_agent.clone().into()),
-            ]
-            .into(),
+            headers: headers.into(),
             body: vec![],
             version: rsip::Version::V2,
         }

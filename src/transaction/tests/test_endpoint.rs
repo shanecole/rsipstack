@@ -27,7 +27,7 @@ async fn test_endpoint_recvrequests() {
         .expect("create_test_endpoint");
 
     let addr = endpoint
-        .get_contacts()
+        .get_addrs()
         .get(0)
         .expect("must has connection")
         .to_owned();
