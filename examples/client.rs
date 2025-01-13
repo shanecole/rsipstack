@@ -1,7 +1,11 @@
 use clap::Parser;
-use rsip::prelude::HeadersExt;
+use rsipstack::dialog::dialog_layer::DialogLayer;
+use rsipstack::dialog::DialogId;
+use rsipstack::transaction::{endpoint, Endpoint};
+use rsipstack::Result;
 use rsipstack::{
     dialog::{authenticate::Credential, registration::Registration},
+    transaction::TransactionReceiver,
     transport::{udp::UdpConnection, TransportLayer},
     EndpointBuilder, Error,
 };
@@ -87,64 +91,82 @@ async fn main() -> rsipstack::Result<()> {
 
     transport_layer.add_transport(connection.into());
 
-    let user_agent = Arc::new(
+    let endpoint = Arc::new(
         EndpointBuilder::new()
             .cancel_token(token)
             .transport_layer(transport_layer)
             .build(),
     );
 
-    let user_agent_ref = user_agent.clone();
-
-    let register_loop = async {
-        let auth_option = Credential {
-            username: sip_username,
-            password: sip_password,
-        };
-
-        let mut registration = Registration::new(user_agent_ref, Some(auth_option));
-
-        loop {
-            let resp = registration.register(&sip_server).await?;
-            debug!("received response: {:?}", resp);
-            if resp.status_code != rsip::StatusCode::OK {
-                info!("Failed to register: {:?}", resp);
-                return Err(rsipstack::Error::Error("Failed to register".to_string()));
-            }
-            let expires = registration.expires();
-            sleep(Duration::from_secs(expires as u64)).await;
-        }
-        Ok::<_, Error>(())
-    };
-    let user_agent_ref = user_agent.clone();
-    let mut incoming = user_agent_ref.incoming_transactions();
-
-    let serve_loop = async move {
-        while let Some(mut tx) = incoming.recv().await {
-            info!("Received transaction: {:?}", tx.key);
-            while let Some(msg) = tx.receive().await {
-                info!("Received message: {:?}", msg);
-                let done_response = rsip::Response {
-                    status_code: rsip::StatusCode::NotAcceptable,
-                    version: rsip::Version::V2,
-                    ..Default::default()
-                };
-                tx.respond(done_response).await?;
-            }
-        }
-        Ok::<_, Error>(())
+    let credential = Credential {
+        username: sip_username,
+        password: sip_password,
     };
 
+    let endpoint_ref = endpoint.clone();
+    let incoming = endpoint_ref.incoming_transactions();
+    let dialog_layer = DialogLayer::new(endpoint_ref.inner.clone());
     select! {
-        _ = user_agent.serve() => {
-            info!("User agent finished");
+        _ = endpoint.serve() => {
+            info!("user agent finished");
         }
-        r = register_loop => {
-            info!("Register loop finished {:?}", r);
+        r = process_registration(endpoint_ref.clone(), sip_server, credential) => {
+            info!("register loop finished {:?}", r);
         }
-        _ = serve_loop => {
-            info!("Server loop finished");
+        r = process_incoming(dialog_layer, incoming) => {
+            info!("serve loop finished {:?}", r);
         }
     }
     Ok(())
+}
+
+async fn process_registration(
+    endpoint: Arc<Endpoint>,
+    sip_server: String,
+    credential: Credential,
+) -> Result<()> {
+    let mut registration = Registration::new(endpoint, Some(credential));
+    loop {
+        let resp = registration.register(&sip_server).await?;
+        debug!("received response: {:?}", resp);
+        if resp.status_code != rsip::StatusCode::OK {
+            info!("Failed to register: {:?}", resp);
+            return Err(rsipstack::Error::Error("Failed to register".to_string()));
+        }
+        let expires = registration.expires();
+        sleep(Duration::from_secs(expires as u64)).await;
+    }
+    #[allow(unreachable_code)]
+    Ok::<_, Error>(())
+}
+
+async fn process_incoming(
+    dialog_layer: DialogLayer,
+    mut incoming: TransactionReceiver,
+) -> Result<()> {
+    while let Some(mut tx) = incoming.recv().await {
+        info!("Received transaction: {:?}", tx.key);
+        match tx.original.method {
+            rsip::Method::Invite => {
+                let dialog_id = match DialogId::try_from(&tx.original) {
+                    Ok(dialog_id) => dialog_id,
+                    Err(e) => {
+                        info!("Failed to create dialog id, tx{:?}  {:?}", tx.original, e);
+                        continue;
+                    }
+                };
+
+                let dialog = dialog_layer.create_or_create_server_invite(tx)?;
+                dialog.handle(tx).await?;
+            }
+            _ => {
+                let resp =
+                    tx.endpoint_inner
+                        .make_response(&tx.original, rsip::StatusCode::OK, None);
+                info!("Received request: {:?}", tx.original.method);
+                tx.respond(resp).await?;
+            }
+        }
+    }
+    Ok::<_, Error>(())
 }

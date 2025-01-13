@@ -73,6 +73,7 @@ impl ServerInviteDialog {
         Ok(())
     }
 
+    pub async fn handle(&mut self, mut tx: Transaction) -> Result<()> {}
     pub async fn handle_invite(&mut self, mut tx: Transaction) -> Result<()> {
         let span = info_span!("server_invite_dialog", dialog_id = %self.inner.id.lock().unwrap());
         let _enter = span.enter();

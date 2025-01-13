@@ -1,5 +1,5 @@
 use super::{endpoint::EndpointInner, make_call_id};
-use rsip::{headers::UserAgent, prelude::UntypedHeader, Header, Request, Response, StatusCode};
+use rsip::{Header, Request, Response, StatusCode};
 
 impl EndpointInner {
     pub fn make_request(
@@ -36,8 +36,18 @@ impl EndpointInner {
         body: Option<Vec<u8>>,
     ) -> Response {
         let mut headers = req.headers.clone();
-        headers.unique_push(UserAgent::new(self.user_agent.clone()).into());
-
+        headers.retain(|h| {
+            matches!(
+                h,
+                Header::Via(_)
+                    | Header::CallId(_)
+                    | Header::From(_)
+                    | Header::To(_)
+                    | Header::MaxForwards(_)
+                    | Header::CSeq(_)
+            )
+        });
+        headers.unique_push(Header::UserAgent(self.user_agent.clone().into()));
         Response {
             status_code: status,
             version: req.version().clone(),

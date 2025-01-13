@@ -1,15 +1,16 @@
 use crate::transport::{connection::SipAddr, SipConnection};
 use key::TransactionKey;
-use uuid::Uuid;
 use std::time::Duration;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use transaction::Transaction;
+use uuid::Uuid;
 
 pub mod endpoint;
 pub mod key;
 pub mod message;
 mod timer;
 pub mod transaction;
+pub use endpoint::Endpoint;
 pub use endpoint::EndpointBuilder;
 #[cfg(test)]
 mod tests;
@@ -93,12 +94,8 @@ pub fn make_via_branch() -> rsip::Param {
     rsip::Param::Branch(format!("z9hG4bK{}", random_text(BRANCH_LEN)).into())
 }
 
-pub fn make_call_id(domain:Option<&str>) -> rsip::headers::CallId {
-    format!(
-        "{}@{}",
-        Uuid::new_v4(),
-        domain.unwrap_or("restsend.com")
-    ).into()
+pub fn make_call_id(domain: Option<&str>) -> rsip::headers::CallId {
+    format!("{}@{}", Uuid::new_v4(), domain.unwrap_or("restsend.com")).into()
 }
 
 #[cfg(not(target_family = "wasm"))]
@@ -125,4 +122,3 @@ pub fn random_text(count: usize) -> String {
         })
         .collect()
 }
-

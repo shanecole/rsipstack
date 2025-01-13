@@ -50,7 +50,7 @@ pub struct EndpointBuilder {
 }
 
 pub struct Endpoint {
-    inner: EndpointInnerRef,
+    pub inner: EndpointInnerRef,
 }
 
 impl EndpointInner {
