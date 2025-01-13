@@ -8,6 +8,8 @@ use rsip::services::DigestGenerator;
 use rsip::typed::{Authorization, ProxyAuthorization};
 use rsip::{Header, Param, Response};
 
+use super::DialogId;
+
 #[derive(Clone)]
 pub struct Credential {
     pub username: String,
@@ -26,6 +28,7 @@ pub async fn handle_client_authenticate(
             let proxy_header = rsip::header_opt!(resp.headers().iter(), Header::ProxyAuthenticate);
             let proxy_header = proxy_header.ok_or(crate::Error::DialogError(
                 "missing proxy/www authenticate".to_string(),
+                DialogId::try_from(&tx.original)?,
             ))?;
             Header::ProxyAuthenticate(proxy_header.clone())
         }

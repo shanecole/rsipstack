@@ -1,4 +1,5 @@
-use super::dialog::DialogInnerRef;
+use super::dialog::{Dialog, DialogInnerRef};
+use super::DialogId;
 use crate::dialog::dialog::DialogState;
 use crate::transaction::transaction::{Transaction, TransactionEvent};
 use crate::Result;
@@ -26,6 +27,7 @@ impl ServerInviteDialog {
         } else {
             Err(crate::Error::DialogError(
                 "transaction is already terminated".to_string(),
+                self.inner.id.lock().unwrap().clone(),
             ))
         }
     }
@@ -44,6 +46,7 @@ impl ServerInviteDialog {
         } else {
             Err(crate::Error::DialogError(
                 "transaction is already terminated".to_string(),
+                self.inner.id.lock().unwrap().clone(),
             ))
         }
     }
@@ -73,7 +76,10 @@ impl ServerInviteDialog {
         Ok(())
     }
 
-    pub async fn handle(&mut self, mut tx: Transaction) -> Result<()> {}
+    pub async fn handle(&mut self, mut tx: Transaction) -> Result<()> {
+        todo!()
+    }
+
     pub async fn handle_invite(&mut self, mut tx: Transaction) -> Result<()> {
         let span = info_span!("server_invite_dialog", dialog_id = %self.inner.id.lock().unwrap());
         let _enter = span.enter();
@@ -114,5 +120,19 @@ impl ServerInviteDialog {
         trace!("process done");
         self.inner.tu_sender.lock().unwrap().take();
         Ok(())
+    }
+}
+
+impl TryFrom<&Dialog> for ServerInviteDialog {
+    type Error = crate::Error;
+
+    fn try_from(dlg: &Dialog) -> Result<Self> {
+        match dlg {
+            Dialog::ServerInvite(dlg) => Ok(dlg.clone()),
+            _ => Err(crate::Error::DialogError(
+                "Dialog is not a ServerInviteDialog".to_string(),
+                dlg.id(),
+            )),
+        }
     }
 }

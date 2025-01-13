@@ -1,6 +1,6 @@
 use std::env::VarError;
 
-use crate::{transaction::key::TransactionKey, transport::connection::SipAddr};
+use crate::{dialog::DialogId, transaction::key::TransactionKey, transport::connection::SipAddr};
 use wasm_bindgen::prelude::*;
 #[derive(Debug, Eq, PartialEq, Clone)]
 pub enum Error {
@@ -8,7 +8,7 @@ pub enum Error {
     TransportLayerError(String, SipAddr),
     TransactionError(String, TransactionKey),
     EndpointError(String),
-    DialogError(String),
+    DialogError(String, DialogId),
     Error(String),
 }
 
@@ -19,7 +19,7 @@ impl Into<JsValue> for Error {
             Error::TransportLayerError(e, _) => e.into(),
             Error::TransactionError(e, key) => format!("{}: {}", e, key.to_string()).into(),
             Error::EndpointError(e) => e.into(),
-            Error::DialogError(e) => e.into(),
+            Error::DialogError(e, id) => format!("{}: {}", e, id.to_string()).into(),
             Error::Error(e) => e.into(),
         }
     }

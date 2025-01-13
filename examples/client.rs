@@ -148,16 +148,7 @@ async fn process_incoming(
         info!("Received transaction: {:?}", tx.key);
         match tx.original.method {
             rsip::Method::Invite => {
-                let dialog_id = match DialogId::try_from(&tx.original) {
-                    Ok(dialog_id) => dialog_id,
-                    Err(e) => {
-                        info!("Failed to create dialog id, tx{:?}  {:?}", tx.original, e);
-                        continue;
-                    }
-                };
-
-                let dialog = dialog_layer.create_or_create_server_invite(tx)?;
-                dialog.handle(tx).await?;
+                dialog_layer.process(&tx)?.await;
             }
             _ => {
                 let resp =

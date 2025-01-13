@@ -1,5 +1,7 @@
 use super::{
     authenticate::{handle_client_authenticate, Credential},
+    client_dialog::ClientInviteDialog,
+    server_dialog::ServerInviteDialog,
     DialogId,
 };
 use crate::{
@@ -39,6 +41,11 @@ pub enum DialogState {
     Info(rsip::Request),
     Terminated(Option<rsip::StatusCode>),
 }
+#[derive(Clone)]
+pub enum Dialog {
+    ServerInvite(ServerInviteDialog),
+    ClientInvite(ClientInviteDialog),
+}
 
 pub struct DialogInner {
     pub id: Mutex<DialogId>,
@@ -71,7 +78,6 @@ impl DialogInner {
     pub fn new(
         endpoint_inner: EndpointInnerRef,
         state_sender: DialogStateSender,
-        tx: Transaction,
         credential: Option<Credential>,
     ) -> Result<Self> {
         let initial_request = tx.original.clone();
@@ -258,6 +264,16 @@ impl std::fmt::Display for DialogState {
         }
     }
 }
+
+impl Dialog {
+    pub fn id(&self) -> DialogId {
+        match self {
+            Dialog::ServerInvite(d) => d.inner.id.lock().unwrap().clone(),
+            Dialog::ClientInvite(d) => d.inner.id.lock().unwrap().clone(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::transaction::transaction::Transaction;

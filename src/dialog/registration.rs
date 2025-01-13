@@ -6,7 +6,10 @@ use rsip::{
 };
 use tracing::info;
 
-use super::authenticate::{handle_client_authenticate, Credential};
+use super::{
+    authenticate::{handle_client_authenticate, Credential},
+    DialogId,
+};
 use crate::{
     transaction::{endpoint::Endpoint, random_text, TO_TAG_LEN},
     Result,
@@ -129,6 +132,7 @@ impl Registration {
         }
         return Err(crate::Error::DialogError(
             "registration transaction is already terminated".to_string(),
+            DialogId::try_from(&tx.original)?,
         ));
     }
 }

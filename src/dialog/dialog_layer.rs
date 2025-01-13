@@ -1,8 +1,5 @@
-use super::{
-    dialog::{DialogInner, DialogInnerRef},
-    server_dialog::ServerInviteDialog,
-    DialogId,
-};
+use super::{dialog::Dialog, server_dialog::ServerInviteDialog, DialogId};
+use crate::dialog::dialog::DialogInner;
 use crate::transaction::{endpoint::EndpointInnerRef, transaction::Transaction};
 use crate::Result;
 use std::{
@@ -11,7 +8,7 @@ use std::{
 };
 
 pub struct DialogLayerInner {
-    dialogs: RwLock<HashMap<DialogId, DialogInnerRef>>,
+    dialogs: RwLock<HashMap<DialogId, Dialog>>,
 }
 pub type DialogLayerInnerRef = Arc<DialogLayerInner>;
 
@@ -30,14 +27,21 @@ impl DialogLayer {
         }
     }
 
-    pub fn create_or_create_server_invite(&self, tx: Transaction) -> Result<ServerInviteDialog> {
-        //let dialog_inner = DialogInner::new(self
-        //    , state_sender, tx, credential)
+    pub fn get_or_create_server_invite(&self, tx: &Transaction) -> Result<ServerInviteDialog> {
+        let id = DialogId::try_from(&tx.original)?;
+        if !id.to_tag.is_empty() {
+            let dlg = self.inner.dialogs.read().unwrap().get(&id).cloned();
+            match dlg {
+                Some(Dialog::ServerInvite(dlg)) => return Ok(dlg),
+                _ => {}
+            }
+        }
 
+        let dlg_inner = DialogInner::new(self.endpoint.clone(), self.inner.clone(), None)?;
         todo!()
     }
 
-    pub fn get_server_invite_dialog(&self, id: &DialogId) -> Option<ServerInviteDialog> {
-        todo!()
+    pub fn get_dialog(&self, id: &DialogId) -> Option<Dialog> {
+        self.inner.dialogs.read().unwrap().get(id).cloned()
     }
 }
