@@ -348,19 +348,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_external_with_stun() -> Result<()> {
-        tracing_subscriber::fmt()
-            .with_max_level(tracing::Level::TRACE)
-            .with_file(true)
-            .with_line_number(true)
-            .with_timer(tracing_subscriber::fmt::time::LocalTime::rfc_3339())
-            .try_init()
-            .ok();
-
         let addrs = tokio::net::lookup_host("restsend.com:3478").await?;
         for addr in addrs {
             info!("stun server: {}", addr);
         }
-        let mut peer_bob = UdpConnection::create_connection("127.0.0.1:0".parse()?, None).await?;
+        let mut peer_bob = UdpConnection::create_connection("0.0.0.0:0".parse()?, None).await?;
         let addr = peer_bob
             .external_by_stun("restsend.com:3478".to_string())
             .await
