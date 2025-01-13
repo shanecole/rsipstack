@@ -33,6 +33,9 @@ struct Args {
     /// SIP password
     #[arg(long)]
     password: Option<String>,
+
+    #[arg(long, default_value = "restsend.com:3478")]
+    stun_server: Option<String>,
 }
 
 // A sip client example, that sends a REGISTER request to a sip server.
@@ -60,8 +63,28 @@ async fn main() -> rsipstack::Result<()> {
     let token = CancellationToken::new();
     let transport_layer = TransportLayer::new(token.clone());
 
-    let connection =
-        UdpConnection::create_connection(format!("0.0.0.0:{}", args.port).parse()?, None).await?;
+    let external_ip = args
+        .external_ip
+        .unwrap_or(env::var("EXTERNAL_IP").unwrap_or_default());
+
+    let external = if external_ip.is_empty() {
+        None
+    } else {
+        Some(format!("{}:{}", external_ip, args.port).parse()?)
+    };
+
+    let mut connection = UdpConnection::create_connection(
+        format!("0.0.0.0:{}", args.port).parse()?,
+        external.clone(),
+    )
+    .await?;
+
+    if external.is_none() && args.stun_server.is_some() {
+        connection
+            .external_by_stun(args.stun_server.unwrap())
+            .await?;
+    }
+
     transport_layer.add_transport(connection.into());
 
     let user_agent = Arc::new(

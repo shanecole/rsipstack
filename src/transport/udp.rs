@@ -10,7 +10,11 @@ use crate::{
     Result,
 };
 use std::{net::SocketAddr, sync::Arc};
-use tokio::net::UdpSocket;
+use stun_rs::{
+    attributes::stun::XorMappedAddress, methods::BINDING, MessageClass, MessageDecoderBuilder,
+    MessageEncoderBuilder, StunMessageBuilder,
+};
+use tokio::net::{lookup_host, UdpSocket};
 use tracing::{debug, error, info, instrument, trace};
 struct UdpInner {
     pub(self) conn: UdpSocket,
@@ -19,6 +23,7 @@ struct UdpInner {
 
 #[derive(Clone)]
 pub struct UdpConnection {
+    external: Option<SipAddr>,
     inner: Arc<UdpInner>,
 }
 
@@ -31,14 +36,72 @@ impl UdpConnection {
 
         let addr = SipAddr {
             r#type: Some(rsip::transport::Transport::Udp),
-            addr: external.unwrap_or(conn.local_addr()?),
+            addr: conn.local_addr()?,
         };
 
         let t = UdpConnection {
+            external: external.map(|addr| SipAddr {
+                r#type: Some(rsip::transport::Transport::Udp),
+                addr,
+            }),
             inner: Arc::new(UdpInner { addr, conn }),
         };
         info!("created UDP connection: {} external: {:?}", t, external);
         Ok(t)
+    }
+
+    pub async fn external_by_stun(&mut self, stun_server: String) -> Result<SocketAddr> {
+        info!("getting external IP by STUN server: {}", stun_server);
+        let msg = StunMessageBuilder::new(BINDING, MessageClass::Request).build();
+
+        let encoder = MessageEncoderBuilder::default().build();
+        let mut buffer: [u8; 150] = [0x00; 150];
+        encoder.encode(&mut buffer, &msg).map_err(|e| {
+            crate::Error::TransportLayerError(e.to_string(), self.get_addr().to_owned())
+        })?;
+
+        let mut addrs = lookup_host(stun_server).await?;
+        let target = addrs.next().ok_or_else(|| {
+            crate::Error::TransportLayerError(
+                "STUN server address not found".to_string(),
+                self.get_addr().to_owned(),
+            )
+        })?;
+
+        self.send_raw(
+            &buffer,
+            SipAddr {
+                addr: target,
+                r#type: None,
+            },
+        )
+        .await?;
+
+        let buf = &mut [0u8; 2048];
+        self.recv_raw(buf).await?;
+
+        let decoder = MessageDecoderBuilder::default().build();
+        let (resp, _) = decoder.decode(buf).map_err(|e| {
+            crate::Error::TransportLayerError(e.to_string(), self.get_addr().to_owned())
+        })?;
+
+        let xor_addr = resp
+            .get::<XorMappedAddress>()
+            .ok_or(crate::Error::TransportLayerError(
+                "XorMappedAddress attribute not found".to_string(),
+                self.get_addr().to_owned(),
+            ))?
+            .as_xor_mapped_address()
+            .map_err(|e| {
+                crate::Error::TransportLayerError(e.to_string(), self.get_addr().to_owned())
+            })?;
+        let socket = xor_addr.socket_address();
+        info!("external IP: {}", socket);
+        self.external = Some(SipAddr {
+            r#type: Some(rsip::transport::Transport::Udp),
+            addr: socket.clone(),
+        });
+        Ok(socket.clone())
     }
 
     pub async fn serve_loop(&self, sender: TransportSender) -> Result<()> {
@@ -163,7 +226,11 @@ impl UdpConnection {
     }
 
     pub fn get_addr(&self) -> &SipAddr {
-        &self.inner.addr
+        if let Some(external) = &self.external {
+            external
+        } else {
+            &self.inner.addr
+        }
     }
 }
 
@@ -200,6 +267,7 @@ mod tests {
     };
     use std::time::Duration;
     use tokio::{select, sync::mpsc::unbounded_channel, time::sleep};
+    use tracing::info;
 
     #[tokio::test]
     async fn test_udp_keepalive() -> Result<()> {
@@ -275,6 +343,29 @@ mod tests {
                 assert!(false, "timeout waiting");
             }
         };
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_external_with_stun() -> Result<()> {
+        tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::TRACE)
+            .with_file(true)
+            .with_line_number(true)
+            .with_timer(tracing_subscriber::fmt::time::LocalTime::rfc_3339())
+            .try_init()
+            .ok();
+
+        let addrs = tokio::net::lookup_host("restsend.com:3478").await?;
+        for addr in addrs {
+            info!("stun server: {}", addr);
+        }
+        let mut peer_bob = UdpConnection::create_connection("127.0.0.1:0".parse()?, None).await?;
+        let addr = peer_bob
+            .external_by_stun("restsend.com:3478".to_string())
+            .await
+            .expect("external_by_stun");
+        info!("external IP: {}", addr);
         Ok(())
     }
 }

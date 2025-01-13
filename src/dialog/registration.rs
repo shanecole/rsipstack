@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use rsip::{
     prelude::{HasHeaders, HeadersExt, ToTypedHeader},
-    Header, Response, SipMessage, StatusCode,
+    Header, Method, Response, SipMessage, StatusCode,
 };
 use tracing::info;
 
@@ -17,6 +17,7 @@ pub struct Registration {
     pub useragent: Arc<Endpoint>,
     pub credential: Option<Credential>,
     pub contact: Option<rsip::typed::Contact>,
+    pub allow: rsip::headers::Allow,
 }
 
 impl Registration {
@@ -26,6 +27,7 @@ impl Registration {
             useragent,
             credential,
             contact: None,
+            allow: Default::default(),
         }
     }
 
@@ -62,12 +64,25 @@ impl Registration {
         }
         .with_tag(random_text(TO_TAG_LEN).into());
 
+        let first_addr = self
+            .useragent
+            .get_addrs()
+            .first()
+            .ok_or(crate::Error::Error("no address found".to_string()))?
+            .clone();
+
         let contact = self
             .contact
             .clone()
             .unwrap_or_else(|| rsip::typed::Contact {
                 display_name: None,
-                uri: to.uri.clone(),
+                uri: rsip::Uri {
+                    auth: to.uri.auth.clone(),
+                    scheme: Some(rsip::Scheme::Sip),
+                    host_with_port: first_addr.addr.into(),
+                    params: vec![],
+                    headers: vec![],
+                },
                 params: vec![],
             });
 
@@ -76,7 +91,7 @@ impl Registration {
                 .make_request(rsip::Method::Register, recipient, form, to, self.last_seq);
 
         request.headers.unique_push(contact.into());
-
+        request.headers.unique_push(self.allow.clone().into());
         let mut tx = self.useragent.client_transaction(request)?;
         tx.send().await?;
         let mut auth_sent = false;
@@ -106,9 +121,6 @@ impl Registration {
                     }
                     _ => {
                         info!("registration do_request done: {:?}", resp.status_code);
-                        if let Ok(c) = resp.contact_header() {
-                            c.clone().into_typed().map(|c| self.contact = Some(c)).ok();
-                        }
                         return Ok(resp);
                     }
                 },

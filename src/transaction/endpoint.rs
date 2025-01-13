@@ -359,7 +359,7 @@ impl Endpoint {
             version: rsip::Version::V2,
             transport: first_addr.r#type.unwrap_or_default(),
             uri: first_addr.addr.into(),
-            params: vec![make_via_branch()].into(),
+            params: vec![make_via_branch(), rsip::Param::Other("rport".into(), None)].into(),
         };
 
         self.inner.make_request(method, req_uri, via, from, to, seq)
