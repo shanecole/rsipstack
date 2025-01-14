@@ -139,7 +139,6 @@ impl TransportLayerInner {
     async fn serve_listens(&self, sender: TransportSender) -> Result<()> {
         let listens = self.listens.lock().unwrap().clone();
         for (_, transport) in listens {
-            let sender = sender.clone();
             let sub_token = self.cancel_token.child_token();
             let sender_clone = sender.clone();
             let listens_ref = self.listens.clone();

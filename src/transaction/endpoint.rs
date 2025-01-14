@@ -375,7 +375,7 @@ impl Endpoint {
     //
     pub fn incoming_transactions(&self) -> TransactionReceiver {
         let (tx, rx) = unbounded_channel();
-        self.inner.attach_incoming_sender(Some(tx.clone()));
+        self.inner.attach_incoming_sender(Some(tx));
         rx
     }
 
