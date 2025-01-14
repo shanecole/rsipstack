@@ -101,7 +101,6 @@ impl EndpointInner {
         while let Some(event) = transport_rx.recv().await {
             match event {
                 TransportEvent::Incoming(msg, connection, from) => {
-                    trace!("incoming message {} <- {} {}", connection, from, msg);
                     match self
                         .on_received_message(msg, connection, &endpoint_inner)
                         .await
@@ -128,6 +127,7 @@ impl EndpointInner {
             for t in self.timers.poll(Instant::now()) {
                 match t {
                     TransactionTimer::TimerCleanup(key) => {
+                        debug!("TimerCleanup {}", key);
                         self.transactions.lock().unwrap().remove(&key);
                         self.finished_transactions.lock().unwrap().remove(&key);
                         continue;
@@ -163,7 +163,7 @@ impl EndpointInner {
         connection: SipConnection,
         endpoint_inner: &EndpointInnerRef,
     ) -> Result<()> {
-        let key = match &msg {
+        let mut key = match &msg {
             SipMessage::Request(req) => {
                 if req.method == rsip::Method::Cancel {
                     // Cancel quick response, no transaction
@@ -191,12 +191,14 @@ impl EndpointInner {
             return Ok(());
         }
 
-        if let Some(tu) = { self.transactions.lock().unwrap().get(&key) } {
-            tu.send(TransactionEvent::Received(msg, Some(connection)))
-                .map_err(|e| Error::TransactionError(e.to_string(), key))?;
-            return Ok(());
+        match self.transactions.lock().unwrap().get(&key) {
+            Some(tu) => {
+                tu.send(TransactionEvent::Received(msg, Some(connection)))
+                    .map_err(|e| Error::TransactionError(e.to_string(), key))?;
+                return Ok(());
+            }
+            None => {}
         }
-
         // if the transaction is not exist, create a new transaction
         let request = match msg {
             SipMessage::Request(req) => req,
@@ -215,17 +217,8 @@ impl EndpointInner {
             ));
         }
 
-        match request.method {
-            rsip::Method::Ack => {
-                let resp = self.make_response(
-                    &request,
-                    rsip::StatusCode::CallTransactionDoesNotExist,
-                    None,
-                );
-                connection.send(resp.into()).await?;
-                return Ok(());
-            }
-            _ => {}
+        if request.method == rsip::Method::Ack {
+            key = TransactionKey::from_request(&request, super::key::TransactionRole::Server)?;
         }
 
         let tx = Transaction::new_server(
@@ -244,6 +237,7 @@ impl EndpointInner {
     }
 
     pub fn attach_transaction(&self, key: &TransactionKey, tu_sender: TransactionEventSender) {
+        trace!("attach_transaction {}", key);
         self.transactions
             .lock()
             .unwrap()
@@ -251,6 +245,7 @@ impl EndpointInner {
     }
 
     pub fn detach_transaction(&self, key: &TransactionKey, last_message: Option<SipMessage>) {
+        trace!("detach_transaction {}", key);
         self.transactions.lock().unwrap().remove(key);
 
         if let Some(msg) = last_message {
@@ -270,6 +265,23 @@ impl EndpointInner {
                 .unwrap()
                 .insert(key.clone(), Some(msg));
         }
+    }
+
+    pub fn get_via(&self) -> Result<rsip::typed::Via> {
+        let first_addr = self
+            .transport_layer
+            .get_addrs()
+            .first()
+            .ok_or(Error::EndpointError("not sipaddrs".to_string()))
+            .cloned()?;
+
+        let via = rsip::typed::Via {
+            version: rsip::Version::V2,
+            transport: first_addr.r#type.unwrap_or_default(),
+            uri: first_addr.addr.into(),
+            params: vec![make_via_branch(), rsip::Param::Other("rport".into(), None)].into(),
+        };
+        Ok(via)
     }
 }
 
@@ -347,22 +359,9 @@ impl Endpoint {
         from: rsip::typed::From,
         to: rsip::typed::To,
         seq: u32,
-    ) -> rsip::Request {
-        let first_addr = self
-            .get_addrs()
-            .get(0)
-            .ok_or(Error::EndpointError("not sipaddrs".to_string()))
-            .cloned()
-            .unwrap();
-
-        let via = rsip::typed::Via {
-            version: rsip::Version::V2,
-            transport: first_addr.r#type.unwrap_or_default(),
-            uri: first_addr.addr.into(),
-            params: vec![make_via_branch(), rsip::Param::Other("rport".into(), None)].into(),
-        };
-
-        self.inner.make_request(method, req_uri, via, from, to, seq)
+    ) -> Result<rsip::Request> {
+        let via = self.get_via()?;
+        Ok(self.inner.make_request(method, req_uri, via, from, to, seq))
     }
 
     pub fn client_transaction(&self, request: rsip::Request) -> Result<Transaction> {
@@ -382,5 +381,9 @@ impl Endpoint {
 
     pub fn get_addrs(&self) -> Vec<SipAddr> {
         self.inner.transport_layer.get_addrs()
+    }
+
+    pub fn get_via(&self) -> Result<rsip::typed::Via> {
+        self.inner.get_via()
     }
 }

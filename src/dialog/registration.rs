@@ -11,7 +11,7 @@ use super::{
     DialogId,
 };
 use crate::{
-    transaction::{endpoint::Endpoint, random_text, TO_TAG_LEN},
+    transaction::{endpoint::Endpoint, make_to_tag, random_text, TO_TAG_LEN},
     Result,
 };
 
@@ -65,7 +65,7 @@ impl Registration {
             uri: to.uri.clone(),
             params: vec![],
         }
-        .with_tag(random_text(TO_TAG_LEN).into());
+        .with_tag(make_to_tag());
 
         let first_addr = self
             .useragent
@@ -89,9 +89,13 @@ impl Registration {
                 params: vec![],
             });
 
-        let mut request =
-            self.useragent
-                .make_request(rsip::Method::Register, recipient, form, to, self.last_seq);
+        let mut request = self.useragent.make_request(
+            rsip::Method::Register,
+            recipient,
+            form,
+            to,
+            self.last_seq,
+        )?;
 
         request.headers.unique_push(contact.into());
         request.headers.unique_push(self.allow.clone().into());

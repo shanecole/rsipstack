@@ -1,4 +1,5 @@
 use super::dialog::DialogInnerRef;
+use super::DialogId;
 use crate::dialog::{authenticate::handle_client_authenticate, dialog::DialogState};
 use crate::transaction::transaction::Transaction;
 use crate::Result;
@@ -16,8 +17,12 @@ impl ClientInviteDialog {
         todo!()
     }
 
+    pub fn id(&self) -> DialogId {
+        self.inner.id.clone()
+    }
+
     pub async fn cancel(&self) -> Result<()> {
-        let request = self.inner.make_request(rsip::Method::Cancel, None, None);
+        let request = self.inner.make_request(rsip::Method::Cancel, None, None)?;
         self.inner.do_request(&request).await?;
         Ok(())
     }
@@ -26,10 +31,12 @@ impl ClientInviteDialog {
         if !self.inner.is_confirmed() {
             return Ok(());
         }
-        let request = self.inner.make_request(rsip::Method::Bye, None, None);
+        let request = self.inner.make_request(rsip::Method::Bye, None, None)?;
         let resp = self.inner.do_request(&request).await?;
-        self.inner
-            .transition(DialogState::Terminated(resp.map(|r| r.status_code)))?;
+        self.inner.transition(DialogState::Terminated(
+            self.id(),
+            resp.map(|r| r.status_code),
+        ))?;
         Ok(())
     }
 
@@ -45,9 +52,10 @@ impl ClientInviteDialog {
             return Ok(());
         }
 
-        let request = self.inner.make_request(rsip::Method::Info, None, None);
+        let request = self.inner.make_request(rsip::Method::Info, None, None)?;
         self.inner.do_request(&request).await?;
-        self.inner.transition(DialogState::Info(request))?;
+        self.inner
+            .transition(DialogState::Info(self.id(), request))?;
         Ok(())
     }
 
@@ -56,7 +64,7 @@ impl ClientInviteDialog {
     }
 
     pub async fn handle_invite(&self, mut tx: Transaction) -> Result<()> {
-        let span = info_span!("client_dialog", dialog_id = %self.inner.id.lock().unwrap());
+        let span = info_span!("client_dialog", dialog_id = %self.id());
         let _enter = span.enter();
 
         self.inner
@@ -65,8 +73,7 @@ impl ClientInviteDialog {
             .unwrap()
             .replace(tx.tu_sender.clone());
 
-        self.inner
-            .transition(DialogState::Calling(tx.original.clone()))?;
+        self.inner.transition(DialogState::Calling(self.id()))?;
         let mut auth_sent = false;
 
         while let Some(msg) = tx.receive().await {
@@ -74,18 +81,15 @@ impl ClientInviteDialog {
                 SipMessage::Request(_) => {}
                 SipMessage::Response(resp) => match resp.status_code {
                     StatusCode::Trying => {
-                        self.inner.transition(DialogState::Trying)?;
+                        self.inner.transition(DialogState::Trying(self.id()))?;
                     }
                     StatusCode::Ringing | StatusCode::SessionProgress => {
-                        if let Some(to_tag) = resp.to_header()?.tag()? {
-                            self.inner.update_remote_tag(to_tag); // ealy dialog
-                        }
-                        self.inner.transition(DialogState::Early(resp))?;
+                        self.inner.transition(DialogState::Early(self.id(), resp))?;
                     }
                     StatusCode::OK => {
                         let to_tag = resp.to_header()?.tag()?.ok_or(crate::Error::DialogError(
                             "received 200 response without to tag".to_string(),
-                            self.inner.id.lock().unwrap().clone(),
+                            self.id(),
                         ))?;
                         let ack = rsip::Request {
                             method: rsip::Method::Ack,
@@ -95,19 +99,23 @@ impl ClientInviteDialog {
                             body: Default::default(),
                         };
                         tx.send_ack(ack).await?;
-                        self.inner.update_remote_tag(to_tag);
-                        self.inner.transition(DialogState::Confirmed(resp))?;
+                        self.inner
+                            .transition(DialogState::Confirmed(self.id(), resp))?;
                     }
                     StatusCode::Decline => {
                         info!("received decline response: {}", resp.status_code);
-                        self.inner
-                            .transition(DialogState::Terminated(Some(resp.status_code)))?;
+                        self.inner.transition(DialogState::Terminated(
+                            self.id(),
+                            Some(resp.status_code),
+                        ))?;
                     }
                     StatusCode::ProxyAuthenticationRequired | StatusCode::Unauthorized => {
                         if auth_sent {
                             info!("received {} response after auth sent", resp.status_code);
-                            self.inner
-                                .transition(DialogState::Terminated(Some(resp.status_code)))?;
+                            self.inner.transition(DialogState::Terminated(
+                                self.id(),
+                                Some(resp.status_code),
+                            ))?;
                             break;
                         }
                         auth_sent = true;
@@ -123,21 +131,27 @@ impl ClientInviteDialog {
                             continue;
                         } else {
                             info!("received 407 response without auth option");
-                            self.inner
-                                .transition(DialogState::Terminated(Some(resp.status_code)))?;
+                            self.inner.transition(DialogState::Terminated(
+                                self.id(),
+                                Some(resp.status_code),
+                            ))?;
                         }
                     }
                     _ => match resp.status_code.kind() {
                         rsip::StatusCodeKind::Redirection => {
-                            self.inner
-                                .transition(DialogState::Terminated(Some(resp.status_code)))?;
+                            self.inner.transition(DialogState::Terminated(
+                                self.id(),
+                                Some(resp.status_code),
+                            ))?;
                         }
                         rsip::StatusCodeKind::RequestFailure
                         | rsip::StatusCodeKind::ServerFailure
                         | rsip::StatusCodeKind::GlobalFailure => {
                             info!("received failure response: {}", resp.status_code);
-                            self.inner
-                                .transition(DialogState::Terminated(Some(resp.status_code)))?;
+                            self.inner.transition(DialogState::Terminated(
+                                self.id(),
+                                Some(resp.status_code),
+                            ))?;
                         }
                         _ => {
                             info!("ignoring response: {}", resp.status_code);

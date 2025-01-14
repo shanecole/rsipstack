@@ -98,6 +98,10 @@ pub fn make_call_id(domain: Option<&str>) -> rsip::headers::CallId {
     format!("{}@{}", Uuid::new_v4(), domain.unwrap_or("restsend.com")).into()
 }
 
+pub fn make_to_tag() -> rsip::param::Tag {
+    random_text(TO_TAG_LEN).into()
+}
+
 #[cfg(not(target_family = "wasm"))]
 pub fn random_text(count: usize) -> String {
     use rand::Rng;

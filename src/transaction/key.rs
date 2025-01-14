@@ -35,6 +35,18 @@ impl std::fmt::Display for TransactionKey {
 }
 
 impl TransactionKey {
+    pub fn from_ack(req: &Request, role: TransactionRole) -> Result<Self> {
+        let via = req.via_header()?.typed()?;
+        let method = req.method().clone();
+        let from_tag = req
+            .from_header()?
+            .tag()?
+            .ok_or(Error::Error("from tags missing".to_string()))?;
+        let call_id = req.call_id_header()?.value().to_string();
+        let cseq = req.cseq_header()?.seq()?;
+        Self::build_key(role, via, method, cseq, from_tag, call_id)
+    }
+
     pub fn from_request(req: &Request, role: TransactionRole) -> Result<Self> {
         let via = req.via_header()?.typed()?;
         let mut method = req.method().clone();

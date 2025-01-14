@@ -3,7 +3,8 @@ use super::DialogId;
 use crate::dialog::dialog::DialogState;
 use crate::transaction::transaction::{Transaction, TransactionEvent};
 use crate::Result;
-use rsip::{Header, SipMessage, StatusCode};
+use rsip::{Header, Request, SipMessage, StatusCode};
+use tokio_util::sync::CancellationToken;
 use tracing::{info, info_span, trace};
 
 #[derive(Clone)]
@@ -12,13 +13,23 @@ pub struct ServerInviteDialog {
 }
 
 impl ServerInviteDialog {
-    pub fn accept(&self, headers: Option<Vec<Header>>, body: Vec<u8>) -> Result<()> {
+    pub fn id(&self) -> DialogId {
+        self.inner.id.clone()
+    }
+    pub fn cancel_token(&self) -> &CancellationToken {
+        &self.inner.cancel_token
+    }
+    pub fn initial_request(&self) -> &Request {
+        &self.inner.initial_request
+    }
+
+    pub fn accept(&self, headers: Option<Vec<Header>>, body: Option<Vec<u8>>) -> Result<()> {
         if let Some(sender) = self.inner.tu_sender.lock().unwrap().as_ref() {
             let resp = self.inner.make_response(
                 &self.inner.initial_request,
                 rsip::StatusCode::OK,
                 headers,
-                Some(body),
+                body,
             );
 
             sender
@@ -27,7 +38,7 @@ impl ServerInviteDialog {
         } else {
             Err(crate::Error::DialogError(
                 "transaction is already terminated".to_string(),
-                self.inner.id.lock().unwrap().clone(),
+                self.id(),
             ))
         }
     }
@@ -46,20 +57,25 @@ impl ServerInviteDialog {
         } else {
             Err(crate::Error::DialogError(
                 "transaction is already terminated".to_string(),
-                self.inner.id.lock().unwrap().clone(),
+                self.id(),
             ))
         }
     }
 
     pub async fn bye(&self) -> Result<()> {
         if !self.inner.is_confirmed() {
+            info!("dialog is not confirmed");
             return Ok(());
         }
-        let request = self.inner.make_request(rsip::Method::Bye, None, None);
+        let request = self.inner.make_request(rsip::Method::Bye, None, None)?;
+        info!("sending bye {}", request);
         let resp = self.inner.do_request(&request).await?;
+        self.inner.transition(DialogState::Terminated(
+            self.id(),
+            resp.map(|r| r.status_code),
+        ))?;
         self.inner
-            .transition(DialogState::Terminated(resp.map(|r| r.status_code)))?;
-        self.inner.transition(DialogState::Terminated(None))?;
+            .transition(DialogState::Terminated(self.id(), None))?;
         Ok(())
     }
 
@@ -71,27 +87,82 @@ impl ServerInviteDialog {
         if !self.inner.is_confirmed() {
             return Ok(());
         }
-        let request = self.inner.make_request(rsip::Method::Info, None, None);
+        let request = self.inner.make_request(rsip::Method::Info, None, None)?;
         self.inner.do_request(&request).await?;
         Ok(())
     }
 
     pub async fn handle(&mut self, mut tx: Transaction) -> Result<()> {
-        todo!()
-    }
-
-    pub async fn handle_invite(&mut self, mut tx: Transaction) -> Result<()> {
-        let span = info_span!("server_invite_dialog", dialog_id = %self.inner.id.lock().unwrap());
+        let span = info_span!("server_invite_dialog", dialog_id = %self.id());
         let _enter = span.enter();
 
+        trace!(
+            "handle request: {:?} state:{}",
+            tx.original,
+            self.inner.state.lock().unwrap()
+        );
+
+        if self.inner.is_confirmed() {
+            match tx.original.method {
+                rsip::Method::Invite => {}
+                rsip::Method::Bye => return self.handle_bye(tx).await,
+                rsip::Method::Info => return self.handle_info(tx).await,
+                _ => {
+                    info!("invalid request method: {:?}", tx.original.method);
+                    tx.reply(rsip::StatusCode::MethodNotAllowed).await?;
+                    return Err(crate::Error::DialogError(
+                        "invalid request".to_string(),
+                        self.id(),
+                    ));
+                }
+            }
+        } else {
+            match tx.original.method {
+                rsip::Method::Ack => {
+                    info!("received ack before confirmed");
+                    if let Some(sender) = self.inner.tu_sender.lock().unwrap().as_ref() {
+                        sender
+                            .send(TransactionEvent::Received(
+                                tx.original.clone().into(),
+                                tx.connection.clone(),
+                            ))
+                            .ok();
+                    }
+                    return Ok(());
+                }
+                _ => {}
+            }
+        }
+        self.handle_invite(tx).await
+    }
+
+    async fn handle_bye(&mut self, mut tx: Transaction) -> Result<()> {
+        info!("received bye");
+        self.inner
+            .transition(DialogState::Terminated(self.id(), None))?;
+        tx.reply(rsip::StatusCode::OK).await?;
+        Ok(())
+    }
+
+    async fn handle_info(&mut self, mut tx: Transaction) -> Result<()> {
+        self.inner
+            .transition(DialogState::Info(self.id(), tx.original.clone()))?;
+        tx.reply(rsip::StatusCode::OK).await?;
+        Ok(())
+    }
+
+    async fn handle_invite(&mut self, mut tx: Transaction) -> Result<()> {
         self.inner
             .tu_sender
             .lock()
             .unwrap()
             .replace(tx.tu_sender.clone());
 
-        self.inner
-            .transition(DialogState::Calling(tx.original.clone()))?;
+        if !self.inner.is_confirmed() {
+            self.inner.transition(DialogState::Calling(self.id()))?;
+        }
+
+        tx.send_trying().await?;
 
         while let Some(msg) = tx.receive().await {
             match msg {
@@ -100,17 +171,20 @@ impl ServerInviteDialog {
                         info!("received ack");
                         let last_response = tx.last_response.clone().unwrap_or_default();
                         self.inner
-                            .transition(DialogState::Confirmed(last_response.into()))?;
+                            .transition(DialogState::Confirmed(self.id(), last_response.into()))?;
                     }
                     rsip::Method::Bye => {
                         info!("received bye");
-                        self.inner.transition(DialogState::Terminated(None))?;
+                        self.inner
+                            .transition(DialogState::Terminated(self.id(), None))?;
                     }
                     rsip::Method::Cancel => {
                         info!("received cancel");
-                        self.inner.transition(DialogState::Terminated(Some(
-                            StatusCode::RequestTerminated,
-                        )))?;
+                        tx.reply(rsip::StatusCode::RequestTerminated).await?;
+                        self.inner.transition(DialogState::Terminated(
+                            self.id(),
+                            Some(StatusCode::RequestTerminated),
+                        ))?;
                     }
                     _ => {}
                 },

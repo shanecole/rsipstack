@@ -64,7 +64,7 @@ async fn test_endpoint_recvrequests() {
         };
         let buf: String = register_req.try_into().expect("try_into");
         test_conn
-            .send_raw(&buf.as_bytes(), addr)
+            .send_raw(&buf.as_bytes(), &addr)
             .await
             .expect("send_raw");
         sleep(Duration::from_secs(1)).await;

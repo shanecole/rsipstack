@@ -32,7 +32,7 @@ impl EndpointInner {
     pub fn make_response(
         &self,
         req: &Request,
-        status: StatusCode,
+        status_code: StatusCode,
         body: Option<Vec<u8>>,
     ) -> Response {
         let mut headers = req.headers.clone();
@@ -49,7 +49,7 @@ impl EndpointInner {
         });
         headers.unique_push(Header::UserAgent(self.user_agent.clone().into()));
         Response {
-            status_code: status,
+            status_code,
             version: req.version().clone(),
             headers,
             body: body.unwrap_or_default(),

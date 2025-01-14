@@ -1,5 +1,8 @@
 use crate::Error;
-use rsip::{prelude::HeadersExt, Request};
+use rsip::{
+    prelude::{HeadersExt, UntypedHeader},
+    Request,
+};
 
 pub mod authenticate;
 pub mod client_dialog;
@@ -19,14 +22,17 @@ impl TryFrom<&Request> for DialogId {
     type Error = crate::Error;
 
     fn try_from(request: &Request) -> Result<Self, Self::Error> {
-        let call_id = request.call_id_header()?.to_string();
+        let call_id = request.call_id_header()?.value().to_string();
 
-        let from_tag = request
-            .from_header()?
-            .tag()?
-            .ok_or(Error::Error("from tags missing".to_string()))?;
+        let from_tag = match request.from_header()?.tag()? {
+            Some(tag) => tag.value().to_string(),
+            None => return Err(Error::Error("from tag not found".to_string())),
+        };
 
-        let to_tag = request.to_header()?.tag()?.unwrap_or_default();
+        let to_tag = match request.to_header()?.tag()? {
+            Some(tag) => tag.value().to_string(),
+            None => "".to_string(),
+        };
 
         Ok(DialogId {
             call_id: call_id.to_string(),

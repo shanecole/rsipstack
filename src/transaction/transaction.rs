@@ -1,8 +1,10 @@
 use super::endpoint::EndpointInnerRef;
 use super::key::TransactionKey;
 use super::{SipConnection, TransactionState, TransactionTimer, TransactionType};
+use crate::transaction::make_to_tag;
 use crate::{Error, Result};
-use rsip::{Method, Request, Response, SipMessage};
+use rsip::prelude::HeadersExt;
+use rsip::{Method, Request, Response, SipMessage, StatusCode};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tracing::{debug, info, instrument, span, Level, Span};
 
@@ -90,7 +92,7 @@ impl Transaction {
         connection: Option<SipConnection>,
     ) -> Self {
         let tx_type = match original.method {
-            Method::Invite => TransactionType::ServerInvite,
+            Method::Invite | Method::Ack => TransactionType::ServerInvite,
             _ => TransactionType::ServerNonInvite,
         };
         Transaction::new(tx_type, key, original, connection, endpoint_inner)
@@ -127,8 +129,27 @@ impl Transaction {
         self.transition(TransactionState::Trying).map(|_| ())
     }
 
-    // send server response
+    /// Quick reply with status code
     #[instrument(skip(self))]
+    pub async fn reply(&mut self, status_code: StatusCode) -> Result<()> {
+        let resp = self
+            .endpoint_inner
+            .make_response(&self.original, status_code.clone(), None);
+        match status_code.kind() {
+            rsip::StatusCodeKind::Provisional => {}
+            _ => {
+                let to = self.original.to_header()?;
+                if to.tag()?.is_none() {
+                    self.original
+                        .headers
+                        .unique_push(to.clone().with_tag(make_to_tag())?.into());
+                }
+            }
+        }
+        self.respond(resp).await
+    }
+    // send server response
+    #[instrument(skip(self, response))]
     pub async fn respond(&mut self, response: Response) -> Result<()> {
         let span = self.span.clone();
         let _enter = span.or_current();
@@ -159,6 +180,7 @@ impl Transaction {
             "no connection found".to_string(),
             self.key.clone(),
         ))?;
+        debug!("responding with {}", response);
         connection.send(response.to_owned().into()).await?;
         self.last_response.replace(response);
         self.transition(new_state).map(|_| ())
@@ -356,26 +378,31 @@ impl Transaction {
     async fn on_timer(&mut self, timer: TransactionTimer) -> Result<()> {
         match self.state {
             TransactionState::Trying => {
-                if let TransactionTimer::TimerA(key, duration) = timer {
-                    // Resend the INVITE request
-                    if let Some(connection) = &self.connection {
-                        connection.send(self.original.to_owned().into()).await?;
+                if matches!(
+                    self.transaction_type,
+                    TransactionType::ClientInvite | TransactionType::ClientNonInvite
+                ) {
+                    if let TransactionTimer::TimerA(key, duration) = timer {
+                        // Resend the INVITE request
+                        if let Some(connection) = &self.connection {
+                            connection.send(self.original.to_owned().into()).await?;
+                        }
+                        // Restart Timer A with an upper limit
+                        let duration = (duration * 2).min(self.endpoint_inner.t1x64);
+                        let timer_a = self
+                            .endpoint_inner
+                            .timers
+                            .timeout(duration, TransactionTimer::TimerA(key, duration));
+                        self.timer_a.replace(timer_a);
+                    } else if let TransactionTimer::TimerB(_) = timer {
+                        // Inform TU about timeout
+                        let timeout_response = self.endpoint_inner.make_response(
+                            &self.original,
+                            rsip::StatusCode::RequestTimeout,
+                            None,
+                        );
+                        self.inform_tu_response(timeout_response)?;
                     }
-                    // Restart Timer A with an upper limit
-                    let duration = (duration * 2).min(self.endpoint_inner.t1x64);
-                    let timer_a = self
-                        .endpoint_inner
-                        .timers
-                        .timeout(duration, TransactionTimer::TimerA(key, duration));
-                    self.timer_a.replace(timer_a);
-                } else if let TransactionTimer::TimerB(_) = timer {
-                    // Inform TU about timeout
-                    let timeout_response = self.endpoint_inner.make_response(
-                        &self.original,
-                        rsip::StatusCode::RequestTimeout,
-                        None,
-                    );
-                    self.inform_tu_response(timeout_response)?;
                 }
             }
             TransactionState::Proceeding => {
@@ -432,15 +459,21 @@ impl Transaction {
                     self.key.clone(),
                 ))?;
 
-                if !connection.is_reliable() {
-                    self.timer_a
-                        .take()
-                        .map(|id| self.endpoint_inner.timers.cancel(id));
-                    self.timer_a.replace(self.endpoint_inner.timers.timeout(
-                        self.endpoint_inner.t1,
-                        TransactionTimer::TimerA(self.key.clone(), self.endpoint_inner.t1),
-                    ));
+                if matches!(
+                    self.transaction_type,
+                    TransactionType::ClientInvite | TransactionType::ClientNonInvite
+                ) {
+                    if !connection.is_reliable() {
+                        self.timer_a
+                            .take()
+                            .map(|id| self.endpoint_inner.timers.cancel(id));
+                        self.timer_a.replace(self.endpoint_inner.timers.timeout(
+                            self.endpoint_inner.t1,
+                            TransactionTimer::TimerA(self.key.clone(), self.endpoint_inner.t1),
+                        ));
+                    }
                 }
+
                 self.timer_b
                     .take()
                     .map(|id| self.endpoint_inner.timers.cancel(id));

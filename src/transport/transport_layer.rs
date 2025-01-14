@@ -92,7 +92,16 @@ impl TransportLayerInner {
                     r#type = Some(transport.clone());
                 }
             });
-            let addr = target_host_port.try_into()?;
+            let addr = match target_host_port.try_into() {
+                Ok(addr) => addr,
+                Err(e) => {
+                    info!("parse target host error: {} {}", uri.host_with_port, e);
+                    return Err(crate::Error::Error(format!(
+                        "parse target host error: {}",
+                        e
+                    )));
+                }
+            };
             SipAddr { r#type, addr }
         } else {
             outbound.unwrap()
