@@ -8,17 +8,14 @@ use crate::{
     transaction::{
         endpoint::EndpointInnerRef,
         key::{TransactionKey, TransactionRole},
-        make_to_tag, random_text,
         transaction::{Transaction, TransactionEventSender},
-        TO_TAG_LEN,
     },
     Result,
 };
 use rsip::{
-    headers::{via, Route},
-    param::Tag,
+    headers::Route,
     prelude::{HeadersExt, ToTypedHeader},
-    typed::{CSeq, To},
+    typed::{CSeq, Contact, To},
     Header, Request, Response, SipMessage, StatusCode,
 };
 use std::sync::{
@@ -54,11 +51,11 @@ pub struct DialogInner {
     pub request_uri: String,
     pub local_seq: AtomicU32,
     pub local_uri: String,
-    pub local_contact: Option<rsip::typed::Contact>,
+    pub local_contact: Option<rsip::Uri>,
 
     pub remote_seq: AtomicU32,
     pub remote_uri: To,
-    pub remote_contact: Option<rsip::headers::untyped::contact::Contact>,
+    pub remote_contact: Option<rsip::Uri>,
 
     pub credential: Option<Credential>,
     pub route_set: Vec<Route>,
@@ -87,12 +84,13 @@ impl DialogInner {
         endpoint_inner: EndpointInnerRef,
         state_sender: DialogStateSender,
         credential: Option<Credential>,
-        local_contact: Option<rsip::typed::Contact>,
-        remote_contact: Option<rsip::headers::untyped::contact::Contact>,
+        local_contact: Option<rsip::Uri>,
+        remote_contact: Option<rsip::Uri>,
     ) -> Result<Self> {
         let remote_uri = initial_request.to_header()?.typed()?;
         let local_uri = initial_request.from_header()?.typed()?.to_string();
         let request_uri = initial_request.uri.to_string();
+        let remote_cseq = initial_request.cseq_header()?.seq()?;
 
         Ok(Self {
             cancel_token: CancellationToken::new(),
@@ -100,7 +98,7 @@ impl DialogInner {
             local_seq: AtomicU32::new(1),
             request_uri,
             local_uri,
-            remote_seq: AtomicU32::new(0),
+            remote_seq: AtomicU32::new(remote_cseq),
             remote_uri,
             credential,
             route_set: vec![],
@@ -119,7 +117,13 @@ impl DialogInner {
     }
 
     pub fn increment_local_seq(&self) -> u32 {
-        self.local_seq.fetch_add(1, Ordering::Relaxed)
+        self.local_seq.fetch_and(1, Ordering::Relaxed);
+        self.local_seq.load(Ordering::Relaxed)
+    }
+
+    pub fn increment_remove_seq(&self) -> u32 {
+        self.remote_seq.fetch_and(1, Ordering::Relaxed);
+        self.local_seq.load(Ordering::Relaxed)
     }
 
     pub(super) fn make_request(
@@ -130,20 +134,23 @@ impl DialogInner {
     ) -> Result<rsip::Request> {
         let mut headers = headers.unwrap_or_default();
         let cseq_header = CSeq {
-            seq: self.increment_local_seq(),
+            seq: self.increment_remove_seq(),
             method,
         };
+
+        let mut to = self.remote_uri.clone();
+        to = to.with_tag(self.id.to_tag.clone().into());
 
         let via = self.endpoint_inner.get_via()?;
         headers.push(via.into());
         headers.push(Header::CallId(self.id.call_id.clone().into()));
         headers.push(Header::From(self.local_uri.clone().into()));
-        headers.push(Header::To(self.remote_uri.clone().into()));
+        headers.push(Header::To(to.into()));
         headers.push(Header::CSeq(cseq_header.into()));
 
         self.local_contact
             .as_ref()
-            .map(|c| headers.push(c.clone().into()));
+            .map(|c| headers.push(Contact::from(c.clone()).into()));
 
         for route in &self.route_set {
             headers.push(Header::Route(route.clone()));
@@ -154,9 +161,18 @@ impl DialogInner {
             headers.push(Header::ContentLength((b.len() as u32).into()));
         });
 
+        let mut request_uri = self
+            .remote_contact
+            .clone()
+            .unwrap_or(self.remote_uri.clone().uri);
+
+        request_uri.headers = vec![];
+        request_uri.params = vec![];
+        info!("request_uri: {:?}", request_uri);
+        
         let req = rsip::Request {
             method,
-            uri: self.request_uri.clone().try_into()?,
+            uri: request_uri,
             headers: headers.into(),
             body: body.unwrap_or_default(),
             version: rsip::Version::V2,
@@ -185,7 +201,7 @@ impl DialogInner {
 
         self.local_contact
             .as_ref()
-            .map(|c| resp_headers.push(c.clone().into()));
+            .map(|c| resp_headers.push(Contact::from(c.clone()).into()));
 
         for header in request.headers.iter() {
             match header {
@@ -300,23 +316,5 @@ impl Dialog {
             Dialog::ServerInvite(d) => d.inner.id.clone(),
             Dialog::ClientInvite(d) => d.inner.id.clone(),
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::transaction::transaction::Transaction;
-
-    use crate::dialog::client_dialog::ClientInviteDialog;
-
-    pub async fn test_dialog() {
-        let mut tx = Transaction::new_client(todo!(), todo!(), todo!(), todo!());
-
-        let mut dialog = ClientInviteDialog::new();
-        let mut dialog_ref = dialog.clone();
-        tokio::spawn(async move {
-            dialog_ref.handle_invite(tx).await.ok();
-        });
-        dialog.bye().await.ok();
     }
 }

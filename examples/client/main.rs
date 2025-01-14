@@ -154,19 +154,15 @@ async fn main() -> rsipstack::Result<()> {
         .ok_or(crate::Error::Error("no address found".to_string()))?
         .clone();
 
-    let contact = rsip::typed::Contact {
-        display_name: None,
-        uri: rsip::Uri {
-            scheme: Some(rsip::Scheme::Sip),
-            auth: Some(rsip::Auth {
-                user: sip_username,
-                password: None,
-            }),
-            host_with_port: first_addr.addr.into(),
-            params: vec![],
-            headers: vec![],
-        },
+    let contact = rsip::Uri {
+        scheme: Some(rsip::Scheme::Sip),
+        auth: Some(rsip::Auth {
+            user: sip_username,
+            password: None,
+        }),
+        host_with_port: first_addr.addr.into(),
         params: vec![],
+        headers: vec![],
     };
 
     select! {
@@ -215,7 +211,7 @@ async fn process_incoming_request(
     dialog_layer: Arc<DialogLayer>,
     mut incoming: TransactionReceiver,
     state_sender: DialogStateSender,
-    contact: rsip::typed::Contact,
+    contact: rsip::Uri,
 ) -> Result<()> {
     while let Some(mut tx) = incoming.recv().await {
         info!("Received transaction: {:?}", tx.key);

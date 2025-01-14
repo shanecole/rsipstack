@@ -1,7 +1,3 @@
-use log::debug;
-use rsip::prelude::{HeadersExt, ToTypedHeader};
-use tracing_subscriber::field::debug;
-
 use super::authenticate::Credential;
 use super::dialog::DialogStateSender;
 use super::{dialog::Dialog, server_dialog::ServerInviteDialog, DialogId};
@@ -9,10 +5,13 @@ use crate::dialog::dialog::DialogInner;
 use crate::transaction::make_to_tag;
 use crate::transaction::{endpoint::EndpointInnerRef, transaction::Transaction};
 use crate::Result;
+use log::debug;
+use rsip::prelude::{HeadersExt, ToTypedHeader, UntypedHeader};
 use std::{
     collections::HashMap,
     sync::{Arc, RwLock},
 };
+use tracing::info;
 
 pub struct DialogLayerInner {
     dialogs: RwLock<HashMap<DialogId, Dialog>>,
@@ -39,7 +38,7 @@ impl DialogLayer {
         tx: &Transaction,
         state_sender: DialogStateSender,
         credential: Option<Credential>,
-        contact: Option<rsip::typed::Contact>,
+        contact: Option<rsip::Uri>,
     ) -> Result<ServerInviteDialog> {
         let mut id = DialogId::try_from(&tx.original)?;
         if !id.to_tag.is_empty() {
@@ -55,7 +54,29 @@ impl DialogLayer {
             }
         }
         id.to_tag = make_to_tag().to_string(); // generate to tag
-        let remote_contact = tx.original.contact_header()?.clone();
+        let remote_contact = match tx.original.contact_header() {
+            Ok(contact) => {
+                let line = contact.value().replace("\"lime\"", "lime");
+                let contact = match rsip::headers::untyped::Contact::try_from(line.as_str()) {
+                    Ok(contact) => contact,
+                    Err(e) => {
+                        info!("error parsing contact header {}", e);
+                        return Err(crate::Error::DialogError(e.to_string(), id));
+                    }
+                };
+                match contact.typed() {
+                    Ok(c) => c.uri,
+                    Err(e) => {
+                        info!("no uri in the contact header {}", e);
+                        return Err(crate::Error::DialogError(e.to_string(), id));
+                    }
+                }
+            }
+            Err(e) => {
+                info!("no contact header in the request {}", e);
+                return Err(crate::Error::DialogError(e.to_string(), id));
+            }
+        };
 
         let dlg_inner = DialogInner::new(
             id.clone(),

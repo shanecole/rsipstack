@@ -1,19 +1,14 @@
-use std::sync::Arc;
-
-use rsip::{
-    prelude::{HasHeaders, HeadersExt, ToTypedHeader},
-    Header, Method, Response, SipMessage, StatusCode,
-};
-use tracing::info;
-
 use super::{
     authenticate::{handle_client_authenticate, Credential},
     DialogId,
 };
 use crate::{
-    transaction::{endpoint::Endpoint, make_to_tag, random_text, TO_TAG_LEN},
+    transaction::{endpoint::Endpoint, make_to_tag},
     Result,
 };
+use rsip::{Response, SipMessage, StatusCode};
+use std::sync::Arc;
+use tracing::info;
 
 pub struct Registration {
     pub last_seq: u32,

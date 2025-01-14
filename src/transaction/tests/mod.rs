@@ -1,3 +1,4 @@
+use rsip::{headers::contact, prelude::ToTypedHeader};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
@@ -34,4 +35,12 @@ fn test_random_text() {
     let branch = super::make_via_branch();
     let branch = branch.to_string();
     assert_eq!(branch.len(), 27); // ;branch=z9hG4bK
+}
+
+#[test]
+fn test_linphone_contact() {
+    let line = "<sip:bob@localhost;transport=udp>;expires=3600;+org.linphone.specs=lime";
+    let untyped_contact =
+        rsip::headers::untyped::Contact::try_from(line.to_string()).expect("contact");
+    untyped_contact.typed().expect("typed");
 }
