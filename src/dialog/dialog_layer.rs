@@ -54,38 +54,14 @@ impl DialogLayer {
             }
         }
         id.to_tag = make_to_tag().to_string(); // generate to tag
-        let remote_contact = match tx.original.contact_header() {
-            Ok(contact) => {
-                let line = contact.value().replace("\"lime\"", "lime");
-                let contact = match rsip::headers::untyped::Contact::try_from(line.as_str()) {
-                    Ok(contact) => contact,
-                    Err(e) => {
-                        info!("error parsing contact header {}", e);
-                        return Err(crate::Error::DialogError(e.to_string(), id));
-                    }
-                };
-                match contact.typed() {
-                    Ok(c) => c.uri,
-                    Err(e) => {
-                        info!("no uri in the contact header {}", e);
-                        return Err(crate::Error::DialogError(e.to_string(), id));
-                    }
-                }
-            }
-            Err(e) => {
-                info!("no contact header in the request {}", e);
-                return Err(crate::Error::DialogError(e.to_string(), id));
-            }
-        };
 
-        let dlg_inner = DialogInner::new(
+        let dlg_inner = DialogInner::new_server(
             id.clone(),
             tx.original.clone(),
             self.endpoint.clone(),
             state_sender,
             credential,
             contact,
-            Some(remote_contact),
         )?;
 
         let dialog = ServerInviteDialog {

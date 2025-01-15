@@ -421,9 +421,6 @@ async fn play_example_pcmu(opt: &MediaSessionOption, dialog: ServerInviteDialog)
                         }
                     }
                     ticker.tick().await;
-                    // if seq > 100 {
-                    //     break;
-                    // }
                 }
             } => {
                 info!("playback finished, hangup");

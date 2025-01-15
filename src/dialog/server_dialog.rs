@@ -68,7 +68,6 @@ impl ServerInviteDialog {
             return Ok(());
         }
         let request = self.inner.make_request(rsip::Method::Bye, None, None)?;
-        info!("sending bye {}", request);
         let resp = self.inner.do_request(&request).await?;
         self.inner.transition(DialogState::Terminated(
             self.id(),

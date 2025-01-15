@@ -14,8 +14,8 @@ use crate::{
 };
 use rsip::{
     headers::Route,
-    prelude::{HeadersExt, ToTypedHeader},
-    typed::{CSeq, Contact, To},
+    prelude::{HeadersExt, ToTypedHeader, UntypedHeader},
+    typed::{CSeq, Contact, From, To},
     Header, Request, Response, SipMessage, StatusCode,
 };
 use std::sync::{
@@ -48,14 +48,14 @@ pub struct DialogInner {
     pub cancel_token: CancellationToken,
     pub id: DialogId,
     pub state: Mutex<DialogState>,
-    pub request_uri: String,
+
     pub local_seq: AtomicU32,
-    pub local_uri: String,
     pub local_contact: Option<rsip::Uri>,
 
     pub remote_seq: AtomicU32,
-    pub remote_uri: To,
-    pub remote_contact: Option<rsip::Uri>,
+    pub remote_uri: rsip::Uri,
+    pub from: From,
+    pub to: To,
 
     pub credential: Option<Credential>,
     pub route_set: Vec<Route>,
@@ -78,28 +78,38 @@ impl DialogState {
 }
 
 impl DialogInner {
-    pub fn new(
+    pub fn new_server(
         id: DialogId,
         initial_request: Request,
         endpoint_inner: EndpointInnerRef,
         state_sender: DialogStateSender,
         credential: Option<Credential>,
         local_contact: Option<rsip::Uri>,
-        remote_contact: Option<rsip::Uri>,
     ) -> Result<Self> {
-        let remote_uri = initial_request.to_header()?.typed()?;
-        let local_uri = initial_request.from_header()?.typed()?.to_string();
-        let request_uri = initial_request.uri.to_string();
-        let remote_cseq = initial_request.cseq_header()?.seq()?;
+        let cseq = initial_request.cseq_header()?.seq()?;
+        let from = initial_request.from_header()?.typed()?.clone();
+        let to = initial_request.to_header()?.typed()?;
+
+        let remote_contact = initial_request.contact_header()?;
+        //TODO: fix this hack
+        let line = remote_contact.value().replace("\"lime\"", "lime");
+        let mut remote_uri = rsip::headers::untyped::Contact::try_from(line.as_str())
+            .map_err(|e| {
+                info!("error parsing contact header {}", e);
+                crate::Error::DialogError(e.to_string(), id.clone())
+            })?
+            .typed()?
+            .uri;
+        remote_uri.params = vec![];
 
         Ok(Self {
             cancel_token: CancellationToken::new(),
             id: id.clone(),
-            local_seq: AtomicU32::new(1),
-            request_uri,
-            local_uri,
-            remote_seq: AtomicU32::new(remote_cseq),
+            local_seq: AtomicU32::new(cseq),
             remote_uri,
+            remote_seq: AtomicU32::new(cseq),
+            from,
+            to,
             credential,
             route_set: vec![],
             endpoint_inner,
@@ -108,7 +118,6 @@ impl DialogInner {
             state: Mutex::new(DialogState::Calling(id)),
             initial_request,
             local_contact,
-            remote_contact,
         })
     }
 
@@ -117,13 +126,13 @@ impl DialogInner {
     }
 
     pub fn increment_local_seq(&self) -> u32 {
-        self.local_seq.fetch_and(1, Ordering::Relaxed);
+        self.local_seq.fetch_add(1, Ordering::Relaxed);
         self.local_seq.load(Ordering::Relaxed)
     }
 
     pub fn increment_remove_seq(&self) -> u32 {
-        self.remote_seq.fetch_and(1, Ordering::Relaxed);
-        self.local_seq.load(Ordering::Relaxed)
+        self.remote_seq.fetch_add(1, Ordering::Relaxed);
+        self.remote_seq.load(Ordering::Relaxed)
     }
 
     pub(super) fn make_request(
@@ -138,14 +147,14 @@ impl DialogInner {
             method,
         };
 
-        let mut to = self.remote_uri.clone();
-        to = to.with_tag(self.id.to_tag.clone().into());
-
+        let to = self.to.clone().with_tag(self.id.to_tag.clone().into());
         let via = self.endpoint_inner.get_via()?;
+
         headers.push(via.into());
         headers.push(Header::CallId(self.id.call_id.clone().into()));
-        headers.push(Header::From(self.local_uri.clone().into()));
-        headers.push(Header::To(to.into()));
+        headers.push(Header::From(to.to_string().into()));
+        headers.push(Header::To(self.from.to_string().into()));
+
         headers.push(Header::CSeq(cseq_header.into()));
 
         self.local_contact
@@ -161,18 +170,9 @@ impl DialogInner {
             headers.push(Header::ContentLength((b.len() as u32).into()));
         });
 
-        let mut request_uri = self
-            .remote_contact
-            .clone()
-            .unwrap_or(self.remote_uri.clone().uri);
-
-        request_uri.headers = vec![];
-        request_uri.params = vec![];
-        info!("request_uri: {:?}", request_uri);
-        
         let req = rsip::Request {
             method,
-            uri: request_uri,
+            uri: self.remote_uri.clone(),
             headers: headers.into(),
             body: body.unwrap_or_default(),
             version: rsip::Version::V2,
@@ -187,13 +187,13 @@ impl DialogInner {
         headers: Option<Vec<rsip::Header>>,
         body: Option<Vec<u8>>,
     ) -> rsip::Response {
-        let mut to = self.remote_uri.clone();
+        let mut to = self.to.clone();
         if status != StatusCode::Trying {
             to = to.with_tag(self.id.to_tag.clone().into());
         }
 
         let mut resp_headers = rsip::Headers::default();
-        resp_headers.push(Header::From(self.local_uri.clone().into()));
+        resp_headers.push(Header::From(self.from.clone().into()));
         resp_headers.push(Header::To(to.into()));
         resp_headers.push(Header::CallId(self.id.call_id.clone().into()));
         let cseq = request.cseq_header().unwrap();
