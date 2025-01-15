@@ -1,4 +1,4 @@
-use rsip::Request;
+use rsip::{Request, Response};
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info};
@@ -25,7 +25,6 @@ pub struct InviteOption {
     pub offer: Option<Vec<u8>>,
     pub contact: rsip::Uri,
     pub credential: Option<Credential>,
-    pub cancel_token: Option<CancellationToken>,
 }
 
 impl DialogLayer {
@@ -48,7 +47,7 @@ impl DialogLayer {
         let via = self.endpoint.get_via()?;
         let mut request =
             self.endpoint
-                .make_request(rsip::Method::Register, recipient, via, form, to, last_seq);
+                .make_request(rsip::Method::Invite, recipient, via, form, to, last_seq);
 
         let contact = rsip::typed::Contact {
             display_name: None,
@@ -73,7 +72,7 @@ impl DialogLayer {
         &self,
         opt: InviteOption,
         state_sender: DialogStateSender,
-    ) -> Result<ClientInviteDialog> {
+    ) -> Result<(ClientInviteDialog, Option<Response>)> {
         let mut request = self.make_invite_request(&opt)?;
         request.body = opt.offer.unwrap_or_default();
         let id = DialogId::try_from(&request)?;
@@ -103,7 +102,7 @@ impl DialogLayer {
         info!("client invite dialog created: {:?}", id);
 
         match dialog.process_invite(tx).await {
-            Ok(new_dialog_id) => {
+            Ok((new_dialog_id, resp)) => {
                 debug!(
                     "client invite dialog confirmed: {} => {}",
                     id, new_dialog_id
@@ -115,7 +114,7 @@ impl DialogLayer {
                     .write()
                     .unwrap()
                     .insert(new_dialog_id, Dialog::ClientInvite(dialog.clone()));
-                return Ok(dialog);
+                return Ok((dialog, resp));
             }
             Err(e) => {
                 info!("client invite dialog failed: {:?}", e);

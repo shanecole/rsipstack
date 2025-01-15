@@ -234,7 +234,7 @@ impl Transaction {
             TransactionState::Completed => {} // must be in completed state, to send ACK
             _ => {
                 return Err(Error::TransactionError(
-                    "invalid state for sending ACK".to_string(),
+                    format!("invalid state for sending ACK {:?}", self.state),
                     self.key.clone(),
                 ));
             }
@@ -373,7 +373,7 @@ impl Transaction {
             }
             rsip::StatusCodeKind::Successful => {
                 if self.transaction_type == TransactionType::ClientInvite {
-                    TransactionState::Confirmed
+                    TransactionState::Completed
                 } else {
                     TransactionState::Terminated
                 }

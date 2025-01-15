@@ -6,7 +6,8 @@ use crate::dialog::{authenticate::handle_client_authenticate, dialog::DialogStat
 use crate::transaction::transaction::Transaction;
 use crate::Result;
 use rsip::prelude::HeadersExt;
-use rsip::{SipMessage, StatusCode};
+use rsip::{Response, SipMessage, StatusCode};
+use tokio_util::sync::CancellationToken;
 use tracing::{info, info_span, trace};
 
 #[derive(Clone)]
@@ -17,6 +18,10 @@ pub struct ClientInviteDialog {
 impl ClientInviteDialog {
     pub fn id(&self) -> DialogId {
         self.inner.id.clone()
+    }
+
+    pub fn cancel_token(&self) -> &CancellationToken {
+        &self.inner.cancel_token
     }
 
     pub async fn bye(&self) -> Result<()> {
@@ -123,7 +128,10 @@ impl ClientInviteDialog {
         Ok(())
     }
 
-    pub(super) async fn process_invite(&self, mut tx: Transaction) -> Result<DialogId> {
+    pub(super) async fn process_invite(
+        &self,
+        mut tx: Transaction,
+    ) -> Result<(DialogId, Option<Response>)> {
         let span = info_span!("client_dialog", dialog_id = %self.id());
         let _enter = span.enter();
 
@@ -131,7 +139,7 @@ impl ClientInviteDialog {
         let mut auth_sent = false;
         tx.send().await?;
         let mut dialog_id = self.id();
-
+        let mut final_response = None;
         while let Some(msg) = tx.receive().await {
             match msg {
                 SipMessage::Request(_) => {}
@@ -151,6 +159,7 @@ impl ClientInviteDialog {
                             body: Default::default(),
                         };
                         dialog_id = DialogId::try_from(&ack)?.clone();
+                        final_response = Some(resp.clone());
                         tx.send_ack(ack).await?;
                         self.inner
                             .transition(DialogState::Confirmed(dialog_id.clone(), resp))?;
@@ -215,6 +224,6 @@ impl ClientInviteDialog {
             }
         }
         trace!("process done");
-        Ok(dialog_id)
+        Ok((dialog_id, final_response))
     }
 }
