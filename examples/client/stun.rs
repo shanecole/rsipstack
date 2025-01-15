@@ -58,7 +58,7 @@ pub async fn external_by_stun(
     let (len, _) = select! {
         _ = sleep(expires) => {
             info!("stun timeout {}", stun_server);
-            return Ok(conn.get_addr().addr.clone());
+            return Err(Error::Error("STUN server timeout".to_string()));
         }
         r = conn.recv_raw(&mut buf) => {
              r?
