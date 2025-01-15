@@ -1,8 +1,8 @@
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::time::Duration;
 
 use rsipstack::transport::{connection::SipAddr, udp::UdpConnection};
-use rsipstack::Result;
+use rsipstack::{Error, Result};
 use stun_rs::{
     attributes::stun::XorMappedAddress, methods::BINDING, MessageClass, MessageDecoderBuilder,
     MessageEncoderBuilder, StunMessageBuilder,
@@ -12,6 +12,19 @@ use tokio::net::lookup_host;
 use tokio::select;
 use tokio::time::sleep;
 use tracing::info;
+
+pub fn get_first_non_loopback_interface() -> Result<IpAddr> {
+    for iface in pnet::datalink::interfaces() {
+        if !iface.is_loopback() {
+            for ip in iface.ips {
+                if let IpAddr::V4(_) = ip.ip() {
+                    return Ok(ip.ip());
+                }
+            }
+        }
+    }
+    Err(Error::Error("No interface found".to_string()))
+}
 
 pub async fn external_by_stun(
     conn: &mut UdpConnection,

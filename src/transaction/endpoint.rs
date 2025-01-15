@@ -165,11 +165,6 @@ impl EndpointInner {
     ) -> Result<()> {
         let mut key = match &msg {
             SipMessage::Request(req) => {
-                if req.method == rsip::Method::Cancel {
-                    // Cancel quick response, no transaction
-                    let resp = self.make_response(&req, rsip::StatusCode::OK, None);
-                    connection.send(resp.into()).await?;
-                }
                 TransactionKey::from_request(req, super::key::TransactionRole::Server)?
             }
             SipMessage::Response(resp) => {
@@ -267,6 +262,10 @@ impl EndpointInner {
         }
     }
 
+    pub fn get_addrs(&self) -> Vec<SipAddr> {
+        self.transport_layer.get_addrs()
+    }
+
     pub fn get_via(&self) -> Result<rsip::typed::Via> {
         let first_addr = self
             .transport_layer
@@ -352,24 +351,6 @@ impl Endpoint {
         self.inner.cancel_token.cancel();
     }
 
-    pub fn make_request(
-        &self,
-        method: rsip::Method,
-        req_uri: rsip::Uri,
-        from: rsip::typed::From,
-        to: rsip::typed::To,
-        seq: u32,
-    ) -> Result<rsip::Request> {
-        let via = self.get_via()?;
-        Ok(self.inner.make_request(method, req_uri, via, from, to, seq))
-    }
-
-    pub fn client_transaction(&self, request: rsip::Request) -> Result<Transaction> {
-        let key = TransactionKey::from_request(&request, super::key::TransactionRole::Client)?;
-        let tx = Transaction::new_client(key, request, self.inner.clone(), None);
-        Ok(tx)
-    }
-
     //
     // get incoming requests from the endpoint
     //
@@ -381,9 +362,5 @@ impl Endpoint {
 
     pub fn get_addrs(&self) -> Vec<SipAddr> {
         self.inner.transport_layer.get_addrs()
-    }
-
-    pub fn get_via(&self) -> Result<rsip::typed::Via> {
-        self.inner.get_via()
     }
 }

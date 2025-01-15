@@ -15,8 +15,8 @@ use crate::{
 use rsip::{
     headers::Route,
     prelude::{HeadersExt, ToTypedHeader, UntypedHeader},
-    typed::{CSeq, Contact, From, To},
-    Header, Request, Response, SipMessage, StatusCode,
+    typed::{CSeq, Contact},
+    Header, Param, Request, Response, SipMessage, StatusCode,
 };
 use std::sync::{
     atomic::{AtomicU32, Ordering},
@@ -24,7 +24,7 @@ use std::sync::{
 };
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio_util::sync::CancellationToken;
-use tracing::info;
+use tracing::{debug, info};
 
 /// DialogState is the state of the dialog
 #[derive(Clone)]
@@ -45,6 +45,7 @@ pub enum Dialog {
 }
 
 pub struct DialogInner {
+    pub role: TransactionRole,
     pub cancel_token: CancellationToken,
     pub id: DialogId,
     pub state: Mutex<DialogState>,
@@ -54,8 +55,9 @@ pub struct DialogInner {
 
     pub remote_seq: AtomicU32,
     pub remote_uri: rsip::Uri,
-    pub from: From,
-    pub to: To,
+
+    pub from: String,
+    pub to: String,
 
     pub credential: Option<Credential>,
     pub route_set: Vec<Route>,
@@ -78,7 +80,8 @@ impl DialogState {
 }
 
 impl DialogInner {
-    pub fn new_server(
+    pub fn new(
+        role: TransactionRole,
         id: DialogId,
         initial_request: Request,
         endpoint_inner: EndpointInnerRef,
@@ -87,29 +90,45 @@ impl DialogInner {
         local_contact: Option<rsip::Uri>,
     ) -> Result<Self> {
         let cseq = initial_request.cseq_header()?.seq()?;
-        let from = initial_request.from_header()?.typed()?.clone();
-        let to = initial_request.to_header()?.typed()?;
 
-        let remote_contact = initial_request.contact_header()?;
-        //TODO: fix this hack
-        let line = remote_contact.value().replace("\"lime\"", "lime");
-        let mut remote_uri = rsip::headers::untyped::Contact::try_from(line.as_str())
-            .map_err(|e| {
-                info!("error parsing contact header {}", e);
-                crate::Error::DialogError(e.to_string(), id.clone())
-            })?
-            .typed()?
-            .uri;
-        remote_uri.params = vec![];
+        let remote_uri = match role {
+            TransactionRole::Client => initial_request.uri.clone(),
+            TransactionRole::Server => {
+                //TODO: fix this hack
+                let remote_contact = initial_request.contact_header()?;
+                let line = remote_contact.value().replace("\"lime\"", "lime");
+                let mut remote_uri = rsip::headers::untyped::Contact::try_from(line.as_str())
+                    .map_err(|e| {
+                        info!("error parsing contact header {}", e);
+                        crate::Error::DialogError(e.to_string(), id.clone())
+                    })?
+                    .typed()?
+                    .uri;
+                remote_uri.params = vec![];
+                remote_uri
+            }
+        };
+
+        let from = initial_request.from_header()?.typed()?;
+        let mut to = initial_request.to_header()?.typed()?;
+        if !to.params.iter().any(|p| matches!(p, Param::Tag(_))) {
+            to.params.push(rsip::Param::Tag(id.to_tag.clone().into()));
+        }
+
+        let (from, to) = match role {
+            TransactionRole::Client => (from.to_string(), to.to_string()),
+            TransactionRole::Server => (to.to_string(), from.to_string()),
+        };
 
         Ok(Self {
+            role,
             cancel_token: CancellationToken::new(),
             id: id.clone(),
+            from,
+            to,
             local_seq: AtomicU32::new(cseq),
             remote_uri,
             remote_seq: AtomicU32::new(cseq),
-            from,
-            to,
             credential,
             route_set: vec![],
             endpoint_inner,
@@ -124,7 +143,9 @@ impl DialogInner {
     pub fn is_confirmed(&self) -> bool {
         self.state.lock().unwrap().is_confirmed()
     }
-
+    pub fn get_local_seq(&self) -> u32 {
+        self.local_seq.load(Ordering::Relaxed)
+    }
     pub fn increment_local_seq(&self) -> u32 {
         self.local_seq.fetch_add(1, Ordering::Relaxed);
         self.local_seq.load(Ordering::Relaxed)
@@ -147,15 +168,15 @@ impl DialogInner {
             method,
         };
 
-        let to = self.to.clone().with_tag(self.id.to_tag.clone().into());
         let via = self.endpoint_inner.get_via()?;
-
         headers.push(via.into());
         headers.push(Header::CallId(self.id.call_id.clone().into()));
-        headers.push(Header::From(to.to_string().into()));
-        headers.push(Header::To(self.from.to_string().into()));
-
+        headers.push(Header::From(self.from.clone().into()));
+        headers.push(Header::To(self.to.clone().into()));
         headers.push(Header::CSeq(cseq_header.into()));
+        headers.push(Header::UserAgent(
+            self.endpoint_inner.user_agent.clone().into(),
+        ));
 
         self.local_contact
             .as_ref()
@@ -187,18 +208,7 @@ impl DialogInner {
         headers: Option<Vec<rsip::Header>>,
         body: Option<Vec<u8>>,
     ) -> rsip::Response {
-        let mut to = self.to.clone();
-        if status != StatusCode::Trying {
-            to = to.with_tag(self.id.to_tag.clone().into());
-        }
-
         let mut resp_headers = rsip::Headers::default();
-        resp_headers.push(Header::From(self.from.clone().into()));
-        resp_headers.push(Header::To(to.into()));
-        resp_headers.push(Header::CallId(self.id.call_id.clone().into()));
-        let cseq = request.cseq_header().unwrap();
-        resp_headers.push(cseq.clone().into());
-
         self.local_contact
             .as_ref()
             .map(|c| resp_headers.push(Contact::from(c.clone()).into()));
@@ -210,6 +220,32 @@ impl DialogInner {
                 }
                 Header::Via(via) => {
                     resp_headers.push(Header::Via(via.clone()));
+                }
+                Header::From(from) => {
+                    resp_headers.push(Header::From(from.clone()));
+                }
+                Header::To(to) => {
+                    let mut to = match to.clone().typed() {
+                        Ok(to) => to,
+                        Err(e) => {
+                            info!("error parsing to header {}", e);
+                            continue;
+                        }
+                    };
+
+                    if status != StatusCode::Trying {
+                        if !to.params.iter().any(|p| matches!(p, Param::Tag(_))) {
+                            to.params
+                                .push(rsip::Param::Tag(self.id.to_tag.clone().into()));
+                        }
+                    }
+                    resp_headers.push(Header::To(to.into()));
+                }
+                Header::CSeq(cseq) => {
+                    resp_headers.push(Header::CSeq(cseq.clone()));
+                }
+                Header::CallId(call_id) => {
+                    resp_headers.push(Header::CallId(call_id.clone()));
                 }
                 _ => {}
             }
@@ -224,6 +260,10 @@ impl DialogInner {
         body.as_ref().map(|b| {
             resp_headers.push(Header::ContentLength((b.len() as u32).into()));
         });
+
+        resp_headers.unique_push(Header::UserAgent(
+            self.endpoint_inner.user_agent.clone().into(),
+        ));
 
         Response {
             status_code: status,
@@ -246,6 +286,10 @@ impl DialogInner {
                     StatusCode::Trying => {
                         continue;
                     }
+                    StatusCode::Ringing | StatusCode::SessionProgress => {
+                        self.transition(DialogState::Early(self.id.clone(), resp))?;
+                        continue;
+                    }
                     StatusCode::ProxyAuthenticationRequired | StatusCode::Unauthorized => {
                         let id = self.id.clone();
                         if auth_sent {
@@ -255,13 +299,11 @@ impl DialogInner {
                         }
                         auth_sent = true;
                         if let Some(cred) = &self.credential {
-                            tx = handle_client_authenticate(
-                                self.increment_local_seq(),
-                                tx,
-                                resp,
-                                cred,
-                            )
-                            .await?;
+                            let new_seq = match request.method {
+                                rsip::Method::Cancel => self.get_local_seq(),
+                                _ => self.increment_local_seq(),
+                            };
+                            tx = handle_client_authenticate(new_seq, tx, resp, cred).await?;
                             tx.send().await?;
                             continue;
                         } else {
@@ -270,7 +312,7 @@ impl DialogInner {
                         }
                     }
                     _ => {
-                        info!("dialog do_request done: {:?}", resp.status_code);
+                        debug!("dialog do_request done: {:?}", resp.status_code);
                         return Ok(Some(resp));
                     }
                 },
@@ -315,6 +357,12 @@ impl Dialog {
         match self {
             Dialog::ServerInvite(d) => d.inner.id.clone(),
             Dialog::ClientInvite(d) => d.inner.id.clone(),
+        }
+    }
+    pub async fn handle(&mut self, tx: Transaction) -> Result<()> {
+        match self {
+            Dialog::ServerInvite(d) => d.handle(tx).await,
+            Dialog::ClientInvite(d) => d.handle(tx).await,
         }
     }
 }

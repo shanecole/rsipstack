@@ -7,17 +7,14 @@ A RFC 3261 compliant SIP stack written in Rust. The goal of this project is to p
 
 ## TODO
 - [ ] Transport support
-  - [-] UDP
+  - [x] UDP
   - [ ] TCP
   - [ ] TLS
   - [ ] WebSocket
-- [ ] Authentication
-    - [ ] Digest
-    - [ ] Basic
+- [x] Digest Authentication
 - [x] Transaction Layer
-- [ ] Dialog Layer
+- [x] Dialog Layer
 - [ ] WASM target
-
 
 ## Use Cases
 
@@ -31,3 +28,11 @@ This SIP stack can be used in various scenarios, including but not limited to:
 
 We are a group of developers who are passionate about SIP and Rust. We believe that Rust is a great language for building high-performance network applications, and we want to bring the power of Rust to the SIP/WebRTC/SFU world.
 
+## How to run
+
+```bash
+# the sip phone will serve at: YOUR_NETWORK_IP:15060
+cargo run --example client
+```
+
+Make a call to `sip:YOUR_NETWORK_IP:15060` from another sip client.(e.g. [linphone](https://www.linphone.org/))

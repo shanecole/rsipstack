@@ -3,26 +3,30 @@ use super::{
     DialogId,
 };
 use crate::{
-    transaction::{endpoint::Endpoint, make_to_tag},
+    transaction::{
+        endpoint::EndpointInnerRef,
+        key::{TransactionKey, TransactionRole},
+        make_tag,
+        transaction::Transaction,
+    },
     Result,
 };
 use rsip::{Response, SipMessage, StatusCode};
-use std::sync::Arc;
 use tracing::info;
 
 pub struct Registration {
     pub last_seq: u32,
-    pub useragent: Arc<Endpoint>,
+    pub endpoint: EndpointInnerRef,
     pub credential: Option<Credential>,
     pub contact: Option<rsip::typed::Contact>,
     pub allow: rsip::headers::Allow,
 }
 
 impl Registration {
-    pub fn new(useragent: Arc<Endpoint>, credential: Option<Credential>) -> Self {
+    pub fn new(endpoint: EndpointInnerRef, credential: Option<Credential>) -> Self {
         Self {
             last_seq: 0,
-            useragent,
+            endpoint,
             credential,
             contact: None,
             allow: Default::default(),
@@ -60,10 +64,10 @@ impl Registration {
             uri: to.uri.clone(),
             params: vec![],
         }
-        .with_tag(make_to_tag());
+        .with_tag(make_tag());
 
         let first_addr = self
-            .useragent
+            .endpoint
             .get_addrs()
             .first()
             .ok_or(crate::Error::Error("no address found".to_string()))?
@@ -83,18 +87,22 @@ impl Registration {
                 },
                 params: vec![],
             });
-
-        let mut request = self.useragent.make_request(
+        let via = self.endpoint.get_via()?;
+        let mut request = self.endpoint.make_request(
             rsip::Method::Register,
             recipient,
+            via,
             form,
             to,
             self.last_seq,
-        )?;
+        );
 
         request.headers.unique_push(contact.into());
         request.headers.unique_push(self.allow.clone().into());
-        let mut tx = self.useragent.client_transaction(request)?;
+
+        let key = TransactionKey::from_request(&request, TransactionRole::Client)?;
+        let mut tx = Transaction::new_client(key, request, self.endpoint.clone(), None);
+
         tx.send().await?;
         let mut auth_sent = false;
 

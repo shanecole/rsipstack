@@ -1,3 +1,5 @@
+use crate::transaction::key::{TransactionKey, TransactionRole};
+use crate::transaction::transaction::Transaction;
 use crate::transport::udp::UdpConnection;
 use crate::{transport::TransportEvent, Result};
 use rsip::{headers::*, SipMessage};
@@ -84,9 +86,9 @@ async fn test_client_transaction() -> Result<()> {
             body: Default::default(),
         };
 
-        let mut tx = endpoint
-            .client_transaction(register_req)
+        let key = TransactionKey::from_request(&register_req, TransactionRole::Client)
             .expect("client_transaction");
+        let mut tx = Transaction::new_client(key, register_req, endpoint.inner.clone(), None);
         tx.send().await.expect("send request");
 
         while let Some(resp) = tx.receive().await {

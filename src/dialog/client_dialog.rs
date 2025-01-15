@@ -1,3 +1,5 @@
+use std::sync::atomic::Ordering;
+
 use super::dialog::DialogInnerRef;
 use super::DialogId;
 use crate::dialog::{authenticate::handle_client_authenticate, dialog::DialogState};
@@ -13,18 +15,8 @@ pub struct ClientInviteDialog {
 }
 
 impl ClientInviteDialog {
-    pub fn new() -> Self {
-        todo!()
-    }
-
     pub fn id(&self) -> DialogId {
         self.inner.id.clone()
-    }
-
-    pub async fn cancel(&self) -> Result<()> {
-        let request = self.inner.make_request(rsip::Method::Cancel, None, None)?;
-        self.inner.do_request(&request).await?;
-        Ok(())
     }
 
     pub async fn bye(&self) -> Result<()> {
@@ -40,11 +32,22 @@ impl ClientInviteDialog {
         Ok(())
     }
 
+    pub async fn cancel(&self) -> Result<()> {
+        let mut cancel_request = self.inner.initial_request.clone();
+        cancel_request.method = rsip::Method::Cancel;
+        cancel_request
+            .cseq_header_mut()?
+            .mut_seq(self.inner.get_local_seq())?;
+        cancel_request.body = vec![];
+        self.inner.do_request(&cancel_request).await?;
+        Ok(())
+    }
+
     pub async fn reinvite(&self) -> Result<()> {
         if !self.inner.is_confirmed() {
             return Ok(());
         }
-        Ok(())
+        todo!()
     }
 
     pub async fn info(&self) -> Result<()> {
@@ -59,22 +62,75 @@ impl ClientInviteDialog {
         Ok(())
     }
 
-    pub async fn process(&self, mut tx: Transaction) -> Result<()> {
-        todo!()
+    pub async fn handle(&mut self, mut tx: Transaction) -> Result<()> {
+        let span = info_span!("client_invite_dialog", dialog_id = %self.id());
+        let _enter = span.enter();
+
+        trace!(
+            "handle request: {:?} state:{}",
+            tx.original,
+            self.inner.state.lock().unwrap()
+        );
+
+        let cseq = tx.original.cseq_header()?.seq()?;
+        if cseq < self.inner.remote_seq.load(Ordering::Relaxed) {
+            info!(
+                "received old request remote_seq: {} > {}",
+                self.inner.remote_seq.load(Ordering::Relaxed),
+                cseq
+            );
+            tx.reply(rsip::StatusCode::ServerInternalError).await?;
+            return Ok(());
+        }
+
+        self.inner.remote_seq.store(cseq, Ordering::Relaxed);
+
+        if self.inner.is_confirmed() {
+            match tx.original.method {
+                rsip::Method::Invite => {}
+                rsip::Method::Bye => return self.handle_bye(tx).await,
+                rsip::Method::Info => return self.handle_info(tx).await,
+                _ => {
+                    info!("invalid request method: {:?}", tx.original.method);
+                    tx.reply(rsip::StatusCode::MethodNotAllowed).await?;
+                    return Err(crate::Error::DialogError(
+                        "invalid request".to_string(),
+                        self.id(),
+                    ));
+                }
+            }
+        } else {
+            info!(
+                "received request before confirmed: {:?}",
+                tx.original.method
+            );
+        }
+        Ok(())
     }
 
-    pub async fn handle_invite(&self, mut tx: Transaction) -> Result<()> {
+    async fn handle_bye(&mut self, mut tx: Transaction) -> Result<()> {
+        info!("received bye");
+        self.inner
+            .transition(DialogState::Terminated(self.id(), None))?;
+        tx.reply(rsip::StatusCode::OK).await?;
+        Ok(())
+    }
+
+    async fn handle_info(&mut self, mut tx: Transaction) -> Result<()> {
+        self.inner
+            .transition(DialogState::Info(self.id(), tx.original.clone()))?;
+        tx.reply(rsip::StatusCode::OK).await?;
+        Ok(())
+    }
+
+    pub(super) async fn process_invite(&self, mut tx: Transaction) -> Result<DialogId> {
         let span = info_span!("client_dialog", dialog_id = %self.id());
         let _enter = span.enter();
 
-        self.inner
-            .tu_sender
-            .lock()
-            .unwrap()
-            .replace(tx.tu_sender.clone());
-
         self.inner.transition(DialogState::Calling(self.id()))?;
         let mut auth_sent = false;
+        tx.send().await?;
+        let mut dialog_id = self.id();
 
         while let Some(msg) = tx.receive().await {
             match msg {
@@ -87,23 +143,21 @@ impl ClientInviteDialog {
                         self.inner.transition(DialogState::Early(self.id(), resp))?;
                     }
                     StatusCode::OK => {
-                        let to_tag = resp.to_header()?.tag()?.ok_or(crate::Error::DialogError(
-                            "received 200 response without to tag".to_string(),
-                            self.id(),
-                        ))?;
                         let ack = rsip::Request {
                             method: rsip::Method::Ack,
                             uri: tx.original.uri.clone(),
-                            headers: tx.original.headers.clone(),
+                            headers: resp.headers.clone(),
                             version: rsip::Version::V2,
                             body: Default::default(),
                         };
+                        dialog_id = DialogId::try_from(&ack)?.clone();
                         tx.send_ack(ack).await?;
                         self.inner
-                            .transition(DialogState::Confirmed(self.id(), resp))?;
+                            .transition(DialogState::Confirmed(dialog_id.clone(), resp))?;
+                        break;
                     }
-                    StatusCode::Decline => {
-                        info!("received decline response: {}", resp.status_code);
+                    StatusCode::Decline | StatusCode::RequestTerminated => {
+                        info!("received terminated response: {}", resp.status_code);
                         self.inner.transition(DialogState::Terminated(
                             self.id(),
                             Some(resp.status_code),
@@ -161,7 +215,6 @@ impl ClientInviteDialog {
             }
         }
         trace!("process done");
-        self.inner.tu_sender.lock().unwrap().take();
-        Ok(())
+        Ok(dialog_id)
     }
 }

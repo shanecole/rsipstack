@@ -2,11 +2,11 @@ use super::authenticate::Credential;
 use super::dialog::DialogStateSender;
 use super::{dialog::Dialog, server_dialog::ServerInviteDialog, DialogId};
 use crate::dialog::dialog::DialogInner;
-use crate::transaction::make_to_tag;
+use crate::transaction::key::TransactionRole;
+use crate::transaction::make_tag;
 use crate::transaction::{endpoint::EndpointInnerRef, transaction::Transaction};
 use crate::Result;
-use log::debug;
-use rsip::prelude::{HeadersExt, ToTypedHeader, UntypedHeader};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::{
     collections::HashMap,
     sync::{Arc, RwLock},
@@ -14,7 +14,8 @@ use std::{
 use tracing::info;
 
 pub struct DialogLayerInner {
-    dialogs: RwLock<HashMap<DialogId, Dialog>>,
+    pub(super) last_seq: AtomicU32,
+    pub(super) dialogs: RwLock<HashMap<DialogId, Dialog>>,
 }
 pub type DialogLayerInnerRef = Arc<DialogLayerInner>;
 
@@ -28,6 +29,7 @@ impl DialogLayer {
         Self {
             endpoint,
             inner: Arc::new(DialogLayerInner {
+                last_seq: AtomicU32::new(0),
                 dialogs: RwLock::new(HashMap::new()),
             }),
         }
@@ -53,9 +55,10 @@ impl DialogLayer {
                 }
             }
         }
-        id.to_tag = make_to_tag().to_string(); // generate to tag
+        id.to_tag = make_tag().to_string(); // generate to tag
 
-        let dlg_inner = DialogInner::new_server(
+        let dlg_inner = DialogInner::new(
+            TransactionRole::Server,
             id.clone(),
             tx.original.clone(),
             self.endpoint.clone(),
@@ -72,16 +75,20 @@ impl DialogLayer {
             .write()
             .unwrap()
             .insert(id.clone(), Dialog::ServerInvite(dialog.clone()));
-        debug!("add server dialog: {:?}", id);
+        info!("server invite dialog created: {:?}", id);
         Ok(dialog)
     }
 
+    pub fn increment_last_seq(&self) -> u32 {
+        self.inner.last_seq.fetch_add(1, Ordering::Relaxed);
+        self.inner.last_seq.load(Ordering::Relaxed)
+    }
     pub fn get_dialog(&self, id: &DialogId) -> Option<Dialog> {
         self.inner.dialogs.read().unwrap().get(id).cloned()
     }
 
     pub fn remove_dialog(&self, id: &DialogId) {
-        debug!("remove dialog: {:?}", id);
+        info!("remove dialog: {:?}", id);
         self.inner.dialogs.write().unwrap().remove(id);
     }
 }

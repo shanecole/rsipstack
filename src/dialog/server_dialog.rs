@@ -3,7 +3,9 @@ use super::DialogId;
 use crate::dialog::dialog::DialogState;
 use crate::transaction::transaction::{Transaction, TransactionEvent};
 use crate::Result;
+use rsip::prelude::HeadersExt;
 use rsip::{Header, Request, SipMessage, StatusCode};
+use std::sync::atomic::Ordering;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, info_span, trace};
 
@@ -64,7 +66,6 @@ impl ServerInviteDialog {
 
     pub async fn bye(&self) -> Result<()> {
         if !self.inner.is_confirmed() {
-            info!("dialog is not confirmed");
             return Ok(());
         }
         let request = self.inner.make_request(rsip::Method::Bye, None, None)?;
@@ -100,6 +101,19 @@ impl ServerInviteDialog {
             tx.original,
             self.inner.state.lock().unwrap()
         );
+
+        let cseq = tx.original.cseq_header()?.seq()?;
+        if cseq < self.inner.remote_seq.load(Ordering::Relaxed) {
+            info!(
+                "received old request remote_seq: {} > {}",
+                self.inner.remote_seq.load(Ordering::Relaxed),
+                cseq
+            );
+            tx.reply(rsip::StatusCode::ServerInternalError).await?;
+            return Ok(());
+        }
+
+        self.inner.remote_seq.store(cseq, Ordering::Relaxed);
 
         if self.inner.is_confirmed() {
             match tx.original.method {
@@ -171,11 +185,6 @@ impl ServerInviteDialog {
                         let last_response = tx.last_response.clone().unwrap_or_default();
                         self.inner
                             .transition(DialogState::Confirmed(self.id(), last_response.into()))?;
-                    }
-                    rsip::Method::Bye => {
-                        info!("received bye");
-                        self.inner
-                            .transition(DialogState::Terminated(self.id(), None))?;
                     }
                     rsip::Method::Cancel => {
                         info!("received cancel");

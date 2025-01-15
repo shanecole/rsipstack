@@ -8,9 +8,9 @@ pub mod authenticate;
 pub mod client_dialog;
 pub mod dialog;
 pub mod dialog_layer;
+pub mod invitation;
 pub mod registration;
 pub mod server_dialog;
-
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct DialogId {
     pub call_id: String,

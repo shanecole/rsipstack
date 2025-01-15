@@ -1,7 +1,7 @@
 use super::endpoint::EndpointInnerRef;
 use super::key::TransactionKey;
 use super::{SipConnection, TransactionState, TransactionTimer, TransactionType};
-use crate::transaction::make_to_tag;
+use crate::transaction::make_tag;
 use crate::{Error, Result};
 use rsip::prelude::HeadersExt;
 use rsip::{Method, Request, Response, SipMessage, StatusCode};
@@ -142,7 +142,7 @@ impl Transaction {
                 if to.tag()?.is_none() {
                     self.original
                         .headers
-                        .unique_push(to.clone().with_tag(make_to_tag())?.into());
+                        .unique_push(to.clone().with_tag(make_tag())?.into());
                 }
             }
         }
@@ -316,8 +316,25 @@ impl Transaction {
             match self.state {
                 TransactionState::Proceeding
                 | TransactionState::Trying
-                | TransactionState::Completed => return Some(req.into()),
-                _ => {}
+                | TransactionState::Completed => {
+                    if let Some(connection) = &self.connection {
+                        let resp = self
+                            .endpoint_inner
+                            .make_response(&req, StatusCode::OK, None);
+                        connection.send(resp.into()).await.ok();
+                    }
+                    return Some(req.into()); // into dialog
+                }
+                _ => {
+                    if let Some(connection) = &self.connection {
+                        let resp = self.endpoint_inner.make_response(
+                            &req,
+                            StatusCode::CallTransactionDoesNotExist,
+                            None,
+                        );
+                        connection.send(resp.into()).await.ok();
+                    }
+                }
             };
             return None;
         }

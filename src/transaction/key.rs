@@ -35,7 +35,7 @@ impl std::fmt::Display for TransactionKey {
 }
 
 impl TransactionKey {
-    pub fn from_ack(req: &Request, role: TransactionRole) -> Result<Self> {
+    pub fn from_ack_or_cancel(req: &Request, role: TransactionRole) -> Result<Self> {
         let via = req.via_header()?.typed()?;
         let method = req.method().clone();
         let from_tag = req
