@@ -6,7 +6,7 @@ use super::{
 };
 use crate::{
     transaction::{
-        endpoint::EndpointInnerRef,
+        endpoint::{EndpointInner, EndpointInnerRef},
         key::{TransactionKey, TransactionRole},
         transaction::{Transaction, TransactionEventSender},
     },
@@ -94,18 +94,7 @@ impl DialogInner {
         let remote_uri = match role {
             TransactionRole::Client => initial_request.uri.clone(),
             TransactionRole::Server => {
-                //TODO: fix this hack
-                let remote_contact = initial_request.contact_header()?;
-                let line = remote_contact.value().replace("\"lime\"", "lime");
-                let mut remote_uri = rsip::headers::untyped::Contact::try_from(line.as_str())
-                    .map_err(|e| {
-                        info!("error parsing contact header {}", e);
-                        crate::Error::DialogError(e.to_string(), id.clone())
-                    })?
-                    .typed()?
-                    .uri;
-                remote_uri.params = vec![];
-                remote_uri
+                EndpointInner::extract_uri_from_contact(initial_request.contact_header()?.value())?
             }
         };
 

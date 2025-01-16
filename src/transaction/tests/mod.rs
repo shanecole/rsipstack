@@ -28,10 +28,7 @@ pub(super) async fn create_test_endpoint(addr: Option<&str>) -> Result<Endpoint>
 }
 #[cfg(test)]
 mod tests {
-    use rsip::prelude::ToTypedHeader;
-
-    use crate::transaction::{make_via_branch, random_text};
-
+    use crate::transaction::{endpoint::EndpointInner, make_via_branch, random_text};
     #[test]
     fn test_random_text() {
         let text = random_text(10);
@@ -43,9 +40,9 @@ mod tests {
 
     #[test]
     fn test_linphone_contact() {
-        let line = "<sip:bob@localhost;transport=udp>;expires=3600;+org.linphone.specs=lime";
-        let untyped_contact =
-            rsip::headers::untyped::Contact::try_from(line.to_string()).expect("contact");
-        untyped_contact.typed().expect("typed");
+        let line = "<sip:bob@localhost;transport=udp>;expires=3600;+org.linphone.specs=\"lime\"";
+        let contact_uri =
+            EndpointInner::extract_uri_from_contact(line).expect("failed to parse contact");
+        assert_eq!(contact_uri.to_string(), "sip:bob@localhost;transport=UDP");
     }
 }

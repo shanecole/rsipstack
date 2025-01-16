@@ -1,4 +1,5 @@
 use super::{endpoint::EndpointInner, make_call_id};
+use crate::Result;
 use rsip::{Header, Request, Response, StatusCode};
 
 impl EndpointInner {
@@ -53,6 +54,27 @@ impl EndpointInner {
             version: req.version().clone(),
             headers,
             body: body.unwrap_or_default(),
+        }
+    }
+
+    pub fn extract_uri_from_contact(line: &str) -> Result<rsip::Uri> {
+        match rsip::headers::Contact::try_from(line) {
+            Ok(contact) => {
+                match contact.uri() {
+                    Ok(mut uri) => {
+                        uri.params
+                            .retain(|p| matches!(p, rsip::Param::Transport(_)));
+                        return Ok(uri);
+                    }
+                    Err(_) => {}
+                };
+            }
+            Err(_) => {}
+        };
+
+        match line.split('<').nth(1).and_then(|s| s.split('>').next()) {
+            Some(uri) => rsip::Uri::try_from(uri).map_err(Into::into),
+            None => Err(crate::Error::Error(format!("no uri found: {}", line))),
         }
     }
 }

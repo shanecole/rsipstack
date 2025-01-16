@@ -107,9 +107,6 @@ pub async fn play_example_file(
                     }
                 }
                 ticker.tick().await;
-                if seq > 200 {
-                    break;
-                }
             }
         } => {
             info!("playback finished, hangup");
