@@ -187,7 +187,7 @@ impl ServerInviteDialog {
                         info!("received ack");
                         let last_response = tx.last_response.clone().unwrap_or_default();
                         self.inner
-                            .transition(DialogState::Confirmed(self.id(), last_response.into()))?;
+                            .transition(DialogState::Confirmed(self.id(), last_response))?;
                     }
                     rsip::Method::Cancel => {
                         info!("received cancel");
