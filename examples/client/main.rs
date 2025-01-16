@@ -43,7 +43,7 @@ struct Args {
     rtp_start_port: u16,
 
     /// External IP address
-    #[arg(long, default_value = "")]
+    #[arg(long)]
     external_ip: Option<String>,
 
     /// SIP server address
@@ -229,8 +229,7 @@ async fn process_registration(
             info!("Failed to register: {:?}", resp);
             return Err(rsipstack::Error::Error("Failed to register".to_string()));
         }
-        let expires = registration.expires();
-        sleep(Duration::from_secs(expires as u64)).await;
+        sleep(Duration::from_secs(registration.expires().max(50) as u64)).await;
     }
     #[allow(unreachable_code)]
     Ok::<_, Error>(())

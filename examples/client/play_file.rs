@@ -37,8 +37,11 @@ pub async fn build_rtp_conn(
     if opt.external_ip.is_none() && opt.stun {
         if let Some(ref server) = opt.stun_server {
             match stun::external_by_stun(&mut conn, &server, Duration::from_secs(5)).await {
-                Ok(socket) => info!("external IP: {:?}", socket),
-                Err(e) => info!("Failed to get external IP, stunserver {} : {:?}", server, e),
+                Ok(socket) => info!("media external IP by stun: {:?}", socket),
+                Err(e) => info!(
+                    "Failed to get media external IP, stunserver {} : {:?}",
+                    server, e
+                ),
             }
         }
     }
