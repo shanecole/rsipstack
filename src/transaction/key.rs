@@ -87,14 +87,14 @@ impl TransactionKey {
     ) -> Result<Self> {
         let mut key = String::new();
         match via.branch() {
-            Some(branch) => {
+            Ok(branch) => {
                 write!(
                     &mut key,
                     "{}.{}_{}_{}_{}_{}",
                     role, method, cseq, call_id, from_tag, branch
                 )
             }
-            None => {
+            Err(_) => {
                 write!(
                     &mut key,
                     "{}.{}_{}_{}_{}_{}.2543",

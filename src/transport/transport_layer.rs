@@ -75,7 +75,7 @@ impl TransportLayerInner {
         let target = if outbound.is_none() {
             let target_host_port = uri.host_with_port.to_owned();
             let mut r#type = uri.scheme.as_ref().map(|scheme| match scheme {
-                rsip::Scheme::Sip => rsip::transport::Transport::Udp,
+                rsip::Scheme::Sip | rsip::Scheme::Tel => rsip::transport::Transport::Udp,
                 rsip::Scheme::Sips => rsip::transport::Transport::Tls,
                 rsip::Scheme::Other(schema) => {
                     if schema.eq_ignore_ascii_case("ws") {
