@@ -1,4 +1,4 @@
-use crate::Error;
+use crate::{Error, Result};
 use rsip::{
     prelude::{HeadersExt, UntypedHeader},
     Request,
@@ -21,7 +21,7 @@ pub struct DialogId {
 impl TryFrom<&Request> for DialogId {
     type Error = crate::Error;
 
-    fn try_from(request: &Request) -> Result<Self, Self::Error> {
+    fn try_from(request: &Request) -> Result<Self> {
         let call_id = request.call_id_header()?.value().to_string();
 
         let from_tag = match request.from_header()?.tag()? {

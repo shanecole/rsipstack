@@ -1,8 +1,3 @@
-use rsip::{Request, Response};
-use std::sync::Arc;
-use tokio_util::sync::CancellationToken;
-use tracing::{debug, info};
-
 use super::{
     authenticate::Credential,
     client_dialog::ClientInviteDialog,
@@ -18,6 +13,9 @@ use crate::{
     },
     Result,
 };
+use rsip::{Request, Response};
+use std::sync::Arc;
+use tracing::{debug, info};
 pub struct InviteOption {
     pub caller: rsip::Uri,
     pub callee: rsip::Uri,
@@ -44,7 +42,7 @@ impl DialogLayer {
         }
         .with_tag(make_tag());
 
-        let via = self.endpoint.get_via()?;
+        let via = self.endpoint.get_via(None)?;
         let mut request =
             self.endpoint
                 .make_request(rsip::Method::Invite, recipient, via, form, to, last_seq);
@@ -75,6 +73,10 @@ impl DialogLayer {
     ) -> Result<(ClientInviteDialog, Option<Response>)> {
         let mut request = self.make_invite_request(&opt)?;
         request.body = opt.offer.unwrap_or_default();
+        request.headers.unique_push(rsip::Header::ContentLength(
+            (request.body.len() as u32).into(),
+        ));
+
         let id = DialogId::try_from(&request)?;
         let dlg_inner = DialogInner::new(
             TransactionRole::Client,

@@ -212,8 +212,9 @@ impl EndpointInner {
             ));
         }
 
-        if request.method == rsip::Method::Ack {
-            key = TransactionKey::from_request(&request, super::key::TransactionRole::Server)?;
+        if matches!(request.method, rsip::Method::Ack | rsip::Method::Cancel) {
+            key =
+                TransactionKey::from_ack_or_cancel(&request, super::key::TransactionRole::Server)?;
         }
 
         let tx = Transaction::new_server(
@@ -266,7 +267,7 @@ impl EndpointInner {
         self.transport_layer.get_addrs()
     }
 
-    pub fn get_via(&self) -> Result<rsip::typed::Via> {
+    pub fn get_via(&self, branch: Option<rsip::Param>) -> Result<rsip::typed::Via> {
         let first_addr = self
             .transport_layer
             .get_addrs()
@@ -278,7 +279,11 @@ impl EndpointInner {
             version: rsip::Version::V2,
             transport: first_addr.r#type.unwrap_or_default(),
             uri: first_addr.addr.into(),
-            params: vec![make_via_branch(), rsip::Param::Other("rport".into(), None)].into(),
+            params: vec![
+                branch.unwrap_or(make_via_branch()),
+                rsip::Param::Other("rport".into(), None),
+            ]
+            .into(),
         };
         Ok(via)
     }

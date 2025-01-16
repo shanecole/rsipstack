@@ -214,7 +214,7 @@ impl Transaction {
             }
         }
     }
-    #[instrument(skip(self))]
+    #[instrument(skip(self, ack))]
     pub async fn send_ack(&mut self, ack: Request) -> Result<()> {
         let span = self.span.clone();
         let _enter = span.or_current();
@@ -371,14 +371,13 @@ impl Transaction {
                     TransactionState::Proceeding
                 }
             }
-            rsip::StatusCodeKind::Successful => {
+            _ => {
                 if self.transaction_type == TransactionType::ClientInvite {
                     TransactionState::Completed
                 } else {
                     TransactionState::Terminated
                 }
             }
-            _ => TransactionState::Terminated,
         };
 
         self.can_transition(&new_state).ok()?;

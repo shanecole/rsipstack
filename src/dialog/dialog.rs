@@ -47,7 +47,7 @@ pub enum Dialog {
 pub struct DialogInner {
     pub role: TransactionRole,
     pub cancel_token: CancellationToken,
-    pub id: DialogId,
+    pub id: Mutex<DialogId>,
     pub state: Mutex<DialogState>,
 
     pub local_seq: AtomicU32,
@@ -57,7 +57,7 @@ pub struct DialogInner {
     pub remote_uri: rsip::Uri,
 
     pub from: String,
-    pub to: String,
+    pub to: Mutex<String>,
 
     pub credential: Option<Credential>,
     pub route_set: Vec<Route>,
@@ -123,9 +123,9 @@ impl DialogInner {
         Ok(Self {
             role,
             cancel_token: CancellationToken::new(),
-            id: id.clone(),
+            id: Mutex::new(id.clone()),
             from,
-            to,
+            to: Mutex::new(to),
             local_seq: AtomicU32::new(cseq),
             remote_uri,
             remote_seq: AtomicU32::new(cseq),
@@ -156,23 +156,35 @@ impl DialogInner {
         self.remote_seq.load(Ordering::Relaxed)
     }
 
+    pub fn update_remote_tag(&self, tag: &str) -> Result<()> {
+        self.id.lock().unwrap().to_tag = tag.to_string();
+        let to: rsip::headers::untyped::To = self.to.lock().unwrap().clone().into();
+        *self.to.lock().unwrap() = to.typed()?.with_tag(tag.to_string().into()).to_string();
+        info!("updating remote tag to: {}", self.to.lock().unwrap());
+        Ok(())
+    }
+
     pub(super) fn make_request(
         &self,
         method: rsip::Method,
+        cseq: Option<u32>,
+        branch: Option<Param>,
         headers: Option<Vec<rsip::Header>>,
         body: Option<Vec<u8>>,
     ) -> Result<rsip::Request> {
         let mut headers = headers.unwrap_or_default();
         let cseq_header = CSeq {
-            seq: self.increment_remove_seq(),
+            seq: cseq.unwrap_or(self.increment_remove_seq()),
             method,
         };
 
-        let via = self.endpoint_inner.get_via()?;
+        let via = self.endpoint_inner.get_via(branch)?;
         headers.push(via.into());
-        headers.push(Header::CallId(self.id.call_id.clone().into()));
+        headers.push(Header::CallId(
+            self.id.lock().unwrap().call_id.clone().into(),
+        ));
         headers.push(Header::From(self.from.clone().into()));
-        headers.push(Header::To(self.to.clone().into()));
+        headers.push(Header::To(self.to.lock().unwrap().clone().into()));
         headers.push(Header::CSeq(cseq_header.into()));
         headers.push(Header::UserAgent(
             self.endpoint_inner.user_agent.clone().into(),
@@ -235,8 +247,9 @@ impl DialogInner {
 
                     if status != StatusCode::Trying {
                         if !to.params.iter().any(|p| matches!(p, Param::Tag(_))) {
-                            to.params
-                                .push(rsip::Param::Tag(self.id.to_tag.clone().into()));
+                            to.params.push(rsip::Param::Tag(
+                                self.id.lock().unwrap().to_tag.clone().into(),
+                            ));
                         }
                     }
                     resp_headers.push(Header::To(to.into()));
@@ -287,11 +300,11 @@ impl DialogInner {
                         continue;
                     }
                     StatusCode::Ringing | StatusCode::SessionProgress => {
-                        self.transition(DialogState::Early(self.id.clone(), resp))?;
+                        self.transition(DialogState::Early(self.id.lock().unwrap().clone(), resp))?;
                         continue;
                     }
                     StatusCode::ProxyAuthenticationRequired | StatusCode::Unauthorized => {
-                        let id = self.id.clone();
+                        let id = self.id.lock().unwrap().clone();
                         if auth_sent {
                             info!("received {} response after auth sent", resp.status_code);
                             self.transition(DialogState::Terminated(id, Some(resp.status_code)))?;
@@ -355,8 +368,8 @@ impl std::fmt::Display for DialogState {
 impl Dialog {
     pub fn id(&self) -> DialogId {
         match self {
-            Dialog::ServerInvite(d) => d.inner.id.clone(),
-            Dialog::ClientInvite(d) => d.inner.id.clone(),
+            Dialog::ServerInvite(d) => d.inner.id.lock().unwrap().clone(),
+            Dialog::ClientInvite(d) => d.inner.id.lock().unwrap().clone(),
         }
     }
     pub async fn handle(&mut self, tx: Transaction) -> Result<()> {

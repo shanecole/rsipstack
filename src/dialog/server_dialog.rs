@@ -16,7 +16,7 @@ pub struct ServerInviteDialog {
 
 impl ServerInviteDialog {
     pub fn id(&self) -> DialogId {
-        self.inner.id.clone()
+        self.inner.id.lock().unwrap().clone()
     }
     pub fn cancel_token(&self) -> &CancellationToken {
         &self.inner.cancel_token
@@ -68,7 +68,9 @@ impl ServerInviteDialog {
         if !self.inner.is_confirmed() {
             return Ok(());
         }
-        let request = self.inner.make_request(rsip::Method::Bye, None, None)?;
+        let request = self
+            .inner
+            .make_request(rsip::Method::Bye, None, None, None, None)?;
         let resp = self.inner.do_request(&request).await?;
         self.inner.transition(DialogState::Terminated(
             self.id(),
@@ -87,7 +89,9 @@ impl ServerInviteDialog {
         if !self.inner.is_confirmed() {
             return Ok(());
         }
-        let request = self.inner.make_request(rsip::Method::Info, None, None)?;
+        let request = self
+            .inner
+            .make_request(rsip::Method::Info, None, None, None, None)?;
         self.inner.do_request(&request).await?;
         Ok(())
     }
@@ -132,7 +136,6 @@ impl ServerInviteDialog {
         } else {
             match tx.original.method {
                 rsip::Method::Ack => {
-                    info!("received ack before confirmed");
                     if let Some(sender) = self.inner.tu_sender.lock().unwrap().as_ref() {
                         sender
                             .send(TransactionEvent::Received(

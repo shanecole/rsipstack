@@ -6,6 +6,7 @@ use crate::transaction::key::TransactionRole;
 use crate::transaction::make_tag;
 use crate::transaction::{endpoint::EndpointInnerRef, transaction::Transaction};
 use crate::Result;
+use rsip::Request;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::{
     collections::HashMap,
@@ -83,12 +84,31 @@ impl DialogLayer {
         self.inner.last_seq.fetch_add(1, Ordering::Relaxed);
         self.inner.last_seq.load(Ordering::Relaxed)
     }
+
     pub fn get_dialog(&self, id: &DialogId) -> Option<Dialog> {
-        self.inner.dialogs.read().unwrap().get(id).cloned()
+        let dialogs = self.inner.dialogs.read().unwrap();
+        match dialogs.get(id) {
+            Some(dialog) => return Some(dialog.clone()),
+            None => {}
+        }
+        let swap_id = DialogId {
+            call_id: id.call_id.clone(),
+            from_tag: id.to_tag.clone(),
+            to_tag: id.from_tag.clone(),
+        };
+        match dialogs.get(&swap_id) {
+            Some(dialog) => Some(dialog.clone()),
+            None => None,
+        }
     }
 
     pub fn remove_dialog(&self, id: &DialogId) {
         info!("remove dialog: {:?}", id);
         self.inner.dialogs.write().unwrap().remove(id);
+    }
+
+    pub fn match_dialog(&self, req: &Request) -> Option<Dialog> {
+        let id = DialogId::try_from(req).ok()?;
+        self.get_dialog(&id)
     }
 }

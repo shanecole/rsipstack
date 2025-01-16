@@ -1,3 +1,4 @@
+use super::DialogId;
 use crate::transaction::key::{TransactionKey, TransactionRole};
 use crate::transaction::transaction::Transaction;
 use crate::transaction::{make_via_branch, random_text, CNONCE_LEN};
@@ -7,8 +8,6 @@ use rsip::prelude::{HasHeaders, HeadersExt, ToTypedHeader};
 use rsip::services::DigestGenerator;
 use rsip::typed::{Authorization, ProxyAuthorization};
 use rsip::{Header, Param, Response};
-
-use super::DialogId;
 
 #[derive(Clone)]
 pub struct Credential {

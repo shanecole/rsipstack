@@ -87,7 +87,7 @@ impl Registration {
                 },
                 params: vec![],
             });
-        let via = self.endpoint.get_via()?;
+        let via = self.endpoint.get_via(None)?;
         let mut request = self.endpoint.make_request(
             rsip::Method::Register,
             recipient,

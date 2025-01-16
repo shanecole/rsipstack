@@ -1,13 +1,11 @@
 use clap::Parser;
 use play_file::{build_rtp_conn, play_example_file};
-use rsip::param::user;
 use rsip::prelude::HeadersExt;
 use rsip::typed::MediaType;
 use rsipstack::dialog::dialog::{Dialog, DialogState, DialogStateReceiver, DialogStateSender};
 use rsipstack::dialog::dialog_layer::DialogLayer;
 use rsipstack::dialog::invitation::InviteOption;
 use rsipstack::dialog::server_dialog::ServerInviteDialog;
-use rsipstack::dialog::DialogId;
 use rsipstack::transaction::endpoint::EndpointInnerRef;
 use rsipstack::Result;
 use rsipstack::{
@@ -186,10 +184,22 @@ async fn main() -> rsipstack::Result<()> {
             info!("dialog loop finished {:?}", r);
         }
         r = async {
-            if args.call.is_some() {
-                let callee = args.call.clone().unwrap_or_default();
-                make_call(dialog_layer, callee, opt, state_sender, credential.clone(),contact ).await.expect("make call");
+            if let Some(callee) = args.call.clone() {
+                let invite_option = InviteOption {
+                    callee: callee.try_into().expect("callee"),
+                    caller: contact.clone(),
+                    content_type: None,
+                    offer: None,
+                    contact: contact.clone(),
+                    credential: Some(credential.clone()),
+                };
+
+                match make_call(dialog_layer, invite_option, opt, state_sender).await {
+                    Ok(_) => info!("Call finished"),
+                    Err(e) => info!("Failed to make call: {:?}", e),
+                }
             }
+
             loop {
                 sleep(Duration::from_secs(1)).await;
             }
@@ -234,10 +244,9 @@ async fn process_incoming_request(
 ) -> Result<()> {
     while let Some(mut tx) = incoming.recv().await {
         info!("Received transaction: {:?}", tx.key);
-        let in_dalog = tx.original.to_header()?.tag()?.is_some();
-        if in_dalog {
-            let id = DialogId::try_from(&tx.original)?;
-            match dialog_layer.get_dialog(&id) {
+
+        match tx.original.to_header()?.tag()?.as_ref() {
+            Some(_) => match dialog_layer.match_dialog(&tx.original) {
                 Some(mut d) => {
                     tokio::spawn(async move {
                         d.handle(tx).await?;
@@ -246,14 +255,15 @@ async fn process_incoming_request(
                     continue;
                 }
                 None => {
-                    info!("Dialog not found: {:?}", id);
+                    info!("dialog not found: {}", tx.original);
                     tx.reply(rsip::StatusCode::CallTransactionDoesNotExist)
                         .await?;
                     continue;
                 }
-            }
+            },
+            None => {}
         }
-
+        // out dialog, new server dialog
         match tx.original.method {
             rsip::Method::Invite | rsip::Method::Ack => {
                 let mut dialog = match dialog_layer.get_or_create_server_invite(
@@ -309,7 +319,7 @@ async fn process_dialog(
                         // [A] Ai answer, [R] Reject, [E] Play example pcmu
                         play_example_pcmu(&opt, d).await?;
                     }
-                    Dialog::ClientInvite(d) => {
+                    Dialog::ClientInvite(_) => {
                         info!("Client invite dialog {}", id);
                     }
                 }
@@ -331,28 +341,23 @@ async fn process_dialog(
 
 async fn make_call(
     dialog_layer: Arc<DialogLayer>,
-    callee: String,
+    invite_option: InviteOption,
     media_option: MediaSessionOption,
     state_sender: DialogStateSender,
-    credential: Credential,
-    contact: rsip::Uri,
 ) -> Result<()> {
     let ssrc = rand::random::<u32>();
     let (rtp_conn, offer) = build_rtp_conn(&media_option, ssrc).await?;
-    let caller = contact.clone();
+    let mut invite_option = invite_option;
+    invite_option.offer = Some(offer.into());
 
-    let opt = InviteOption {
-        callee: callee.try_into()?,
-        caller,
-        content_type: None,
-        offer: Some(offer.into()),
-        contact,
-        credential: Some(credential),
-    };
-
-    let (dialog, resp) = dialog_layer.do_invite(opt, state_sender).await?;
+    let (dialog, resp) = dialog_layer.do_invite(invite_option, state_sender).await?;
     let rtp_token = dialog.cancel_token().child_token();
     let resp = resp.ok_or(Error::Error("No response".to_string()))?;
+
+    if resp.status_code != rsip::StatusCode::OK {
+        info!("Failed to make call: {:?}", resp);
+        return Err(Error::Error("Failed to make call".to_string()));
+    }
 
     let body = String::from_utf8_lossy(resp.body()).to_string();
     info!("Received response: {}", resp);
