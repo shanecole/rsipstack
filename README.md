@@ -31,8 +31,8 @@ We are a group of developers who are passionate about SIP and Rust. We believe t
 ## How to run
 
 ```bash
-# the sip phone will serve at: YOUR_NETWORK_IP:15060
+# the sip phone will serve at: YOUR_NETWORK_IP:25060
 cargo run --example client
 ```
 
-Make a call to `sip:YOUR_NETWORK_IP:15060` from another sip client.(e.g. [linphone](https://www.linphone.org/))
+Make a call to `sip:YOUR_NETWORK_IP:25060` from another sip client.(e.g. [linphone](https://www.linphone.org/))
