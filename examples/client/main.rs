@@ -80,7 +80,10 @@ struct Args {
     #[arg(long)]
     realtime_endpoint: Option<String>,
 
-    #[arg(long, default_value = "rsipstack")]
+    #[arg(
+        long,
+        default_value = "You are a helpful, witty, and friendly AI. Act like a human, but remember that you aren't a human and that you can't do human things in the real world"
+    )]
     realtime_prompt: Option<String>,
 }
 
@@ -88,7 +91,7 @@ struct Args {
 #[tokio::main]
 async fn main() -> rsipstack::Result<()> {
     tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::TRACE)
+        .with_max_level(tracing::Level::DEBUG)
         .with_file(true)
         .with_line_number(true)
         .with_timer(tracing_subscriber::fmt::time::LocalTime::rfc_3339())
@@ -483,7 +486,7 @@ async fn play_example_pcmu(opt: &MediaSessionOption, dialog: ServerInviteDialog)
 
     let realtime_token = opt.realtime_token.clone();
     let realtime_endpoint = opt.realtime_endpoint.clone();
-    let realtime_prompt = opt.realtime_endpoint.clone();
+    let realtime_prompt = opt.realtime_prompt.clone();
     tokio::spawn(async move {
         if use_realtime {
             realtime::bridge_realtime(
