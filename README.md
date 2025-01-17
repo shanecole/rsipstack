@@ -36,3 +36,14 @@ cargo run --example client
 ```
 
 Make a call to `sip:YOUR_NETWORK_IP:25060` from another sip client.(e.g. [linphone](https://www.linphone.org/))
+# Run with OpenAI realtime voice model
+
+1. apply for OpenAI API key
+2. set the API key in the environment variable `OPENAI_API_KEY`
+```bash
+export OPENAI_API_KEY=your_openai_api_key
+# or moddify the .env file
+
+cargo run --example client -- --realtime --prompt "What is the meaning of life?"
+
+```
