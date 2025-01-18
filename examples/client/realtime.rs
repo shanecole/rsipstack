@@ -3,12 +3,12 @@ use base64::Engine;
 use futures::{SinkExt, StreamExt};
 use openai_api_rs::realtime::api::RealtimeClient;
 use openai_api_rs::realtime::client_event::{InputAudioBufferAppend, SessionUpdate};
-use openai_api_rs::realtime::server_event::ServerEvent;
 use openai_api_rs::realtime::types::AudioFormat;
 use rsipstack::transport::connection::SipAddr;
 use rsipstack::transport::udp::UdpConnection;
 use rsipstack::Result;
 use rtp_rs::RtpPacketBuilder;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::select;
 use tokio_tungstenite::connect_async;
@@ -35,8 +35,8 @@ pub async fn bridge_realtime(
     }
     info!("realtime_endpoint: {}", realtime_endpoint);
     // OpenAI GPT-4 model
-
-    let (mut write, mut read) = if std::env::var("AZURE_API").is_err() {
+    let is_azure = realtime_endpoint.to_ascii_lowercase().contains("azure.com");
+    let (mut write, mut read) = if is_azure {
         let model = "gpt-4o-realtime-preview-2024-10-01".to_string();
         let realtime_client = RealtimeClient::new(realtime_token.clone(), model);
         match realtime_client
@@ -81,33 +81,16 @@ pub async fn bridge_realtime(
     };
 
     info!("WebSocket handshake complete");
-    let item_session_update = SessionUpdate {
-        session: openai_api_rs::realtime::types::Session {
-            instructions: Some(prompt.clone()),
-            input_audio_format: Some(AudioFormat::G711ULAW),
-            output_audio_format: Some(AudioFormat::G711ULAW),
-            input_audio_transcription: Some(openai_api_rs::realtime::types::AudioTranscription {
-                enabled: true,
-                model: "whisper-1".to_string(),
-            }),
-            ..Default::default()
-        },
-        ..Default::default()
-    };
-    if std::env::var("AZURE_API").is_err() {
-        match write.send(item_session_update.into()).await {
-            Ok(_) => {}
-            Err(e) => {
-                info!("send item_create_message failed: {:?}", e);
-            }
-        }
-    } else {
+
+    if is_azure {
         let item_session_update = serde_json::json!({
             "type": "session.update",
             "session": {
                 "instructions": prompt,
+                "input_audio_format": "g711_ulaw",
+                "output_audio_format": "g711_ulaw",
+                "voice":"shimmer",
                 "input_audio_transcription": {
-                    "enabled":true,
                     "model": "whisper-1",
                 }
             },
@@ -121,33 +104,52 @@ pub async fn bridge_realtime(
                 info!("send item_create_message failed: {:?}", e);
             }
         }
+    } else {
+        let item_session_update = SessionUpdate {
+            session: openai_api_rs::realtime::types::Session {
+                instructions: Some(prompt.clone()),
+                input_audio_format: Some(AudioFormat::G711ULAW),
+                output_audio_format: Some(AudioFormat::G711ULAW),
+                input_audio_transcription: Some(
+                    openai_api_rs::realtime::types::AudioTranscription {
+                        enabled: true,
+                        model: "whisper-1".to_string(),
+                    },
+                ),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        match write.send(item_session_update.into()).await {
+            Ok(_) => {}
+            Err(e) => {
+                info!("send item_create_message failed: {:?}", e);
+            }
+        }
     }
-
+    let ready = AtomicBool::new(false);
     let conn_ref = conn.clone();
+
     let recv_from_rtp_loop = async {
         let buf = &mut [0u8; 2048];
-
         loop {
             let (n, _) = conn_ref.recv_raw(buf).await.unwrap();
-            let samples = match rtp_rs::RtpPacketBuilder::new()
-                .payload_type(0)
-                .ssrc(ssrc)
-                .timestamp(0)
-                .payload(&buf[..n])
-                .build()
-            {
-                Ok(r) => r,
+
+            let samples = match rtp_rs::RtpReader::new(&buf[..n]) {
+                Ok(r) => r.payload(),
                 Err(e) => {
                     info!("Failed to build RTP packet: {:?}", e);
                     break;
                 }
             };
-
+            if !ready.load(Ordering::Relaxed) {
+                continue;
+            }
             let append_audio_message = InputAudioBufferAppend {
-                audio: general_purpose::STANDARD_NO_PAD.encode(&samples),
+                audio: general_purpose::STANDARD.encode(&samples),
                 ..Default::default()
             };
-
+            info!("append_audio_message: {:?}", samples.len());
             match write.send(append_audio_message.into()).await {
                 Ok(_) => {}
                 Err(e) => {
@@ -168,35 +170,39 @@ pub async fn bridge_realtime(
         let mut ts = 0;
         loop {
             let mut chunk = [0u8; SAMPLE_SIZE];
+            let mut has_data = false;
             {
                 let mut audio = output_buf.lock().unwrap();
                 if audio.len() > SAMPLE_SIZE {
                     chunk.copy_from_slice(&audio[..SAMPLE_SIZE]);
                     audio.copy_within(SAMPLE_SIZE.., 0);
+                    has_data = true;
                 }
             }
 
-            match RtpPacketBuilder::new()
-                .payload_type(0)
-                .ssrc(ssrc)
-                .sequence(seq.into())
-                .timestamp(ts)
-                .payload(&chunk)
-                .build()
-            {
-                Ok(r) => match conn.send_raw(&r, &peer_addr).await {
-                    Ok(_) => {}
+            if has_data {
+                match RtpPacketBuilder::new()
+                    .payload_type(0)
+                    .ssrc(ssrc)
+                    .sequence(seq.into())
+                    .timestamp(ts)
+                    .payload(&chunk)
+                    .build()
+                {
+                    Ok(r) => match conn.send_raw(&r, &peer_addr).await {
+                        Ok(_) => {}
+                        Err(e) => {
+                            info!("Failed to send RTP: {:?}", e);
+                            break;
+                        }
+                    },
                     Err(e) => {
-                        info!("Failed to send RTP: {:?}", e);
+                        info!("Failed to build RTP packet: {:?}", e);
                         break;
                     }
-                },
-                Err(e) => {
-                    info!("Failed to build RTP packet: {:?}", e);
-                    break;
-                }
-            };
-            ts += chunk.len() as u32;
+                };
+            }
+            ts += SAMPLE_SIZE as u32;
             seq += 1;
             ticker.tick().await;
         }
@@ -207,22 +213,29 @@ pub async fn bridge_realtime(
             match &message {
                 Message::Text(_) => {
                     let data = message.into_data();
-                    let server_event: ServerEvent = serde_json::from_slice(&data).unwrap();
-                    match server_event {
-                        ServerEvent::ResponseOutputItemDone(_event) => {
-                            info!("received output item done: {_event:?}");
+                    let server_event: serde_json::Value = serde_json::from_slice(&data).unwrap();
+                    // Don't use `ServerEvent`` here, it's not compatible with Azure
+                    match server_event["type"].as_str().unwrap() {
+                        "session.created" => {}
+                        "response.text.done" => {
+                            info!("received transcript: {server_event:?}");
                         }
-                        ServerEvent::ResponseTextDone(event) => {
-                            info!("received transcript: {event:?}");
+                        "response.audio.delta" => {
+                            let delta = server_event["delta"].as_str().unwrap();
+                            let samples = general_purpose::STANDARD.decode(delta).unwrap();
+                            let mut audio = output_buf.lock().unwrap();
+                            audio.extend_from_slice(&samples);
                         }
-                        ServerEvent::ResponseAudioDelta(event) => {
-                            let audio = general_purpose::STANDARD.decode(&event.delta).unwrap();
-                            let mut output_buf = output_buf.lock().unwrap();
-                            output_buf.extend_from_slice(&audio);
-                            info!("received audio: {:?}", audio.len());
+                        "error" => {
+                            info!("{server_event:?}");
+                            break;
                         }
-                        ServerEvent::Error(e) => {
-                            info!("{e:?}");
+                        "server_vad" => {
+                            info!("server_vad");
+                        }
+                        "session.updated" => {
+                            ready.store(true, Ordering::Relaxed);
+                            info!("session.updated {:?}", server_event);
                         }
                         _ => {
                             info!("received: {server_event:?}");
