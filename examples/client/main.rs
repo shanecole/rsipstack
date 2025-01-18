@@ -174,21 +174,18 @@ async fn main() -> rsipstack::Result<()> {
 
     transport_layer.add_transport(connection.into());
 
-    let endpoint = Arc::new(
-        EndpointBuilder::new()
-            .cancel_token(token)
-            .transport_layer(transport_layer)
-            .build(),
-    );
+    let endpoint = EndpointBuilder::new()
+        .cancel_token(token)
+        .transport_layer(transport_layer)
+        .build();
 
     let credential = Credential {
         username: sip_username.clone(),
         password: sip_password,
     };
 
-    let endpoint_ref = endpoint.clone();
-    let incoming = endpoint_ref.incoming_transactions();
-    let dialog_layer = Arc::new(DialogLayer::new(endpoint_ref.inner.clone()));
+    let incoming = endpoint.incoming_transactions();
+    let dialog_layer = Arc::new(DialogLayer::new(endpoint.inner.clone()));
 
     let (state_sender, state_receiver) = unbounded_channel();
 
@@ -213,7 +210,7 @@ async fn main() -> rsipstack::Result<()> {
         _ = endpoint.serve() => {
             info!("user agent finished");
         }
-        r = process_registration(endpoint_ref.inner.clone(), sip_server, credential.clone()) => {
+        r = process_registration(endpoint.inner.clone(), sip_server, credential.clone()) => {
             info!("register loop finished {:?}", r);
         }
         r = process_incoming_request(dialog_layer.clone(), incoming, state_sender.clone(), contact.clone()) => {
