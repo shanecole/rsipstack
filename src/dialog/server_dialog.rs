@@ -174,37 +174,44 @@ impl ServerInviteDialog {
             .unwrap()
             .replace(tx.tu_sender.clone());
 
-        if !self.inner.is_confirmed() {
-            self.inner.transition(DialogState::Calling(self.id()))?;
-        }
-
-        tx.send_trying().await?;
-
-        while let Some(msg) = tx.receive().await {
-            match msg {
-                SipMessage::Request(req) => match req.method {
-                    rsip::Method::Ack => {
-                        info!("received ack");
-                        let last_response = tx.last_response.clone().unwrap_or_default();
-                        self.inner
-                            .transition(DialogState::Confirmed(self.id(), last_response))?;
-                    }
-                    rsip::Method::Cancel => {
-                        info!("received cancel");
-                        tx.reply(rsip::StatusCode::RequestTerminated).await?;
-                        self.inner.transition(DialogState::Terminated(
-                            self.id(),
-                            Some(StatusCode::RequestTerminated),
-                        ))?;
-                    }
-                    _ => {}
-                },
-                SipMessage::Response(_) => {}
+        let handle_loop = async {
+            if !self.inner.is_confirmed() {
+                self.inner.transition(DialogState::Calling(self.id()))?;
             }
-        }
-        trace!("process done");
-        self.inner.tu_sender.lock().unwrap().take();
-        Ok(())
+
+            tx.send_trying().await?;
+
+            while let Some(msg) = tx.receive().await {
+                match msg {
+                    SipMessage::Request(req) => match req.method {
+                        rsip::Method::Ack => {
+                            info!("received ack");
+                            let last_response = tx.last_response.clone().unwrap_or_default();
+                            self.inner
+                                .transition(DialogState::Confirmed(self.id(), last_response))?;
+                        }
+                        rsip::Method::Cancel => {
+                            info!("received cancel");
+                            tx.reply(rsip::StatusCode::RequestTerminated).await?;
+                            self.inner.transition(DialogState::Terminated(
+                                self.id(),
+                                Some(StatusCode::RequestTerminated),
+                            ))?;
+                        }
+                        _ => {}
+                    },
+                    SipMessage::Response(_) => {}
+                }
+            }
+            trace!("process done");
+            Ok::<(), crate::Error>(())
+        };
+        handle_loop
+            .await
+            .or_else(|e| warn!("handle_invite error: {:?}", e))
+            .map(|_| {
+                self.inner.tu_sender.lock().unwrap().take();
+            })
     }
 }
 
