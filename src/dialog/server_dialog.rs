@@ -7,7 +7,7 @@ use rsip::prelude::HeadersExt;
 use rsip::{Header, Request, SipMessage, StatusCode};
 use std::sync::atomic::Ordering;
 use tokio_util::sync::CancellationToken;
-use tracing::{info, info_span, trace};
+use tracing::{info, info_span, trace, warn};
 
 #[derive(Clone)]
 pub struct ServerInviteDialog {
@@ -203,15 +203,20 @@ impl ServerInviteDialog {
                     SipMessage::Response(_) => {}
                 }
             }
-            trace!("process done");
             Ok::<(), crate::Error>(())
         };
-        handle_loop
-            .await
-            .or_else(|e| warn!("handle_invite error: {:?}", e))
-            .map(|_| {
+        match handle_loop.await {
+            Ok(_) => {
+                trace!("process done");
                 self.inner.tu_sender.lock().unwrap().take();
-            })
+                Ok(())
+            }
+            Err(e) => {
+                self.inner.tu_sender.lock().unwrap().take();
+                warn!("handle_invite error: {:?}", e);
+                Err(e)
+            }
+        }
     }
 }
 
