@@ -45,20 +45,21 @@ pub async fn build_rtp_conn(
             }
         }
     }
+    let codec = if opt.use_realtime { 8 } else { 0 };
+    let codec_name = if opt.use_realtime { "PCMA" } else { "PCMU" };
     let sdp = format!(
         "v=0\r\n\
         o=- 0 0 IN IP4 {}\r\n\
         s=rsipstack example\r\n\
         c=IN IP4 {}\r\n\
         t=0 0\r\n\
-        m=audio {} RTP/AVP 0\r\n\
-        a=rtpmap:0 PCMU/8000\r\n\
-        a=ssrc:{}\r\n\
+        m=audio {} RTP/AVP {codec}\r\n\
+        a=rtpmap:{codec} {codec_name}/8000\r\n\
+        a=ssrc:{ssrc}\r\n\
         a=sendrecv\r\n",
         conn.get_addr().addr.ip(),
         conn.get_addr().addr.ip(),
         conn.get_addr().addr.port(),
-        ssrc,
     );
     info!("RTP socket: {:?} {}", conn.get_addr(), sdp);
     Ok((conn, sdp))

@@ -37,23 +37,6 @@ pub async fn bridge_realtime(
     // OpenAI GPT-4 model
     let is_azure = realtime_endpoint.to_ascii_lowercase().contains("azure.com");
     let (mut write, mut read) = if is_azure {
-        let model = "gpt-4o-realtime-preview-2024-10-01".to_string();
-        let realtime_client = RealtimeClient::new(realtime_token.clone(), model);
-        match realtime_client
-            .connect()
-            .await
-            .map_err(|e| rsipstack::Error::Error(e.to_string()))
-        {
-            Ok(r) => r,
-            Err(e) => {
-                info!(
-                "Failed to connect to OpenAI Realtime: {:?} {realtime_token:} {realtime_endpoint:?}",
-                e
-            );
-                return Err(e);
-            }
-        }
-    } else {
         let mut request = realtime_endpoint
             .clone()
             .into_client_request()
@@ -71,13 +54,30 @@ pub async fn bridge_realtime(
             Ok(r) => r,
             Err(e) => {
                 info!(
+            "Failed to connect to OpenAI Realtime: {:?} {realtime_token:} {realtime_endpoint:?}",
+            e
+        );
+                return Err(e);
+            }
+        };
+        ws_stream.split()
+    } else {
+        let model = "gpt-4o-realtime-preview-2024-10-01".to_string();
+        let realtime_client = RealtimeClient::new(realtime_token.clone(), model);
+        match realtime_client
+            .connect()
+            .await
+            .map_err(|e| rsipstack::Error::Error(e.to_string()))
+        {
+            Ok(r) => r,
+            Err(e) => {
+                info!(
                 "Failed to connect to OpenAI Realtime: {:?} {realtime_token:} {realtime_endpoint:?}",
                 e
             );
                 return Err(e);
             }
-        };
-        ws_stream.split()
+        }
     };
 
     info!("WebSocket handshake complete");
@@ -87,8 +87,8 @@ pub async fn bridge_realtime(
             "type": "session.update",
             "session": {
                 "instructions": prompt,
-                "input_audio_format": "g711_ulaw",
-                "output_audio_format": "g711_ulaw",
+                "input_audio_format": "g711_alaw",
+                "output_audio_format": "g711_alaw",
                 "voice":"shimmer",
                 "input_audio_transcription": {
                     "model": "whisper-1",
@@ -149,7 +149,6 @@ pub async fn bridge_realtime(
                 audio: general_purpose::STANDARD.encode(&samples),
                 ..Default::default()
             };
-            info!("append_audio_message: {:?}", samples.len());
             match write.send(append_audio_message.into()).await {
                 Ok(_) => {}
                 Err(e) => {
@@ -170,38 +169,36 @@ pub async fn bridge_realtime(
         let mut ts = 0;
         loop {
             let mut chunk = [0u8; SAMPLE_SIZE];
-            let mut has_data = false;
             {
                 let mut audio = output_buf.lock().unwrap();
                 if audio.len() > SAMPLE_SIZE {
                     chunk.copy_from_slice(&audio[..SAMPLE_SIZE]);
                     audio.copy_within(SAMPLE_SIZE.., 0);
-                    has_data = true;
+                } else {
+                    chunk.iter_mut().for_each(|x| *x = 0);
                 }
             }
 
-            if has_data {
-                match RtpPacketBuilder::new()
-                    .payload_type(0)
-                    .ssrc(ssrc)
-                    .sequence(seq.into())
-                    .timestamp(ts)
-                    .payload(&chunk)
-                    .build()
-                {
-                    Ok(r) => match conn.send_raw(&r, &peer_addr).await {
-                        Ok(_) => {}
-                        Err(e) => {
-                            info!("Failed to send RTP: {:?}", e);
-                            break;
-                        }
-                    },
+            match RtpPacketBuilder::new()
+                .payload_type(8)
+                .ssrc(ssrc)
+                .sequence(seq.into())
+                .timestamp(ts)
+                .payload(&chunk)
+                .build()
+            {
+                Ok(r) => match conn.send_raw(&r, &peer_addr).await {
+                    Ok(_) => {}
                     Err(e) => {
-                        info!("Failed to build RTP packet: {:?}", e);
+                        info!("Failed to send RTP: {:?}", e);
                         break;
                     }
-                };
-            }
+                },
+                Err(e) => {
+                    info!("Failed to build RTP packet: {:?}", e);
+                    break;
+                }
+            };
             ts += SAMPLE_SIZE as u32;
             seq += 1;
             ticker.tick().await;
@@ -237,6 +234,13 @@ pub async fn bridge_realtime(
                             ready.store(true, Ordering::Relaxed);
                             info!("session.updated {:?}", server_event);
                         }
+                        "conversation.item.input_audio_transcription.completed" => {
+                            info!(
+                                "peer transcription completed {:?}",
+                                server_event.get("transcript")
+                            );
+                        }
+                        "response.audio_transcript.delta" => {}
                         _ => {
                             info!("received: {server_event:?}");
                         }
@@ -268,5 +272,6 @@ pub async fn bridge_realtime(
             info!("send_to_rtp done");
         }
     };
+    info!("bridge_realtime done");
     Ok(())
 }

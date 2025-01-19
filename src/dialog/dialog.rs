@@ -367,4 +367,14 @@ impl Dialog {
             Dialog::ClientInvite(d) => d.handle(tx).await,
         }
     }
+    pub fn on_remove(&self) {
+        match self {
+            Dialog::ServerInvite(d) => {
+                d.inner.cancel_token.cancel();
+            }
+            Dialog::ClientInvite(d) => {
+                d.inner.cancel_token.cancel();
+            }
+        }
+    }
 }

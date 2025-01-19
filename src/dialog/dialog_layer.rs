@@ -5,7 +5,7 @@ use crate::dialog::dialog::DialogInner;
 use crate::transaction::key::TransactionRole;
 use crate::transaction::make_tag;
 use crate::transaction::{endpoint::EndpointInnerRef, transaction::Transaction};
-use crate::Result;
+use crate::{dialog, Result};
 use rsip::Request;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::{
@@ -104,7 +104,12 @@ impl DialogLayer {
 
     pub fn remove_dialog(&self, id: &DialogId) {
         info!("remove dialog: {:?}", id);
-        self.inner.dialogs.write().unwrap().remove(id);
+        self.inner
+            .dialogs
+            .write()
+            .unwrap()
+            .remove(id)
+            .map(|d| d.on_remove());
     }
 
     pub fn match_dialog(&self, req: &Request) -> Option<Dialog> {
