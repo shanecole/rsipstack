@@ -84,7 +84,7 @@ struct Args {
         long,
         default_value = "You are a helpful, witty, and friendly AI. Act like a human, but remember that you aren't a human and that you can't do human things in the real world"
     )]
-    realtime_prompt: Option<String>,
+    prompt: Option<String>,
 }
 
 // A sip client example, that sends a REGISTER request to a sip server.
@@ -132,6 +132,14 @@ async fn main() -> rsipstack::Result<()> {
         ));
     }
 
+    let prompt = match args.prompt {
+        Some(p) => match std::fs::read_to_string(&p) {
+            Ok(p) => p,
+            Err(_) => p,
+        },
+        None => String::new(),
+    };
+
     let opt = MediaSessionOption {
         stun: args.stun,
         stun_server: args.stun_server.clone(),
@@ -140,7 +148,7 @@ async fn main() -> rsipstack::Result<()> {
         use_realtime: args.realtime,
         realtime_token,
         realtime_endpoint,
-        realtime_prompt: args.realtime_prompt.clone().unwrap_or_default(),
+        realtime_prompt: prompt,
     };
 
     let token = CancellationToken::new();
