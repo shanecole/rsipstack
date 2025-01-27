@@ -183,7 +183,7 @@ async fn main() -> rsipstack::Result<()> {
     transport_layer.add_transport(connection.into());
 
     let endpoint = EndpointBuilder::new()
-        .cancel_token(token)
+        .cancel_token(token.clone())
         .transport_layer(transport_layer)
         .build();
 
@@ -218,7 +218,7 @@ async fn main() -> rsipstack::Result<()> {
         _ = endpoint.serve() => {
             info!("user agent finished");
         }
-        r = process_registration(endpoint.inner.clone(), sip_server, credential.clone()) => {
+        r = process_registration(endpoint.inner.clone(), sip_server, credential.clone(), token.clone()) => {
             info!("register loop finished {:?}", r);
         }
         r = process_incoming_request(dialog_layer.clone(), incoming, state_sender.clone(), contact.clone()) => {
@@ -243,9 +243,10 @@ async fn main() -> rsipstack::Result<()> {
                     Err(e) => info!("Failed to make call: {:?}", e),
                 }
             }
-
-            loop {
-                sleep(Duration::from_secs(1)).await;
+            select! {
+                _ = token.cancelled() => {
+                    info!("token cancelled")
+                }
             }
         } => {
             info!("dialog loop finished {:?}", r);
@@ -258,10 +259,14 @@ async fn process_registration(
     endpoint: EndpointInnerRef,
     sip_server: String,
     credential: Credential,
+    cancel_token: CancellationToken,
 ) -> Result<()> {
     if sip_server.is_empty() {
-        loop {
-            sleep(Duration::from_secs(1)).await;
+        select! {
+            _ = cancel_token.cancelled() => {
+                info!("recv cancel token canceled in registration process");
+                return Err(Error::Error("sip_server is empty".to_owned()));
+            }
         }
     }
 
