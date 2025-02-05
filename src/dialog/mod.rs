@@ -35,9 +35,9 @@ impl TryFrom<&Request> for DialogId {
         };
 
         Ok(DialogId {
-            call_id: call_id.to_string(),
-            from_tag: from_tag.to_string(),
-            to_tag: to_tag.to_string(),
+            call_id,
+            from_tag,
+            to_tag,
         })
     }
 }

@@ -42,7 +42,7 @@ impl TransactionKey {
             .from_header()?
             .tag()?
             .ok_or(Error::Error("from tags missing".to_string()))?;
-        let call_id = req.call_id_header()?.value().to_string();
+        let call_id = req.call_id_header()?.value();
         let cseq = req.cseq_header()?.seq()?;
         Self::build_key(role, via, method, cseq, from_tag, call_id)
     }
@@ -59,7 +59,7 @@ impl TransactionKey {
             .from_header()?
             .tag()?
             .ok_or(Error::Error("from tags missing".to_string()))?;
-        let call_id = req.call_id_header()?.value().to_string();
+        let call_id = req.call_id_header()?.value();
         let cseq = req.cseq_header()?.seq()?;
         Self::build_key(role, via, method, cseq, from_tag, call_id)
     }
@@ -72,7 +72,7 @@ impl TransactionKey {
             .from_header()?
             .tag()?
             .ok_or(Error::Error("from tags missing".to_string()))?;
-        let call_id = resp.call_id_header()?.value().to_string();
+        let call_id = resp.call_id_header()?.value();
 
         Self::build_key(role, via, method, cseq.seq()?, from_tag, call_id)
     }
@@ -83,7 +83,7 @@ impl TransactionKey {
         method: Method,
         cseq: u32,
         from_tag: Tag,
-        call_id: String,
+        call_id: &str,
     ) -> Result<Self> {
         let mut key = String::new();
         match via.branch() {

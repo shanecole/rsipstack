@@ -44,7 +44,7 @@ impl TransportLayer {
     }
 
     pub async fn lookup(&self, uri: &rsip::uri::Uri) -> Result<SipConnection> {
-        self.inner.lookup(uri, self.outbound.clone()).await
+        self.inner.lookup(uri, self.outbound.as_ref()).await
     }
 
     pub async fn serve_listens(&self, sender: TransportSender) -> Result<()> {
@@ -67,12 +67,14 @@ impl TransportLayerInner {
         self.listens.lock().unwrap().remove(addr);
     }
 
-    async fn lookup(
-        &self,
+    async fn lookup<'a>(
+        &'a self,
         uri: &rsip::uri::Uri,
-        outbound: Option<SipAddr>,
+        outbound: Option<&'a SipAddr>,
     ) -> Result<SipConnection> {
-        let target = if outbound.is_none() {
+        let target = if let Some(addr) = outbound {
+            addr
+        } else {
             let target_host_port = uri.host_with_port.to_owned();
             let mut r#type = uri.scheme.as_ref().map(|scheme| match scheme {
                 rsip::Scheme::Sip | rsip::Scheme::Tel => rsip::transport::Transport::Udp,
@@ -102,10 +104,9 @@ impl TransportLayerInner {
                     )));
                 }
             };
-            SipAddr { r#type, addr }
-        } else {
-            outbound.unwrap()
+            &SipAddr { r#type, addr }
         };
+
         info!("lookup target: {} -> {}", uri, target);
 
         if let Some(transport) = self.listens.lock().unwrap().get(&target) {
@@ -132,7 +133,7 @@ impl TransportLayerInner {
         }
         return Err(crate::Error::TransportLayerError(
             format!("unsupported transport type: {:?}", target.r#type),
-            target,
+            target.to_owned(),
         ));
     }
 
