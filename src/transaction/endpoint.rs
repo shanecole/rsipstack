@@ -6,10 +6,7 @@ use super::{
     SipConnection, TransactionReceiver, TransactionSender, TransactionTimer,
 };
 use crate::{
-    transport::{
-        connection::{SipAddr, TransportReceiver},
-        TransportEvent, TransportLayer,
-    },
+    transport::{connection::SipAddr, TransportEvent, TransportLayer},
     Error, Result, USER_AGENT,
 };
 use rsip::SipMessage;
@@ -75,17 +72,14 @@ impl EndpointInner {
         })
     }
 
-    pub async fn serve(&self, endpoint_inner: EndpointInnerRef) -> Result<()> {
-        let (transport_tx, transport_rx) = unbounded_channel();
-        self.transport_layer.serve_listens(transport_tx).await.ok();
-
+    pub async fn serve(self: &Arc<Self>) -> Result<()> {
         select! {
             _ = self.cancel_token.cancelled() => {
             },
-            r = self.process_timer() => {
+            r = self.clone().process_timer() => {
                 _ = r?
             },
-            r = self.process_transport_layer(transport_rx, endpoint_inner) => {
+            r = self.clone().process_transport_layer() => {
                 _ = r?
             },
         }
@@ -93,18 +87,14 @@ impl EndpointInner {
     }
 
     // process transport layer, receive message from transport layer
-    async fn process_transport_layer(
-        &self,
-        mut transport_rx: TransportReceiver,
-        endpoint_inner: EndpointInnerRef,
-    ) -> Result<()> {
+    async fn process_transport_layer(self: Arc<Self>) -> Result<()> {
+        let (transport_tx, mut transport_rx) = unbounded_channel();
+        self.transport_layer.serve_listens(transport_tx).await.ok();
+
         while let Some(event) = transport_rx.recv().await {
             match event {
                 TransportEvent::Incoming(msg, connection, from) => {
-                    match self
-                        .on_received_message(msg, connection, &endpoint_inner)
-                        .await
-                    {
+                    match self.on_received_message(msg, connection).await {
                         Ok(()) => {}
                         Err(e) => {
                             warn!("on_received_message error:{} {:?}", from, e);
@@ -122,7 +112,7 @@ impl EndpointInner {
         Ok(())
     }
 
-    pub async fn process_timer(&self) -> Result<()> {
+    pub async fn process_timer(self: Arc<Self>) -> Result<()> {
         while !self.cancel_token.is_cancelled() {
             for t in self.timers.poll(Instant::now()) {
                 match t {
@@ -158,10 +148,9 @@ impl EndpointInner {
 
     // receive message from transport layer
     pub async fn on_received_message(
-        &self,
+        self: &Arc<Self>,
         msg: SipMessage,
         connection: SipConnection,
-        endpoint_inner: &EndpointInnerRef,
     ) -> Result<()> {
         let mut key = match &msg {
             SipMessage::Request(req) => {
@@ -217,12 +206,8 @@ impl EndpointInner {
                 TransactionKey::from_ack_or_cancel(&request, super::key::TransactionRole::Server)?;
         }
 
-        let tx = Transaction::new_server(
-            key.clone(),
-            request.clone(),
-            endpoint_inner.clone(),
-            Some(connection),
-        );
+        let tx =
+            Transaction::new_server(key.clone(), request.clone(), self.clone(), Some(connection));
 
         self.incoming_sender
             .lock()
@@ -340,8 +325,8 @@ impl EndpointBuilder {
 
 impl Endpoint {
     pub async fn serve(&self) {
-        let endpoint_inner = self.inner.clone();
-        match self.inner.serve(endpoint_inner).await {
+        let inner = self.inner.clone();
+        match inner.serve().await {
             Ok(()) => {
                 info!("endpoint shutdown");
             }
