@@ -28,7 +28,7 @@ pub struct IncomingRequest {
 pub type TransactionReceiver = UnboundedReceiver<Transaction>;
 pub type TransactionSender = UnboundedSender<Transaction>;
 
-#[derive(Debug, Clone, PartialEq, Copy)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum TransactionState {
     Calling,
     Trying,

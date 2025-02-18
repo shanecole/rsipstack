@@ -4,3 +4,4 @@ Cargo.lock
 .env
 .env.*
 *~
+prompt.txt

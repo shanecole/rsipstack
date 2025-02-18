@@ -127,6 +127,7 @@ pub async fn bridge_realtime(
             }
         }
     }
+
     let ready = AtomicBool::new(false);
     let conn_ref = conn.clone();
 
@@ -168,14 +169,14 @@ pub async fn bridge_realtime(
         let mut seq = 1;
         let mut ts = 0;
         loop {
-            let mut chunk = [0u8; SAMPLE_SIZE];
+            let mut chunk = [0xD5; SAMPLE_SIZE];
             {
                 let mut audio = output_buf.lock().unwrap();
                 if audio.len() > SAMPLE_SIZE {
                     chunk.copy_from_slice(&audio[..SAMPLE_SIZE]);
-                    audio.copy_within(SAMPLE_SIZE.., 0);
+                    audio.drain(..SAMPLE_SIZE);
                 } else {
-                    chunk.iter_mut().for_each(|x| *x = 0);
+                    chunk.iter_mut().for_each(|x| *x = 0xD5);
                 }
             }
 
@@ -241,6 +242,10 @@ pub async fn bridge_realtime(
                             );
                         }
                         "response.audio_transcript.delta" => {}
+                        "input_audio_buffer.speech_started" => {
+                            let mut audio = output_buf.lock().unwrap();
+                            audio.clear();
+                        }
                         _ => {
                             info!("received: {server_event:?}");
                         }
