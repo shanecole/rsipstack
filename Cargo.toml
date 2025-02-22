@@ -31,6 +31,7 @@ tokio-util = "0.7.13"
 tracing-subscriber = { version = "0.3.19", features = ["local-time"] }
 uuid = "0.8.2"
 rand = "0.8.5"
+get_if_addrs = "0.5.3"
 
 [features]
 default = ["console_error_panic_hook"]
@@ -50,7 +51,6 @@ clap = { version = "4.0", features = ["derive"] }
 sdp-rs = "0.2.1"
 rtp-rs = "0.6.0"
 stun-rs = "0.1.9"
-pnet = "0.35.0"
 openai-api-rs = "5.2.4"
 tokio-tungstenite = "0.24"
 base64 = "0.22.1"
