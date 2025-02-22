@@ -1,5 +1,6 @@
 use std::net::{IpAddr, SocketAddr};
 use std::time::Duration;
+use get_if_addrs::get_if_addrs;
 
 use rsipstack::transport::{connection::SipAddr, udp::UdpConnection};
 use rsipstack::{Error, Result};
@@ -14,13 +15,24 @@ use tokio::time::sleep;
 use tracing::info;
 
 pub fn get_first_non_loopback_interface() -> Result<IpAddr> {
-    for iface in pnet::datalink::interfaces() {
-        if !iface.is_loopback() {
-            for ip in iface.ips {
-                if let IpAddr::V4(_) = ip.ip() {
-                    return Ok(ip.ip());
+    match get_if_addrs() {
+        Ok(addresses) => {
+            for interface in addresses {
+                if !interface.is_loopback() {
+                    match interface.addr {
+                        get_if_addrs::IfAddr::V4(ipv4_addr) => {
+                            println!("Interface: {}, IPv4: {}", interface.name, ipv4_addr.ip);
+                            return Ok(std::net::IpAddr::V4(ipv4_addr.ip));
+                        }
+                        get_if_addrs::IfAddr::V6(ipv6_addr) => {
+                            println!("Interface: {}, IPv6: {}", interface.name, ipv6_addr.ip);
+                        }
+                    }
                 }
             }
+        }
+        Err(e) => {
+            eprintln!("Failed to get network interfaces: {}", e);
         }
     }
     Err(Error::Error("No interface found".to_string()))
