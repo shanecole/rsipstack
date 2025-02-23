@@ -1,12 +1,213 @@
-use rsipstack::EndpointBuilder;
+use clap::Parser;
+use get_if_addrs::get_if_addrs;
+use rsip::prelude::{HeadersExt, ToTypedHeader};
+use rsip::Request;
+use rsipstack::transaction::key::{TransactionKey, TransactionRole};
+use rsipstack::transaction::transaction::Transaction;
+use rsipstack::transaction::TransactionReceiver;
+use rsipstack::transport::udp::UdpConnection;
+use rsipstack::transport::SipConnection;
+use rsipstack::{transport::TransportLayer, EndpointBuilder};
+use rsipstack::{Error, Result};
+use std::collections::HashMap;
+use std::env;
+use std::sync::{Arc, Mutex};
+use tokio::select;
+use tokio_util::sync::CancellationToken;
+use tracing::info;
+/// A SIP client example that sends a REGISTER request to a SIP server.
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+struct Args {
+    /// SIP port
+    #[arg(long, default_value = "25060")]
+    port: u16,
+
+    /// External IP address
+    #[arg(long)]
+    external_ip: Option<String>,
+}
+#[derive(Clone)]
+struct User {
+    from: String,
+    contact: rsip::headers::Contact,
+    alive_at: std::time::Instant,
+}
+
+struct Session {
+    caller: String,
+    calee: String,
+}
+
+struct AppState {
+    users: Mutex<HashMap<String, User>>,
+    sessions: Mutex<HashMap<String, Session>>,
+}
 
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_file(true)
         .with_line_number(true)
         .try_init()
         .ok();
-    let server = EndpointBuilder::new().build();
-    todo!()
+    if let Err(e) = dotenv::dotenv() {
+        info!("Failed to load .env file: {}", e);
+    }
+    let args = Args::parse();
+
+    let token = CancellationToken::new();
+    let transport_layer = TransportLayer::new(token.clone());
+
+    let external_ip = args
+        .external_ip
+        .unwrap_or(env::var("EXTERNAL_IP").unwrap_or_default());
+
+    let external = if external_ip.is_empty() {
+        None
+    } else {
+        Some(format!("{}:{}", external_ip, args.port).parse()?)
+    };
+
+    let addr = get_if_addrs()?
+        .iter()
+        .find(|i| !i.is_loopback())
+        .map(|i| match i.addr {
+            get_if_addrs::IfAddr::V4(ref addr) => Ok(std::net::IpAddr::V4(addr.ip)),
+            _ => Err(Error::Error("No IPv4 address found".to_string())),
+        })
+        .unwrap_or(Err(Error::Error("No interface found".to_string())))?;
+
+    let connection = UdpConnection::create_connection(
+        format!("{}:{}", addr, args.port).parse()?,
+        external.clone(),
+    )
+    .await?;
+
+    transport_layer.add_transport(connection.into());
+
+    let endpoint = EndpointBuilder::new()
+        .cancel_token(token.clone())
+        .transport_layer(transport_layer)
+        .build();
+
+    let incoming = endpoint.incoming_transactions();
+
+    select! {
+        _ = endpoint.serve() => {
+            info!("user agent finished");
+        }
+        r = process_incoming_request(incoming) => {
+            info!("serve loop finished {:?}", r);
+        }
+    }
+    Ok(())
+}
+
+async fn process_incoming_request(mut incoming: TransactionReceiver) -> Result<()> {
+    let state = Arc::new(AppState {
+        users: Mutex::new(HashMap::new()),
+        sessions: Mutex::new(HashMap::new()),
+    });
+    while let Some(mut tx) = incoming.recv().await {
+        info!("Received transaction: {:?}", tx.key);
+        let state = state.clone();
+        match tx.original.method {
+            rsip::Method::Invite | rsip::Method::Ack => {
+                tokio::spawn(async move {
+                    handle_invite(state, tx).await?;
+                    Ok::<_, Error>(())
+                });
+            }
+            rsip::Method::Bye => {
+                tokio::spawn(async move {
+                    handle_bye(state, tx).await?;
+                    Ok::<_, Error>(())
+                });
+            }
+            rsip::Method::Register => {
+                handle_register(state, tx).await?;
+            }
+            _ => {
+                info!("Received request: {:?}", tx.original.method);
+                tx.reply(rsip::StatusCode::NotAcceptable).await?;
+            }
+        }
+    }
+    Ok::<_, Error>(())
+}
+
+impl TryFrom<&rsip::Request> for User {
+    type Error = Error;
+    fn try_from(req: &rsip::Request) -> Result<Self> {
+        let contact = req.contact_header()?.clone();
+        let via = req.via_header()?.typed()?;
+        let mut params = contact.params()?;
+        via.params.iter().for_each(|param| match param {
+            rsip::Param::Transport(_)
+            | rsip::Param::Received(_)
+            | rsip::Param::Other(_, Some(_)) => {
+                params.push(param.clone());
+            }
+            _ => {}
+        });
+        let contact = contact.with_params(params)?;
+        Ok(User {
+            from: req.from_header()?.uri()?.to_string(),
+            contact,
+            alive_at: std::time::Instant::now(),
+        })
+    }
+}
+
+async fn handle_register(state: Arc<AppState>, mut tx: Transaction) -> Result<()> {
+    let user = match User::try_from(&tx.original) {
+        Ok(u) => u,
+        Err(_) => {
+            return tx.reply(rsip::StatusCode::BadRequest).await;
+        }
+    };
+    state.users.lock().unwrap().insert(user.from.clone(), user);
+    let headers = vec![rsip::Header::Expires(60.into())];
+    tx.reply_with(rsip::StatusCode::OK, headers, None).await
+}
+
+async fn handle_invite(state: Arc<AppState>, mut tx: Transaction) -> Result<()> {
+    let caller = tx.original.from_header()?.uri()?.to_string();
+    let callee = tx.original.to_header()?.uri()?.to_string();
+    let target = state.users.lock().unwrap().get(&callee).cloned();
+    if target.is_none() {
+        return tx.reply(rsip::StatusCode::NotFound).await;
+    }
+
+    let target = target.unwrap();
+    let mut inv_req = tx.original.clone();
+    inv_req.uri = target.contact.uri().unwrap();
+    inv_req.uri.params = target.contact.params().unwrap();
+
+    info!("Forwarding INVITE to: {} -> {}", caller, inv_req.uri);
+
+    let key = TransactionKey::from_request(&inv_req, TransactionRole::Client)
+        .expect("client_transaction");
+
+    let mut inv_tx = Transaction::new_client(key, inv_req, tx.endpoint_inner.clone(), None);
+    inv_tx.send().await?;
+
+    while let Some(msg) = inv_tx.receive().await {
+        match msg {
+            rsip::message::SipMessage::Request(req) => {
+                if req.method == rsip::Method::Ack {
+                    break;
+                }
+            }
+            rsip::message::SipMessage::Response(resp) => {
+                tx.respond(resp).await?;
+            }
+        }
+    }
+    Ok(())
+}
+
+async fn handle_bye(state: Arc<AppState>, mut tx: Transaction) -> Result<()> {
+    Ok(())
 }

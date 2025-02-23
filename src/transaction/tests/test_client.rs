@@ -70,9 +70,7 @@ async fn test_client_transaction() -> Result<()> {
             method: rsip::method::Method::Register,
             uri: rsip::Uri {
                 scheme: Some(rsip::Scheme::Sip),
-                host_with_port: rsip::HostWithPort::try_from(peer_server.get_addr().addr)
-                    .expect("host_port parse")
-                    .into(),
+                host_with_port: peer_server.get_addr().addr.clone(),
                 ..Default::default()
             },
             headers: vec![

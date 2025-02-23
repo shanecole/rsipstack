@@ -1,3 +1,4 @@
+use std::net::SocketAddr;
 use std::time::Duration;
 
 use rsipstack::transport::udp::UdpConnection;
@@ -47,6 +48,7 @@ pub async fn build_rtp_conn(
     }
     let codec = if opt.use_realtime { 8 } else { 0 };
     let codec_name = if opt.use_realtime { "PCMA" } else { "PCMU" };
+    let socketaddr: SocketAddr = conn.get_addr().addr.to_owned().try_into()?;
     let sdp = format!(
         "v=0\r\n\
         o=- 0 0 IN IP4 {}\r\n\
@@ -57,9 +59,9 @@ pub async fn build_rtp_conn(
         a=rtpmap:{codec} {codec_name}/8000\r\n\
         a=ssrc:{ssrc}\r\n\
         a=sendrecv\r\n",
-        conn.get_addr().addr.ip(),
-        conn.get_addr().addr.ip(),
-        conn.get_addr().addr.port(),
+        socketaddr.ip(),
+        socketaddr.ip(),
+        socketaddr.port(),
     );
     info!("RTP socket: {:?} {}", conn.get_addr(), sdp);
     Ok((conn, sdp))
@@ -77,7 +79,7 @@ pub async fn play_example_file(
         }
         _ = async {
             let peer_addr = SipAddr{
-                addr: peer_addr.parse().unwrap(),
+                addr: peer_addr.try_into().expect("peer_addr"),
                 r#type: Some(rsip::transport::Transport::Udp),
             };
             let mut ts = 0;

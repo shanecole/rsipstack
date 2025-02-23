@@ -28,7 +28,7 @@ impl UdpConnection {
         UdpConnection {
             external: external.map(|addr| SipAddr {
                 r#type: Some(rsip::transport::Transport::Udp),
-                addr,
+                addr: addr.into(),
             }),
             inner: Arc::new(inner),
         }
@@ -42,13 +42,13 @@ impl UdpConnection {
 
         let addr = SipAddr {
             r#type: Some(rsip::transport::Transport::Udp),
-            addr: conn.local_addr()?,
+            addr: conn.local_addr()?.into(),
         };
 
         let t = UdpConnection {
             external: external.map(|addr| SipAddr {
                 r#type: Some(rsip::transport::Transport::Udp),
-                addr,
+                addr: addr.into(),
             }),
             inner: Arc::new(UdpInner { addr, conn }),
         };
@@ -128,7 +128,7 @@ impl UdpConnection {
                 SipConnection::Udp(self.clone()),
                 SipAddr {
                     r#type: Some(rsip::transport::Transport::Udp),
-                    addr,
+                    addr: addr.into(),
                 },
             ))?;
         }
@@ -136,14 +136,13 @@ impl UdpConnection {
 
     #[instrument(skip(self, msg), fields(addr = %self.get_addr()))]
     pub async fn send(&self, msg: rsip::SipMessage) -> crate::Result<()> {
-        let target = SipConnection::get_target_socketaddr(&msg)?;
         let buf = msg.to_string();
-
-        trace!("send {} -> {} {}", buf.len(), target, buf);
+        let destination = SipConnection::get_destination(&msg)?;
+        trace!("send {} -> {} {}", buf.len(), destination, buf);
 
         self.inner
             .conn
-            .send_to(buf.as_bytes(), target)
+            .send_to(buf.as_bytes(), destination)
             .await
             .map_err(|e| {
                 crate::Error::TransportLayerError(e.to_string(), self.get_addr().to_owned())
@@ -152,11 +151,11 @@ impl UdpConnection {
     }
 
     #[instrument(skip(self, buf), fields(addr = %self.get_addr()))]
-    pub async fn send_raw(&self, buf: &[u8], target: &SipAddr) -> Result<()> {
+    pub async fn send_raw(&self, buf: &[u8], destination: &SipAddr) -> Result<()> {
         //trace!("send_raw {} -> {}", buf.len(), target);
         self.inner
             .conn
-            .send_to(buf, target.addr)
+            .send_to(buf, destination.get_socketaddr()?)
             .await
             .map_err(|e| {
                 crate::Error::TransportLayerError(e.to_string(), self.get_addr().to_owned())
@@ -172,7 +171,7 @@ impl UdpConnection {
             len,
             SipAddr {
                 r#type: Some(rsip::transport::Transport::Udp),
-                addr,
+                addr: addr.into(),
             },
         ))
     }

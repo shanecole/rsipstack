@@ -1,41 +1,26 @@
-use std::net::{IpAddr, SocketAddr};
-use std::time::Duration;
 use get_if_addrs::get_if_addrs;
-
 use rsipstack::transport::{connection::SipAddr, udp::UdpConnection};
 use rsipstack::{Error, Result};
+use std::net::{IpAddr, SocketAddr};
+use std::time::Duration;
 use stun_rs::{
     attributes::stun::XorMappedAddress, methods::BINDING, MessageClass, MessageDecoderBuilder,
     MessageEncoderBuilder, StunMessageBuilder,
 };
 use tokio::net::lookup_host;
-
 use tokio::select;
 use tokio::time::sleep;
 use tracing::info;
 
 pub fn get_first_non_loopback_interface() -> Result<IpAddr> {
-    match get_if_addrs() {
-        Ok(addresses) => {
-            for interface in addresses {
-                if !interface.is_loopback() {
-                    match interface.addr {
-                        get_if_addrs::IfAddr::V4(ipv4_addr) => {
-                            println!("Interface: {}, IPv4: {}", interface.name, ipv4_addr.ip);
-                            return Ok(std::net::IpAddr::V4(ipv4_addr.ip));
-                        }
-                        get_if_addrs::IfAddr::V6(ipv6_addr) => {
-                            println!("Interface: {}, IPv6: {}", interface.name, ipv6_addr.ip);
-                        }
-                    }
-                }
-            }
-        }
-        Err(e) => {
-            eprintln!("Failed to get network interfaces: {}", e);
-        }
-    }
-    Err(Error::Error("No interface found".to_string()))
+    get_if_addrs()?
+        .iter()
+        .find(|i| !i.is_loopback())
+        .map(|i| match i.addr {
+            get_if_addrs::IfAddr::V4(ref addr) => Ok(std::net::IpAddr::V4(addr.ip)),
+            _ => Err(Error::Error("No IPv4 address found".to_string())),
+        })
+        .unwrap_or(Err(Error::Error("No interface found".to_string())))
 }
 
 pub async fn external_by_stun(
@@ -60,7 +45,7 @@ pub async fn external_by_stun(
     conn.send_raw(
         &buffer,
         &SipAddr {
-            addr: target,
+            addr: target.into(),
             r#type: None,
         },
     )
@@ -93,7 +78,7 @@ pub async fn external_by_stun(
     info!("external IP: {}", socket);
     conn.external = Some(SipAddr {
         r#type: Some(rsip::transport::Transport::Udp),
-        addr: socket.clone(),
+        addr: socket.to_owned().into(),
     });
     Ok(socket.clone())
 }

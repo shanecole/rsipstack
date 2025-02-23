@@ -14,7 +14,7 @@ async fn test_server_transaction() {
     let token = CancellationToken::new();
     let addr = SipAddr {
         r#type: Some(rsip::transport::Transport::Udp),
-        addr: "127.0.0.1:2025".parse().expect("parse addr"),
+        addr: "127.0.0.1:2025".try_into().expect("parse addr"),
     };
     let (incoming_tx, incoming_rx) = unbounded_channel();
     let (outgoing_tx, mut outgoing_rx) = unbounded_channel();
