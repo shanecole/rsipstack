@@ -129,13 +129,17 @@ impl Transaction {
         self.transition(TransactionState::Trying).map(|_| ())
     }
 
-    /// Quick reply with status code
-    #[instrument(skip(self))]
-    pub async fn reply(&mut self, status_code: StatusCode) -> Result<()> {
-        let resp = self
+    pub async fn reply_with(
+        &mut self,
+        status_code: StatusCode,
+        headers: Vec<rsip::Header>,
+        body: Option<Vec<u8>>,
+    ) -> Result<()> {
+        let mut resp = self
             .endpoint_inner
-            .make_response(&self.original, status_code.clone(), None);
-        match status_code.kind() {
+            .make_response(&self.original, status_code, body);
+        resp.headers.extend(headers);
+        match resp.status_code.kind() {
             rsip::StatusCodeKind::Provisional => {}
             _ => {
                 let to = self.original.to_header()?;
@@ -147,6 +151,11 @@ impl Transaction {
             }
         }
         self.respond(resp).await
+    }
+    /// Quick reply with status code
+    #[instrument(skip(self))]
+    pub async fn reply(&mut self, status_code: StatusCode) -> Result<()> {
+        self.reply_with(status_code, vec![], None).await
     }
     // send server response
     #[instrument(skip(self, response))]

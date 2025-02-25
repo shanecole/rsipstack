@@ -8,6 +8,7 @@ use std::{
     collections::HashMap,
     sync::{Arc, Mutex},
 };
+use rsip::HostWithPort;
 use tokio::select;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
@@ -91,8 +92,7 @@ impl TransportLayerInner {
                 .resolve_next()
                 .await
                 .expect("next Target in dns lookup");
-            info!("lookup target11111: {} -> {}:{} {}", uri, target.ip_addr, target.port, target.transport);
-            &SipAddr { r#type: Some(target.transport),  addr: SocketAddr::new(target.ip_addr, u16::from(target.port)) }
+            &SipAddr { r#type: Some(target.transport),  addr: HostWithPort::from(SocketAddr::new(target.ip_addr, u16::from(target.port))) }
         };
 
         info!("lookup target: {} -> {}", uri, target);

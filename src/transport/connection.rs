@@ -1,11 +1,12 @@
 use super::{channel::ChannelConnection, udp::UdpConnection, ws_wasm::WsWasmConnection};
 use crate::Result;
 use rsip::{
+    host_with_port,
     param::{OtherParam, OtherParamValue, Received},
     prelude::{HeadersExt, ToTypedHeader},
     HostWithPort, Param, SipMessage,
 };
-use std::{fmt, net::SocketAddr};
+use std::{fmt, hash::Hash, net::SocketAddr};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 #[derive(Clone)]
@@ -14,10 +15,10 @@ pub enum TransportEvent {
     New(SipConnection),
     Closed(SipConnection),
 }
-#[derive(Debug, Eq, PartialEq, Clone, Hash)]
+#[derive(Debug, Eq, PartialEq, Clone)]
 pub struct SipAddr {
     pub r#type: Option<rsip::transport::Transport>,
-    pub addr: SocketAddr,
+    pub addr: HostWithPort,
 }
 
 pub type TransportReceiver = UnboundedReceiver<TransportEvent>;
@@ -80,9 +81,7 @@ impl SipConnection {
                 Self::build_via_received(via, addr)?;
                 Ok(req.into())
             }
-            SipMessage::Response(_) => {
-                Ok(msg)
-            }
+            SipMessage::Response(_) => Ok(msg),
         }
     }
 
@@ -124,7 +123,7 @@ impl SipConnection {
         Ok(host_with_port)
     }
 
-    pub fn get_target_socketaddr(msg: &rsip::SipMessage) -> Result<SocketAddr> {
+    pub fn get_destination(msg: &rsip::SipMessage) -> Result<SocketAddr> {
         let host_with_port = match msg {
             rsip::SipMessage::Request(req) => req.uri().host_with_port.clone(),
             rsip::SipMessage::Response(res) => Self::parse_target_from_via(res.via_header()?)?,
@@ -158,17 +157,56 @@ impl fmt::Display for SipAddr {
     }
 }
 
+impl Hash for SipAddr {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.r#type.hash(state);
+        match self.addr.host {
+            host_with_port::Host::Domain(ref domain) => domain.hash(state),
+            host_with_port::Host::IpAddr(ref ip_addr) => ip_addr.hash(state),
+        }
+        self.addr.port.map(|port| port.value().hash(state));
+    }
+}
+impl SipAddr {
+    pub fn new(transport: rsip::transport::Transport, addr: HostWithPort) -> Self {
+        SipAddr {
+            r#type: Some(transport),
+            addr,
+        }
+    }
+
+    pub fn get_socketaddr(&self) -> Result<SocketAddr> {
+        match &self.addr.host {
+            host_with_port::Host::Domain(domain) => Err(crate::Error::Error(format!(
+                "Cannot convert domain {} to SocketAddr",
+                domain
+            ))),
+            host_with_port::Host::IpAddr(ip_addr) => {
+                let port = self.addr.port.map_or(5060, |p| p.value().to_owned());
+                Ok(SocketAddr::new(ip_addr.to_owned(), port))
+            }
+        }
+    }
+}
 impl From<SocketAddr> for SipAddr {
     fn from(addr: SocketAddr) -> Self {
-        SipAddr { r#type: None, addr }
+        let host_with_port = HostWithPort {
+            host: addr.ip().into(),
+            port: Some(addr.port().into()),
+        };
+        SipAddr {
+            r#type: None,
+            addr: host_with_port,
+        }
     }
 }
 
-impl TryFrom<rsip::host_with_port::HostWithPort> for SipAddr {
-    type Error = crate::Error;
-    fn try_from(host_with_port: rsip::host_with_port::HostWithPort) -> Result<Self> {
-        let addr = host_with_port.try_into()?;
-        Ok(SipAddr { r#type: None, addr })
+impl From<rsip::host_with_port::HostWithPort> for SipAddr {
+    fn from(host_with_port: rsip::host_with_port::HostWithPort) -> Self {
+        SipAddr {
+            r#type: None,
+            addr: host_with_port,
+        }
     }
 }
 

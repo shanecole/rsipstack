@@ -163,7 +163,7 @@ pub async fn bridge_realtime(
     let send_to_rtp = async {
         let mut ticker = tokio::time::interval(tokio::time::Duration::from_millis(20));
         let peer_addr = SipAddr {
-            addr: peer_addr.parse().unwrap(),
+            addr: peer_addr.try_into().unwrap(),
             r#type: Some(rsip::transport::Transport::Udp),
         };
         let mut seq = 1;
