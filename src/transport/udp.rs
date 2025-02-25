@@ -135,9 +135,16 @@ impl UdpConnection {
     }
 
     #[instrument(skip(self, msg), fields(addr = %self.get_addr()))]
-    pub async fn send(&self, msg: rsip::SipMessage) -> crate::Result<()> {
+    pub async fn send(
+        &self,
+        msg: rsip::SipMessage,
+        destination: Option<&SipAddr>,
+    ) -> crate::Result<()> {
+        let destination = match destination {
+            Some(addr) => addr.get_socketaddr(),
+            None => SipConnection::get_destination(&msg),
+        }?;
         let buf = msg.to_string();
-        let destination = SipConnection::get_destination(&msg)?;
         trace!("send {} -> {} {}", buf.len(), destination, buf);
 
         self.inner

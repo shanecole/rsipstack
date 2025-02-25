@@ -32,7 +32,8 @@ pub enum DialogState {
     Calling(DialogId),
     Trying(DialogId),
     Early(DialogId, rsip::Response),
-    Confirmed(DialogId, rsip::Response),
+    WaitAck(DialogId, rsip::Response),
+    Confirmed(DialogId),
     Updated(DialogId, rsip::Request),
     Notify(DialogId, rsip::Request),
     Info(DialogId, rsip::Request),
@@ -75,7 +76,7 @@ pub(super) type TuSenderRef = Mutex<Option<TransactionEventSender>>;
 
 impl DialogState {
     pub fn is_confirmed(&self) -> bool {
-        matches!(self, DialogState::Confirmed(_, _))
+        matches!(self, DialogState::Confirmed(_))
     }
 }
 
@@ -345,7 +346,8 @@ impl std::fmt::Display for DialogState {
             DialogState::Calling(id) => write!(f, "{}(Calling)", id),
             DialogState::Trying(id) => write!(f, "{}(Trying)", id),
             DialogState::Early(id, _) => write!(f, "{}(Early)", id),
-            DialogState::Confirmed(id, _) => write!(f, "{}(Confirmed)", id),
+            DialogState::WaitAck(id, _) => write!(f, "{}(WaitAck)", id),
+            DialogState::Confirmed(id) => write!(f, "{}(Confirmed)", id),
             DialogState::Updated(id, _) => write!(f, "{}(Updated)", id),
             DialogState::Notify(id, _) => write!(f, "{}(Notify)", id),
             DialogState::Info(id, _) => write!(f, "{}(Info)", id),

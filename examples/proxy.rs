@@ -5,10 +5,12 @@ use rsip::Request;
 use rsipstack::transaction::key::{TransactionKey, TransactionRole};
 use rsipstack::transaction::transaction::Transaction;
 use rsipstack::transaction::TransactionReceiver;
+use rsipstack::transport::connection::SipAddr;
 use rsipstack::transport::udp::UdpConnection;
 use rsipstack::transport::SipConnection;
 use rsipstack::{transport::TransportLayer, EndpointBuilder};
 use rsipstack::{Error, Result};
+use serde::de;
 use std::collections::HashMap;
 use std::env;
 use std::sync::{Arc, Mutex};
@@ -30,7 +32,7 @@ struct Args {
 #[derive(Clone)]
 struct User {
     from: String,
-    contact: rsip::headers::Contact,
+    destination: SipAddr,
     alive_at: std::time::Instant,
 }
 
@@ -47,6 +49,7 @@ struct AppState {
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::DEBUG)
         .with_file(true)
         .with_line_number(true)
         .try_init()
@@ -142,19 +145,34 @@ impl TryFrom<&rsip::Request> for User {
     fn try_from(req: &rsip::Request) -> Result<Self> {
         let contact = req.contact_header()?.clone();
         let via = req.via_header()?.typed()?;
-        let mut params = contact.params()?;
+
+        let mut destination = SipAddr {
+            r#type: via.uri.transport().cloned(),
+            addr: contact.uri()?.host_with_port,
+        };
+
         via.params.iter().for_each(|param| match param {
-            rsip::Param::Transport(_)
-            | rsip::Param::Received(_)
-            | rsip::Param::Other(_, Some(_)) => {
-                params.push(param.clone());
+            rsip::Param::Transport(t) => {
+                destination.r#type = Some(t.clone());
+            }
+            rsip::Param::Received(r) => match r.value().to_string().as_str().try_into() {
+                Ok(addr) => destination.addr.host = addr,
+                Err(_) => {}
+            },
+            rsip::Param::Other(o, Some(v)) => {
+                if o.value().eq_ignore_ascii_case("rport") {
+                    match v.value().to_string().try_into() {
+                        Ok(port) => destination.addr.port = Some(port),
+                        Err(_) => {}
+                    }
+                }
             }
             _ => {}
         });
-        let contact = contact.with_params(params)?;
+
         Ok(User {
             from: req.from_header()?.uri()?.to_string(),
-            contact,
+            destination,
             alive_at: std::time::Instant::now(),
         })
     }
@@ -176,21 +194,28 @@ async fn handle_invite(state: Arc<AppState>, mut tx: Transaction) -> Result<()> 
     let caller = tx.original.from_header()?.uri()?.to_string();
     let callee = tx.original.to_header()?.uri()?.to_string();
     let target = state.users.lock().unwrap().get(&callee).cloned();
-    if target.is_none() {
-        return tx.reply(rsip::StatusCode::NotFound).await;
-    }
+    let target = match target {
+        Some(u) => u,
+        None => {
+            return tx.reply(rsip::StatusCode::NotFound).await;
+        }
+    };
 
-    let target = target.unwrap();
     let mut inv_req = tx.original.clone();
-    inv_req.uri = target.contact.uri().unwrap();
-    inv_req.uri.params = target.contact.params().unwrap();
-
-    info!("Forwarding INVITE to: {} -> {}", caller, inv_req.uri);
+    let via = tx.endpoint_inner.get_via(None)?;
+    let mut headers = vec![rsip::Header::Via(via.into())];
+    headers.extend(inv_req.headers.clone());
+    inv_req.headers = headers.into();
 
     let key = TransactionKey::from_request(&inv_req, TransactionRole::Client)
         .expect("client_transaction");
 
+    info!("Forwarding INVITE to: {} -> {}", caller, target.destination);
+
     let mut inv_tx = Transaction::new_client(key, inv_req, tx.endpoint_inner.clone(), None);
+    inv_tx.destination = Some(target.destination);
+
+    // add Via
     inv_tx.send().await?;
 
     while let Some(msg) = inv_tx.receive().await {
@@ -200,7 +225,21 @@ async fn handle_invite(state: Arc<AppState>, mut tx: Transaction) -> Result<()> 
                     break;
                 }
             }
-            rsip::message::SipMessage::Response(resp) => {
+            rsip::message::SipMessage::Response(mut resp) => {
+                // pop first Via
+                let mut first_via = true;
+                resp.headers.retain(|h| match h {
+                    rsip::Header::Via(_) => {
+                        if first_via {
+                            first_via = false;
+                            false
+                        } else {
+                            true
+                        }
+                    }
+                    _ => true,
+                });
+                info!("Forwarding response: {:?}", resp);
                 tx.respond(resp).await?;
             }
         }

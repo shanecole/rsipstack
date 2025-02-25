@@ -171,7 +171,7 @@ impl EndpointInner {
             .flatten();
 
         if let Some(last_message) = last_message {
-            connection.send(last_message).await?;
+            connection.send(last_message, None).await?;
             return Ok(());
         }
 
@@ -194,7 +194,7 @@ impl EndpointInner {
 
         if self.incoming_sender.lock().unwrap().is_none() {
             let resp = self.make_response(&request, rsip::StatusCode::ServiceUnavailable, None);
-            connection.send(resp.into()).await?;
+            connection.send(resp.into(), None).await?;
             return Err(Error::TransactionError(
                 "incoming_sender not set".to_string(),
                 key,

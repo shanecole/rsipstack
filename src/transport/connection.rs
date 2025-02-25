@@ -51,11 +51,11 @@ impl SipConnection {
             //Transport::Ws(transport) => transport.get_addr(),
         }
     }
-    pub async fn send(&self, msg: rsip::SipMessage) -> Result<()> {
+    pub async fn send(&self, msg: rsip::SipMessage, destination: Option<&SipAddr>) -> Result<()> {
         match self {
             //Transport::Tcp(transport) => transport.send(msg).await,
             //Transport::Tls(transport) => transport.send(msg).await,
-            SipConnection::Udp(transport) => transport.send(msg).await,
+            SipConnection::Udp(transport) => transport.send(msg, destination).await,
             SipConnection::WsWasm(transport) => transport.send(msg).await,
             SipConnection::Channel(transport) => transport.send(msg).await,
             //Transport::Ws(transport) => transport.send(msg).await,

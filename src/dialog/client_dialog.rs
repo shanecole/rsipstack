@@ -219,7 +219,7 @@ impl ClientInviteDialog {
                     match resp.status_code {
                         StatusCode::OK => {
                             self.inner
-                                .transition(DialogState::Confirmed(dialog_id.clone(), resp))?;
+                                .transition(DialogState::WaitAck(dialog_id.clone(), resp))?;
                         }
                         _ => {
                             info!("received failure response: {}", resp.status_code);

@@ -122,6 +122,7 @@ impl ServerInviteDialog {
         if self.inner.is_confirmed() {
             match tx.original.method {
                 rsip::Method::Invite => {}
+                rsip::Method::Ack => {}
                 rsip::Method::Bye => return self.handle_bye(tx).await,
                 rsip::Method::Info => return self.handle_info(tx).await,
                 _ => {
@@ -177,18 +178,15 @@ impl ServerInviteDialog {
         let handle_loop = async {
             if !self.inner.is_confirmed() {
                 self.inner.transition(DialogState::Calling(self.id()))?;
+                tx.send_trying().await?;
             }
-
-            tx.send_trying().await?;
 
             while let Some(msg) = tx.receive().await {
                 match msg {
                     SipMessage::Request(req) => match req.method {
                         rsip::Method::Ack => {
                             info!("received ack");
-                            let last_response = tx.last_response.clone().unwrap_or_default();
-                            self.inner
-                                .transition(DialogState::Confirmed(self.id(), last_response))?;
+                            self.inner.transition(DialogState::Confirmed(self.id()))?;
                         }
                         rsip::Method::Cancel => {
                             info!("received cancel");

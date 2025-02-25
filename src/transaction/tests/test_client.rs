@@ -36,7 +36,7 @@ async fn test_client_transaction() -> Result<()> {
                                         headers: headers.clone(),
                                         body: Default::default(),
                                     });
-                                    connection.send(response).await.expect("send trying");
+                                    connection.send(response, None).await.expect("send trying");
                                     sleep(Duration::from_millis(100)).await;
 
                                     let response = SipMessage::Response(rsip::message::Response {
@@ -45,7 +45,7 @@ async fn test_client_transaction() -> Result<()> {
                                         headers,
                                         body: Default::default(),
                                     });
-                                    connection.send(response).await.expect("send Ok");
+                                    connection.send(response, None).await.expect("send Ok");
                                     sleep(Duration::from_secs(1)).await;
                                 }
                                 _ => {

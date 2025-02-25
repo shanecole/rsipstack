@@ -2,6 +2,7 @@ use super::endpoint::EndpointInnerRef;
 use super::key::TransactionKey;
 use super::{SipConnection, TransactionState, TransactionTimer, TransactionType};
 use crate::transaction::make_tag;
+use crate::transport::connection::SipAddr;
 use crate::{Error, Result};
 use rsip::prelude::HeadersExt;
 use rsip::{Method, Request, Response, SipMessage, StatusCode};
@@ -21,6 +22,7 @@ pub struct Transaction {
     pub transaction_type: TransactionType,
     pub key: TransactionKey,
     pub original: Request,
+    pub destination: Option<SipAddr>,
     pub state: TransactionState,
     pub endpoint_inner: EndpointInnerRef,
     pub connection: Option<SipConnection>,
@@ -54,6 +56,7 @@ impl Transaction {
             connection,
             key,
             original,
+            destination: None,
             state: TransactionState::Calling,
             last_response: None,
             last_ack: None,
@@ -125,7 +128,9 @@ impl Transaction {
             "no connection found".to_string(),
             self.key.clone(),
         ))?;
-        connection.send(self.original.to_owned().into()).await?;
+        connection
+            .send(self.original.to_owned().into(), self.destination.as_ref())
+            .await?;
         self.transition(TransactionState::Trying).map(|_| ())
     }
 
@@ -190,7 +195,9 @@ impl Transaction {
             self.key.clone(),
         ))?;
         debug!("responding with {}", response);
-        connection.send(response.to_owned().into()).await?;
+        connection
+            .send(response.to_owned().into(), self.destination.as_ref())
+            .await?;
         self.last_response.replace(response);
         self.transition(new_state).map(|_| ())
     }
@@ -249,7 +256,9 @@ impl Transaction {
             }
         }
 
-        connection.send(ack.to_owned().into()).await?;
+        connection
+            .send(ack.to_owned().into(), self.destination.as_ref())
+            .await?;
         self.last_ack.replace(ack);
         // client send ack and transition to Terminated
         self.transition(TransactionState::Terminated).map(|_| ())
@@ -330,7 +339,10 @@ impl Transaction {
                         let resp = self
                             .endpoint_inner
                             .make_response(&req, StatusCode::OK, None);
-                        connection.send(resp.into()).await.ok();
+                        connection
+                            .send(resp.into(), self.destination.as_ref())
+                            .await
+                            .ok();
                     }
                     return Some(req.into()); // into dialog
                 }
@@ -341,7 +353,10 @@ impl Transaction {
                             StatusCode::CallTransactionDoesNotExist,
                             None,
                         );
-                        connection.send(resp.into()).await.ok();
+                        connection
+                            .send(resp.into(), self.destination.as_ref())
+                            .await
+                            .ok();
                     }
                 }
             };
@@ -410,7 +425,9 @@ impl Transaction {
                     if let TransactionTimer::TimerA(key, duration) = timer {
                         // Resend the INVITE request
                         if let Some(connection) = &self.connection {
-                            connection.send(self.original.to_owned().into()).await?;
+                            connection
+                                .send(self.original.to_owned().into(), self.destination.as_ref())
+                                .await?;
                         }
                         // Restart Timer A with an upper limit
                         let duration = (duration * 2).min(self.endpoint_inner.t1x64);
@@ -446,7 +463,9 @@ impl Transaction {
                     // resend the response
                     if let Some(last_response) = &self.last_response {
                         if let Some(connection) = &self.connection {
-                            connection.send(last_response.to_owned().into()).await?;
+                            connection
+                                .send(last_response.to_owned().into(), self.destination.as_ref())
+                                .await?;
                         }
                     }
                     // restart Timer G with an upper limit
