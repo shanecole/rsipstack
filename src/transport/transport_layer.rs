@@ -84,15 +84,22 @@ impl TransportLayerInner {
                     TokioAsyncResolver::tokio(Default::default(), Default::default()).unwrap(),
                 ),
                 rsip_dns::SupportedTransports::any(),
-            ).unwrap();
+            )?;
 
             let mut lookup = rsip_dns::Lookup::from(context);
-
-            let target = lookup
-                .resolve_next()
-                .await
-                .expect("next Target in dns lookup");
-            &SipAddr { r#type: Some(target.transport),  addr: HostWithPort::from(SocketAddr::new(target.ip_addr, u16::from(target.port))) }
+            match lookup.resolve_next().await {
+                Some(target) => {
+                    &SipAddr {
+                        r#type: Some(target.transport),
+                        addr: HostWithPort::from(SocketAddr::new(target.ip_addr, u16::from(target.port)))
+                    }
+                },
+                None => {
+                    return Err(crate::Error::DnsResolutionError(
+                        format!("DNS resolution error: {}", uri)
+                    ))
+                }
+            }
         };
 
         info!("lookup target: {} -> {}", uri, target);
