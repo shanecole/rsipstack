@@ -6,5 +6,6 @@ pub mod error;
 pub mod transaction;
 pub mod transport;
 pub use transaction::EndpointBuilder;
+pub mod rsip_ext;
 
 const USER_AGENT: &str = "rsipstack/0.1";

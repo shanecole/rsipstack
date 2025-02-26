@@ -195,13 +195,13 @@ impl ClientInviteDialog {
                     self.inner.update_remote_tag(tag.value())?;
 
                     let branch = match resp.status_code.kind() {
-                        StatusCodeKind::Successful => None,
-                        _ => resp
+                        StatusCodeKind::Successful => resp
                             .via_header()?
                             .params()?
                             .iter()
                             .find(|p| matches!(p, rsip::Param::Branch(_)))
                             .map(|p| p.clone()),
+                        _ => None,
                     };
 
                     let ack = self.inner.make_request(

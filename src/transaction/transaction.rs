@@ -230,6 +230,34 @@ impl Transaction {
             }
         }
     }
+    #[instrument(skip(self, cancel))]
+    pub async fn send_cancel(&mut self, cancel: Request) -> Result<()> {
+        let span = self.span.clone();
+        let _enter = span.or_current();
+        if self.transaction_type != TransactionType::ClientInvite {
+            return Err(Error::TransactionError(
+                "send_cancel is only valid for client invite transactions".to_string(),
+                self.key.clone(),
+            ));
+        }
+
+        match self.state {
+            TransactionState::Calling | TransactionState::Trying | TransactionState::Proceeding => {
+                if let Some(connection) = &self.connection {
+                    connection
+                        .send(cancel.to_owned().into(), self.destination.as_ref())
+                        .await?;
+                }
+                self.transition(TransactionState::Terminated).map(|_| ())
+            }
+            _ => {
+                return Err(Error::TransactionError(
+                    format!("invalid state for sending CANCEL {:?}", self.state),
+                    self.key.clone(),
+                ));
+            }
+        }
+    }
     #[instrument(skip(self, ack))]
     pub async fn send_ack(&mut self, ack: Request) -> Result<()> {
         let span = self.span.clone();

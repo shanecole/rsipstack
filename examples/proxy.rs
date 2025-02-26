@@ -1,16 +1,14 @@
 use clap::Parser;
 use get_if_addrs::get_if_addrs;
-use rsip::prelude::{HeadersExt, ToTypedHeader};
-use rsip::Request;
+use rsip::prelude::{HasHeaders, HeadersExt, ToTypedHeader};
+use rsipstack::rsip_ext::RsipHeadersExt;
 use rsipstack::transaction::key::{TransactionKey, TransactionRole};
 use rsipstack::transaction::transaction::Transaction;
 use rsipstack::transaction::TransactionReceiver;
 use rsipstack::transport::connection::SipAddr;
 use rsipstack::transport::udp::UdpConnection;
-use rsipstack::transport::SipConnection;
+use rsipstack::{header_pop, Error, Result};
 use rsipstack::{transport::TransportLayer, EndpointBuilder};
-use rsipstack::{Error, Result};
-use serde::de;
 use std::collections::HashMap;
 use std::env;
 use std::sync::{Arc, Mutex};
@@ -116,7 +114,13 @@ async fn process_incoming_request(mut incoming: TransactionReceiver) -> Result<(
         info!("Received transaction: {:?}", tx.key);
         let state = state.clone();
         match tx.original.method {
-            rsip::Method::Invite | rsip::Method::Ack => {
+            rsip::Method::Invite => {
+                tokio::spawn(async move {
+                    handle_invite(state, tx).await?;
+                    Ok::<_, Error>(())
+                });
+            }
+            rsip::Method::Ack | rsip::Method::Cancel => {
                 tokio::spawn(async move {
                     handle_invite(state, tx).await?;
                     Ok::<_, Error>(())
@@ -203,9 +207,7 @@ async fn handle_invite(state: Arc<AppState>, mut tx: Transaction) -> Result<()> 
 
     let mut inv_req = tx.original.clone();
     let via = tx.endpoint_inner.get_via(None)?;
-    let mut headers = vec![rsip::Header::Via(via.into())];
-    headers.extend(inv_req.headers.clone());
-    inv_req.headers = headers.into();
+    inv_req.headers.push_front(via.into());
 
     let key = TransactionKey::from_request(&inv_req, TransactionRole::Client)
         .expect("client_transaction");
@@ -218,29 +220,41 @@ async fn handle_invite(state: Arc<AppState>, mut tx: Transaction) -> Result<()> 
     // add Via
     inv_tx.send().await?;
 
-    while let Some(msg) = inv_tx.receive().await {
-        match msg {
-            rsip::message::SipMessage::Request(req) => {
-                if req.method == rsip::Method::Ack {
-                    break;
+    loop {
+        if inv_tx.is_terminated() {
+            break;
+        }
+        select! {
+            msg = inv_tx.receive() => {
+                info!("UAC Received message: {:?}", msg);
+                if let Some(msg) = msg {
+                    match msg {
+                        rsip::message::SipMessage::Response(mut resp) => {
+                            // pop first Via
+                            header_pop!(resp.headers, rsip::Header::Via);
+                            info!("UAC Forwarding response: {:?}", resp);
+                            tx.respond(resp).await?;
+                        }
+                        _ => {}
+                    }
                 }
             }
-            rsip::message::SipMessage::Response(mut resp) => {
-                // pop first Via
-                let mut first_via = true;
-                resp.headers.retain(|h| match h {
-                    rsip::Header::Via(_) => {
-                        if first_via {
-                            first_via = false;
-                            false
-                        } else {
-                            true
-                        }
+            msg = tx.receive() => {
+                info!("UAS Received message: {:?}", msg);
+                if let Some(msg) = msg {
+                    match msg {
+                        rsip::message::SipMessage::Request(req) => match req.method {
+                            rsip::Method::Ack => {
+                                inv_tx.send_ack(req).await?;
+                            }
+                            rsip::Method::Cancel => {
+                                inv_tx.send_cancel(req).await?;
+                            }
+                            _ => {}
+                        },
+                        rsip::message::SipMessage::Response(resp) => {}
                     }
-                    _ => true,
-                });
-                info!("Forwarding response: {:?}", resp);
-                tx.respond(resp).await?;
+                }
             }
         }
     }
@@ -248,5 +262,43 @@ async fn handle_invite(state: Arc<AppState>, mut tx: Transaction) -> Result<()> 
 }
 
 async fn handle_bye(state: Arc<AppState>, mut tx: Transaction) -> Result<()> {
+    let caller = tx.original.from_header()?.uri()?.to_string();
+    let callee = tx.original.to_header()?.uri()?.to_string();
+    let target = state.users.lock().unwrap().get(&callee).cloned();
+    let target = match target {
+        Some(u) => u,
+        None => {
+            return tx.reply(rsip::StatusCode::NotFound).await;
+        }
+    };
+
+    let mut inv_req = tx.original.clone();
+    let via = tx.endpoint_inner.get_via(None)?;
+    inv_req.headers.push_front(via.into());
+
+    let key = TransactionKey::from_request(&inv_req, TransactionRole::Client)
+        .expect("client_transaction");
+
+    info!("Forwarding INVITE to: {} -> {}", caller, target.destination);
+
+    let mut bye_tx = Transaction::new_client(key, inv_req, tx.endpoint_inner.clone(), None);
+    bye_tx.destination = Some(target.destination);
+
+    // add Via
+    bye_tx.send().await?;
+
+    while let Some(msg) = bye_tx.receive().await {
+        info!("UAC/BYE Received message: {:?}", msg);
+        match msg {
+            rsip::message::SipMessage::Response(mut resp) => {
+                // pop first Via
+                header_pop!(resp.headers, rsip::Header::Via);
+                info!("UAC/BYE Forwarding response: {:?}", resp);
+                tx.respond(resp).await?;
+            }
+            _ => {}
+        }
+    }
+
     Ok(())
 }
