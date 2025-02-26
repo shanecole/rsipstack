@@ -155,7 +155,10 @@ impl TransportLayerInner {
 }
 #[cfg(test)]
 mod tests {
+    use rsip::Transport;
+    use rsip_dns::Target;
     use crate::{transport::udp::UdpConnection, Result};
+    use rsip_dns::{trust_dns_resolver::TokioAsyncResolver, ResolvableExt};
     #[tokio::test]
     async fn test_lookup() -> Result<()> {
         let mut tl = super::TransportLayer::new(tokio_util::sync::CancellationToken::new());
@@ -178,6 +181,36 @@ mod tests {
         // must return the outbound transport
         let target = tl.lookup(&first_uri).await?;
         assert_eq!(target.get_addr(), &outbound);
+        Ok(())
+    }
+    #[tokio::test]
+    async fn test_rsip_dns_lookup() -> Result<()> {
+        let check_list  = vec![
+           ("sip:bob@127.0.0.1:5061;transport=udp", ("bob", "127.0.0.1", 5061, Transport::Udp)),
+           ("sip:bob@127.0.0.1:5062;transport=tcp", ("bob", "127.0.0.1", 5062, Transport::Tcp)),
+           ("sip:bob@localhost:5063;transport=tls", ("bob", "127.0.0.1", 5063, Transport::Tls)),
+           ("sip:bob@localhost:5064;transport=TLS-SCTP", ("bob", "127.0.0.1", 5064, Transport::TlsSctp)),
+           ("sip:bob@localhost:5065;transport=sctp", ("bob", "127.0.0.1", 5065, Transport::Sctp)),
+           ("sip:bob@localhost:5066;transport=ws", ("bob", "127.0.0.1", 5066, Transport::Ws)),
+           ("sip:bob@localhost:5067;transport=wss", ("bob", "127.0.0.1", 5067, Transport::Wss)),
+        ];
+        for item in check_list {
+            let uri = rsip::uri::Uri::try_from(item.0)?;
+            let context = rsip_dns::Context::initialize_from(
+                uri.clone(),
+                rsip_dns::AsyncTrustDnsClient::new(
+                    TokioAsyncResolver::tokio(Default::default(), Default::default()).unwrap(),
+                ),
+                rsip_dns::SupportedTransports::any(),
+            )?;
+
+            let mut lookup = rsip_dns::Lookup::from(context);
+            let target = lookup.resolve_next().await.unwrap();
+            assert_eq!(uri.user().unwrap(), item.1.0);
+            assert_eq!(target.transport, item.1.3);
+            assert_eq!(target.ip_addr.to_string(), item.1.1);
+           // assert_eq!(target.port, item.1.2.into());
+        }
         Ok(())
     }
 }
