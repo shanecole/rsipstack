@@ -225,7 +225,13 @@ async fn handle_register(state: Arc<AppState>, mut tx: Transaction) -> Result<()
 }
 
 async fn handle_invite(state: Arc<AppState>, mut tx: Transaction) -> Result<()> {
-    let caller = tx.original.from_header()?.uri()?.to_string();
+    let caller = tx
+        .original
+        .from_header()?
+        .uri()?
+        .auth
+        .map(|a| a.user)
+        .unwrap_or_default();
     let callee = tx.original.to_header()?.uri()?.to_string();
     let target = state.users.lock().unwrap().get(&callee).cloned();
     let target = match target {
