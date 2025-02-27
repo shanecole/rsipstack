@@ -1,9 +1,8 @@
 use clap::Parser;
 use get_if_addrs::get_if_addrs;
 use rsip::headers::UntypedHeader;
-use rsip::prelude::{HasHeaders, HeadersExt, ToTypedHeader};
+use rsip::prelude::{HeadersExt, ToTypedHeader};
 use rsipstack::rsip_ext::{extract_uri_from_contact, RsipHeadersExt};
-use rsipstack::transaction::endpoint::EndpointInner;
 use rsipstack::transaction::key::{TransactionKey, TransactionRole};
 use rsipstack::transaction::transaction::Transaction;
 use rsipstack::transaction::TransactionReceiver;
@@ -123,12 +122,6 @@ async fn process_incoming_request(mut incoming: TransactionReceiver) -> Result<(
                     Ok::<_, Error>(())
                 });
             }
-            rsip::Method::Ack | rsip::Method::Cancel => {
-                tokio::spawn(async move {
-                    handle_invite(state, tx).await?;
-                    Ok::<_, Error>(())
-                });
-            }
             rsip::Method::Bye => {
                 tokio::spawn(async move {
                     handle_bye(state, tx).await?;
@@ -194,8 +187,9 @@ async fn handle_register(state: Arc<AppState>, mut tx: Transaction) -> Result<()
             return tx.reply(rsip::StatusCode::BadRequest).await;
         }
     };
+    let contact = rsip::Header::Contact(user.destination.addr.to_string().into());
     state.users.lock().unwrap().insert(user.from.clone(), user);
-    let headers = vec![rsip::Header::Expires(60.into())];
+    let headers = vec![contact, rsip::Header::Expires(60.into())];
     tx.reply_with(rsip::StatusCode::OK, headers, None).await
 }
 
