@@ -15,7 +15,7 @@ use std::env;
 use std::sync::{Arc, Mutex};
 use tokio::select;
 use tokio_util::sync::CancellationToken;
-use tracing::{info, instrument};
+use tracing::info;
 
 /// A SIP client example that sends a REGISTER request to a SIP server.
 #[derive(Parser, Debug)]
@@ -32,7 +32,6 @@ struct Args {
 #[derive(Clone)]
 struct User {
     username: String,
-    from: String,
     destination: SipAddr,
 }
 
@@ -172,7 +171,6 @@ impl TryFrom<&rsip::Request> for User {
 
         Ok(User {
             username,
-            from: req.from_header()?.uri()?.to_string(),
             destination,
         })
     }
@@ -205,8 +203,8 @@ async fn handle_register(state: Arc<AppState>, mut tx: Transaction) -> Result<()
             Ok(v) => {
                 if v == 0 {
                     // remove user
-                    info!("Unregistered user: {} -> {}", user.from, contact);
-                    state.users.lock().unwrap().remove(&user.from);
+                    info!("Unregistered user: {} -> {}", user.username, contact);
+                    state.users.lock().unwrap().remove(&user.username);
                     return tx.reply(rsip::StatusCode::OK).await;
                 }
             }
@@ -215,8 +213,12 @@ async fn handle_register(state: Arc<AppState>, mut tx: Transaction) -> Result<()
         None => {}
     }
 
-    info!("Registered user: {} -> {}", user.from, contact);
-    state.users.lock().unwrap().insert(user.from.clone(), user);
+    info!("Registered user: {} -> {}", user.username, contact);
+    state
+        .users
+        .lock()
+        .unwrap()
+        .insert(user.username.clone(), user);
 
     let headers = vec![contact.into(), rsip::Header::Expires(60.into())];
     tx.reply_with(rsip::StatusCode::OK, headers, None).await
@@ -230,7 +232,20 @@ async fn handle_invite(state: Arc<AppState>, mut tx: Transaction) -> Result<()> 
         Some(u) => u,
         None => {
             info!("User not found: {}", callee);
-            return tx.reply(rsip::StatusCode::NotFound).await;
+            tx.reply(rsip::StatusCode::NotFound).await.ok();
+            // wait for ACK
+            while let Some(msg) = tx.receive().await {
+                match msg {
+                    rsip::message::SipMessage::Request(req) => match req.method {
+                        rsip::Method::Ack => {
+                            break;
+                        }
+                        _ => {}
+                    },
+                    _ => {}
+                }
+            }
+            return Ok(());
         }
     };
 
@@ -281,7 +296,7 @@ async fn handle_invite(state: Arc<AppState>, mut tx: Transaction) -> Result<()> 
                             }
                             _ => {}
                         },
-                        rsip::message::SipMessage::Response(resp) => {}
+                        rsip::message::SipMessage::Response(_) => {}
                     }
                 }
             }
