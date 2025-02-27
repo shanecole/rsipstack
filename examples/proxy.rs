@@ -1,7 +1,9 @@
 use clap::Parser;
 use get_if_addrs::get_if_addrs;
+use rsip::headers::UntypedHeader;
 use rsip::prelude::{HasHeaders, HeadersExt, ToTypedHeader};
-use rsipstack::rsip_ext::RsipHeadersExt;
+use rsipstack::rsip_ext::{extract_uri_from_contact, RsipHeadersExt};
+use rsipstack::transaction::endpoint::EndpointInner;
 use rsipstack::transaction::key::{TransactionKey, TransactionRole};
 use rsipstack::transaction::transaction::Transaction;
 use rsipstack::transaction::TransactionReceiver;
@@ -14,7 +16,8 @@ use std::env;
 use std::sync::{Arc, Mutex};
 use tokio::select;
 use tokio_util::sync::CancellationToken;
-use tracing::info;
+use tracing::{info, instrument};
+
 /// A SIP client example that sends a REGISTER request to a SIP server.
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -147,12 +150,12 @@ async fn process_incoming_request(mut incoming: TransactionReceiver) -> Result<(
 impl TryFrom<&rsip::Request> for User {
     type Error = Error;
     fn try_from(req: &rsip::Request) -> Result<Self> {
-        let contact = req.contact_header()?.clone();
+        let contact = extract_uri_from_contact(req.contact_header()?.value())?;
         let via = req.via_header()?.typed()?;
 
         let mut destination = SipAddr {
             r#type: via.uri.transport().cloned(),
-            addr: contact.uri()?.host_with_port,
+            addr: contact.host_with_port,
         };
 
         via.params.iter().for_each(|param| match param {
@@ -182,10 +185,12 @@ impl TryFrom<&rsip::Request> for User {
     }
 }
 
+#[instrument(skip(state, tx), fields(reg = %tx.original))]
 async fn handle_register(state: Arc<AppState>, mut tx: Transaction) -> Result<()> {
     let user = match User::try_from(&tx.original) {
         Ok(u) => u,
-        Err(_) => {
+        Err(e) => {
+            info!("failed to parse contact: {:?}", e);
             return tx.reply(rsip::StatusCode::BadRequest).await;
         }
     };

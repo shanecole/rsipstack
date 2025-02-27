@@ -1,11 +1,9 @@
-use tokio_util::sync::CancellationToken;
-
+use super::{endpoint::Endpoint, EndpointBuilder};
 use crate::{
     transport::{udp::UdpConnection, TransportLayer},
     Result,
 };
-
-use super::{endpoint::Endpoint, EndpointBuilder};
+use tokio_util::sync::CancellationToken;
 
 mod test_client;
 mod test_endpoint;
@@ -28,7 +26,10 @@ pub(super) async fn create_test_endpoint(addr: Option<&str>) -> Result<Endpoint>
 }
 #[cfg(test)]
 mod tests {
-    use crate::transaction::{endpoint::EndpointInner, make_via_branch, random_text};
+    use crate::{
+        rsip_ext::extract_uri_from_contact,
+        transaction::{make_via_branch, random_text},
+    };
     #[test]
     fn test_random_text() {
         let text = random_text(10);
@@ -41,8 +42,14 @@ mod tests {
     #[test]
     fn test_linphone_contact() {
         let line = "<sip:bob@localhost;transport=udp>;expires=3600;+org.linphone.specs=\"lime\"";
-        let contact_uri =
-            EndpointInner::extract_uri_from_contact(line).expect("failed to parse contact");
+        let contact_uri = extract_uri_from_contact(line).expect("failed to parse contact");
         assert_eq!(contact_uri.to_string(), "sip:bob@localhost;transport=UDP");
+
+        let line = "<sip:jinti@restsend.com;transport=udp>;message-expires=2419200;+sip.instance=\"<urn:uuid:12345-81fa-4fe3-aa6c-17bffdbcf619>\"";
+        let contact_uri = extract_uri_from_contact(line).expect("failed to parse contact");
+        assert_eq!(
+            contact_uri.to_string(),
+            "sip:bob@restsend.com;transport=UDP"
+        );
     }
 }

@@ -5,8 +5,9 @@ use super::{
     DialogId,
 };
 use crate::{
+    rsip_ext::extract_uri_from_contact,
     transaction::{
-        endpoint::{EndpointInner, EndpointInnerRef},
+        endpoint::EndpointInnerRef,
         key::{TransactionKey, TransactionRole},
         transaction::{Transaction, TransactionEventSender},
     },
@@ -95,7 +96,7 @@ impl DialogInner {
         let remote_uri = match role {
             TransactionRole::Client => initial_request.uri.clone(),
             TransactionRole::Server => {
-                EndpointInner::extract_uri_from_contact(initial_request.contact_header()?.value())?
+                extract_uri_from_contact(initial_request.contact_header()?.value())?
             }
         };
 
