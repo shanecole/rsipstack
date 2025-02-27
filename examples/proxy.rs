@@ -15,7 +15,7 @@ use std::env;
 use std::sync::{Arc, Mutex};
 use tokio::select;
 use tokio_util::sync::CancellationToken;
-use tracing::info;
+use tracing::{error, info};
 
 /// A SIP client example that sends a REGISTER request to a SIP server.
 #[derive(Parser, Debug)]
@@ -237,13 +237,14 @@ async fn handle_invite(state: Arc<AppState>, mut tx: Transaction) -> Result<()> 
     let target = match target {
         Some(u) => u,
         None => {
-            info!("User not found: {}", callee);
+            info!("user not found: {}", callee);
             tx.reply(rsip::StatusCode::NotFound).await.ok();
             // wait for ACK
             while let Some(msg) = tx.receive().await {
                 match msg {
                     rsip::message::SipMessage::Request(req) => match req.method {
                         rsip::Method::Ack => {
+                            info!("received no-2xx ACK");
                             break;
                         }
                         _ => {}
@@ -276,7 +277,7 @@ async fn handle_invite(state: Arc<AppState>, mut tx: Transaction) -> Result<()> 
         }
         select! {
             msg = inv_tx.receive() => {
-                info!("UAC Received message: {:?}", msg);
+                info!("UAC Received message: {}", msg.as_ref().map(|m| m.to_string()).unwrap_or_default());
                 if let Some(msg) = msg {
                     match msg {
                         rsip::message::SipMessage::Response(mut resp) => {
@@ -290,7 +291,7 @@ async fn handle_invite(state: Arc<AppState>, mut tx: Transaction) -> Result<()> 
                 }
             }
             msg = tx.receive() => {
-                info!("UAS Received message: {:?}", msg);
+                info!("UAS Received message: {}", msg.as_ref().map(|m| m.to_string()).unwrap_or_default());
                 if let Some(msg) = msg {
                     match msg {
                         rsip::message::SipMessage::Request(req) => match req.method {
@@ -313,11 +314,18 @@ async fn handle_invite(state: Arc<AppState>, mut tx: Transaction) -> Result<()> 
 
 async fn handle_bye(state: Arc<AppState>, mut tx: Transaction) -> Result<()> {
     let caller = tx.original.from_header()?.uri()?.to_string();
-    let callee = tx.original.to_header()?.uri()?.to_string();
+    let callee = tx
+        .original
+        .to_header()?
+        .uri()?
+        .auth
+        .map(|a| a.user)
+        .unwrap_or_default();
     let target = state.users.lock().unwrap().get(&callee).cloned();
-    let target = match target {
+    let peer = match target {
         Some(u) => u,
         None => {
+            info!("bye user not found: {}", callee);
             return tx.reply(rsip::StatusCode::NotFound).await;
         }
     };
@@ -329,24 +337,24 @@ async fn handle_bye(state: Arc<AppState>, mut tx: Transaction) -> Result<()> {
     let key = TransactionKey::from_request(&inv_req, TransactionRole::Client)
         .expect("client_transaction");
 
-    info!("Forwarding INVITE to: {} -> {}", caller, target.destination);
+    info!("Forwarding BYE to: {} -> {}", caller, peer.destination);
 
     let mut bye_tx = Transaction::new_client(key, inv_req, tx.endpoint_inner.clone(), None);
-    bye_tx.destination = Some(target.destination);
+    bye_tx.destination = Some(peer.destination);
 
-    // add Via
     bye_tx.send().await?;
 
     while let Some(msg) = bye_tx.receive().await {
-        info!("UAC/BYE Received message: {:?}", msg);
         match msg {
             rsip::message::SipMessage::Response(mut resp) => {
                 // pop first Via
                 header_pop!(resp.headers, rsip::Header::Via);
-                info!("UAC/BYE Forwarding response: {:?}", resp);
+                info!("UAC/BYE Forwarding response: {}", resp.to_string());
                 tx.respond(resp).await?;
             }
-            _ => {}
+            _ => {
+                error!("UAC/BYE Received request: {}", msg.to_string());
+            }
         }
     }
 
