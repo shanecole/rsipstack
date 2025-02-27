@@ -31,6 +31,7 @@ struct Args {
 }
 #[derive(Clone)]
 struct User {
+    username: String,
     from: String,
     destination: SipAddr,
     alive_at: std::time::Instant,
@@ -169,8 +170,14 @@ impl TryFrom<&rsip::Request> for User {
             }
             _ => {}
         });
-
+        let username = req
+            .from_header()?
+            .uri()?
+            .user()
+            .unwrap_or_default()
+            .to_string();
         Ok(User {
+            username,
             from: req.from_header()?.uri()?.to_string(),
             destination,
             alive_at: std::time::Instant::now(),
@@ -187,9 +194,21 @@ async fn handle_register(state: Arc<AppState>, mut tx: Transaction) -> Result<()
             return tx.reply(rsip::StatusCode::BadRequest).await;
         }
     };
-    let contact = rsip::Header::Contact(user.destination.addr.to_string().into());
+    let contact = rsip::typed::Contact {
+        display_name: None,
+        uri: rsip::Uri {
+            scheme: Some(rsip::Scheme::Sip),
+            auth: Some(rsip::Auth {
+                user: user.username.clone(),
+                password: None,
+            }),
+            host_with_port: user.destination.addr.clone(),
+            ..Default::default()
+        },
+        params: vec![],
+    };
     state.users.lock().unwrap().insert(user.from.clone(), user);
-    let headers = vec![contact, rsip::Header::Expires(60.into())];
+    let headers = vec![contact.into(), rsip::Header::Expires(60.into())];
     tx.reply_with(rsip::StatusCode::OK, headers, None).await
 }
 

@@ -145,7 +145,7 @@ impl UdpConnection {
             None => SipConnection::get_destination(&msg),
         }?;
         let buf = msg.to_string();
-        trace!("send {} -> {} {}", buf.len(), destination, buf);
+        debug!("send {} -> {} {}", buf.len(), destination, buf);
 
         self.inner
             .conn

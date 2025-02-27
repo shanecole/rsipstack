@@ -87,10 +87,17 @@ impl SipConnection {
 
     pub fn build_via_received(via: &mut rsip::headers::Via, addr: SocketAddr) -> Result<()> {
         let received = addr.into();
-        let typed_via = via.typed()?;
+        let mut typed_via = via.typed()?;
         if typed_via.uri.host_with_port == received {
             return Ok(());
         }
+        typed_via.params.retain(|param| {
+            if let Param::Other(key, _) = param {
+                !key.value().eq_ignore_ascii_case("rport")
+            } else {
+                true
+            }
+        });
         *via = typed_via
             .with_param(Param::Received(Received::new(received.host.to_string())))
             .with_param(Param::Other(
@@ -222,6 +229,11 @@ impl From<ChannelConnection> for SipConnection {
     }
 }
 
+impl Into<HostWithPort> for SipAddr {
+    fn into(self) -> HostWithPort {
+        self.addr
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::SipConnection;
