@@ -34,17 +34,10 @@ struct User {
     username: String,
     from: String,
     destination: SipAddr,
-    alive_at: std::time::Instant,
-}
-
-struct Session {
-    caller: String,
-    calee: String,
 }
 
 struct AppState {
     users: Mutex<HashMap<String, User>>,
-    sessions: Mutex<HashMap<String, Session>>,
 }
 
 #[tokio::main]
@@ -111,7 +104,6 @@ async fn main() -> Result<()> {
 async fn process_incoming_request(mut incoming: TransactionReceiver) -> Result<()> {
     let state = Arc::new(AppState {
         users: Mutex::new(HashMap::new()),
-        sessions: Mutex::new(HashMap::new()),
     });
     while let Some(mut tx) = incoming.recv().await {
         info!("Received transaction: {:?}", tx.key);
@@ -170,22 +162,22 @@ impl TryFrom<&rsip::Request> for User {
             }
             _ => {}
         });
+
         let username = req
             .from_header()?
             .uri()?
             .user()
             .unwrap_or_default()
             .to_string();
+
         Ok(User {
             username,
             from: req.from_header()?.uri()?.to_string(),
             destination,
-            alive_at: std::time::Instant::now(),
         })
     }
 }
 
-#[instrument(skip(state, tx), fields(reg = %tx.original))]
 async fn handle_register(state: Arc<AppState>, mut tx: Transaction) -> Result<()> {
     let user = match User::try_from(&tx.original) {
         Ok(u) => u,
@@ -194,6 +186,7 @@ async fn handle_register(state: Arc<AppState>, mut tx: Transaction) -> Result<()
             return tx.reply(rsip::StatusCode::BadRequest).await;
         }
     };
+
     let contact = rsip::typed::Contact {
         display_name: None,
         uri: rsip::Uri {
@@ -207,7 +200,24 @@ async fn handle_register(state: Arc<AppState>, mut tx: Transaction) -> Result<()
         },
         params: vec![],
     };
+    match tx.original.expires_header() {
+        Some(expires) => match expires.value().parse::<u32>() {
+            Ok(v) => {
+                if v == 0 {
+                    // remove user
+                    info!("Unregistered user: {} -> {}", user.from, contact);
+                    state.users.lock().unwrap().remove(&user.from);
+                    return tx.reply(rsip::StatusCode::OK).await;
+                }
+            }
+            Err(_) => {}
+        },
+        None => {}
+    }
+
+    info!("Registered user: {} -> {}", user.from, contact);
     state.users.lock().unwrap().insert(user.from.clone(), user);
+
     let headers = vec![contact.into(), rsip::Header::Expires(60.into())];
     tx.reply_with(rsip::StatusCode::OK, headers, None).await
 }
@@ -219,6 +229,7 @@ async fn handle_invite(state: Arc<AppState>, mut tx: Transaction) -> Result<()> 
     let target = match target {
         Some(u) => u,
         None => {
+            info!("User not found: {}", callee);
             return tx.reply(rsip::StatusCode::NotFound).await;
         }
     };
