@@ -174,6 +174,7 @@ impl Hash for SipAddr {
         self.addr.port.map(|port| port.value().hash(state));
     }
 }
+
 impl SipAddr {
     pub fn new(transport: rsip::transport::Transport, addr: HostWithPort) -> Self {
         SipAddr {
@@ -234,6 +235,22 @@ impl Into<HostWithPort> for SipAddr {
         self.addr
     }
 }
+impl Into<rsip::Uri> for SipAddr {
+    fn into(self) -> rsip::Uri {
+        let scheme = match self.r#type {
+            Some(rsip::transport::Transport::Wss) | Some(rsip::transport::Transport::Tls) => {
+                rsip::Scheme::Sips
+            }
+            _ => rsip::Scheme::Sip,
+        };
+        rsip::Uri {
+            scheme: Some(scheme),
+            host_with_port: self.addr,
+            ..Default::default()
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::SipConnection;

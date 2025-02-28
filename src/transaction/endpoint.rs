@@ -252,6 +252,19 @@ impl EndpointInner {
         self.transport_layer.get_addrs()
     }
 
+    pub fn get_record_route(&self) -> Result<rsip::typed::RecordRoute> {
+        let first_addr = self
+            .transport_layer
+            .get_addrs()
+            .first()
+            .ok_or(Error::EndpointError("not sipaddrs".to_string()))
+            .cloned()?;
+        let rr = rsip::UriWithParamsList(vec![rsip::UriWithParams {
+            uri: first_addr.into(),
+            params: vec![rsip::Param::Other("lr".into(), None)].into(),
+        }]);
+        Ok(rr.into())
+    }
     pub fn get_via(&self, branch: Option<rsip::Param>) -> Result<rsip::typed::Via> {
         let first_addr = self
             .transport_layer

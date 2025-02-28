@@ -109,11 +109,12 @@ impl ServerInviteDialog {
         let cseq = tx.original.cseq_header()?.seq()?;
         if cseq < self.inner.remote_seq.load(Ordering::Relaxed) {
             info!(
-                "received old request remote_seq: {} > {}",
+                "received old request {} remote_seq: {} > {}",
+                tx.original.method(),
                 self.inner.remote_seq.load(Ordering::Relaxed),
                 cseq
             );
-            tx.reply(rsip::StatusCode::ServerInternalError).await?;
+            // discard old request
             return Ok(());
         }
 

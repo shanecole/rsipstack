@@ -273,9 +273,8 @@ async fn process_registration(
     let mut registration = Registration::new(endpoint, Some(credential));
     loop {
         let resp = registration.register(&sip_server).await?;
-        debug!("received response: {:?}", resp);
+        debug!("received response: {}", resp.to_string());
         if resp.status_code != rsip::StatusCode::OK {
-            info!("Failed to register: {:?}", resp);
             return Err(rsipstack::Error::Error("Failed to register".to_string()));
         }
         sleep(Duration::from_secs(registration.expires().max(50) as u64)).await;

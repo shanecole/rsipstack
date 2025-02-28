@@ -2,6 +2,7 @@ use clap::Parser;
 use get_if_addrs::get_if_addrs;
 use rsip::headers::UntypedHeader;
 use rsip::prelude::{HeadersExt, ToTypedHeader};
+use rsipstack::dialog::{self, DialogId};
 use rsipstack::rsip_ext::{extract_uri_from_contact, RsipHeadersExt};
 use rsipstack::transaction::key::{TransactionKey, TransactionRole};
 use rsipstack::transaction::transaction::Transaction;
@@ -10,9 +11,9 @@ use rsipstack::transport::connection::SipAddr;
 use rsipstack::transport::udp::UdpConnection;
 use rsipstack::{header_pop, Error, Result};
 use rsipstack::{transport::TransportLayer, EndpointBuilder};
-use std::collections::HashMap;
-use std::env;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
+use std::{env, vec};
 use tokio::select;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
@@ -37,6 +38,7 @@ struct User {
 
 struct AppState {
     users: Mutex<HashMap<String, User>>,
+    sessions: Mutex<HashSet<DialogId>>,
 }
 
 #[tokio::main]
@@ -103,6 +105,7 @@ async fn main() -> Result<()> {
 async fn process_incoming_request(mut incoming: TransactionReceiver) -> Result<()> {
     let state = Arc::new(AppState {
         users: Mutex::new(HashMap::new()),
+        sessions: Mutex::new(HashSet::new()),
     });
     while let Some(mut tx) = incoming.recv().await {
         info!("Received transaction: {:?}", tx.key);
@@ -123,8 +126,42 @@ async fn process_incoming_request(mut incoming: TransactionReceiver) -> Result<(
             rsip::Method::Register => {
                 handle_register(state, tx).await?;
             }
+            rsip::Method::Ack => {
+                info!("received out of transaction ack: {:?}", tx.original.method);
+                let dialog_id = DialogId::try_from(&tx.original)?;
+                if !state.sessions.lock().unwrap().contains(&dialog_id) {
+                    tx.reply(rsip::StatusCode::NotAcceptable).await?;
+                    continue;
+                }
+                // forward ACK
+                let callee = tx
+                    .original
+                    .to_header()?
+                    .uri()?
+                    .auth
+                    .map(|a| a.user)
+                    .unwrap_or_default();
+                let target = state.users.lock().unwrap().get(&callee).cloned();
+                let target = match target {
+                    Some(u) => u,
+                    None => {
+                        info!("ack user not found: {}", callee);
+                        tx.reply(rsip::StatusCode::NotAcceptable).await?;
+                        continue;
+                    }
+                };
+                // send to target
+                let mut ack_req = tx.original.clone();
+                let via = tx.endpoint_inner.get_via(None)?;
+                ack_req.headers.push_front(via.into());
+                let key = TransactionKey::from_request(&ack_req, TransactionRole::Client)
+                    .expect("client_transaction");
+                let mut ack_tx =
+                    Transaction::new_client(key, ack_req, tx.endpoint_inner.clone(), None);
+                ack_tx.destination = Some(target.destination);
+                ack_tx.send().await?;
+            }
             _ => {
-                info!("Received request: {:?}", tx.original.method);
                 tx.reply(rsip::StatusCode::NotAcceptable).await?;
             }
         }
@@ -203,7 +240,7 @@ async fn handle_register(state: Arc<AppState>, mut tx: Transaction) -> Result<()
             Ok(v) => {
                 if v == 0 {
                     // remove user
-                    info!("Unregistered user: {} -> {}", user.username, contact);
+                    info!("unregistered user: {} -> {}", user.username, contact);
                     state.users.lock().unwrap().remove(&user.username);
                     return tx.reply(rsip::StatusCode::OK).await;
                 }
@@ -234,11 +271,16 @@ async fn handle_invite(state: Arc<AppState>, mut tx: Transaction) -> Result<()> 
         .map(|a| a.user)
         .unwrap_or_default();
     let target = state.users.lock().unwrap().get(&callee).cloned();
+
+    let record_route = tx.endpoint_inner.get_record_route()?;
+
     let target = match target {
         Some(u) => u,
         None => {
             info!("user not found: {}", callee);
-            tx.reply(rsip::StatusCode::NotFound).await.ok();
+            tx.reply_with(rsip::StatusCode::NotFound, vec![record_route.into()], None)
+                .await
+                .ok();
             // wait for ACK
             while let Some(msg) = tx.receive().await {
                 match msg {
@@ -283,7 +325,12 @@ async fn handle_invite(state: Arc<AppState>, mut tx: Transaction) -> Result<()> 
                         rsip::message::SipMessage::Response(mut resp) => {
                             // pop first Via
                             header_pop!(resp.headers, rsip::Header::Via);
-                            info!("UAC Forwarding response: {:?}", resp);
+                            resp.headers.push_front(record_route.clone().into());
+                            if resp.status_code.kind() == rsip::StatusCodeKind::Successful {
+                                let dialog_id = DialogId::try_from(&resp)?;
+                                info!("add session: {}", dialog_id);
+                                state.sessions.lock().unwrap().insert(dialog_id);
+                            }
                             tx.respond(resp).await?;
                         }
                         _ => {}
@@ -343,6 +390,11 @@ async fn handle_bye(state: Arc<AppState>, mut tx: Transaction) -> Result<()> {
     bye_tx.destination = Some(peer.destination);
 
     bye_tx.send().await?;
+
+    let dialog_id = DialogId::try_from(&bye_tx.original)?;
+    if state.sessions.lock().unwrap().remove(&dialog_id) {
+        info!("removed session: {}", dialog_id);
+    }
 
     while let Some(msg) = bye_tx.receive().await {
         match msg {
