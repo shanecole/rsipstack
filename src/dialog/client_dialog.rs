@@ -30,7 +30,7 @@ impl ClientInviteDialog {
         let request = self
             .inner
             .make_request(rsip::Method::Bye, None, None, None, None)?;
-        let resp = self.inner.do_request(&request).await?;
+        let resp = self.inner.do_request(request).await?;
         self.inner.transition(DialogState::Terminated(
             self.id(),
             resp.map(|r| r.status_code),
@@ -45,7 +45,7 @@ impl ClientInviteDialog {
             .cseq_header_mut()?
             .mut_seq(self.inner.get_local_seq())?;
         cancel_request.body = vec![];
-        self.inner.do_request(&cancel_request).await?;
+        self.inner.do_request(cancel_request).await?;
         Ok(())
     }
 
@@ -64,7 +64,7 @@ impl ClientInviteDialog {
         let request = self
             .inner
             .make_request(rsip::Method::Info, None, None, None, None)?;
-        self.inner.do_request(&request).await?;
+        self.inner.do_request(request.clone()).await?;
         self.inner
             .transition(DialogState::Info(self.id(), request))?;
         Ok(())

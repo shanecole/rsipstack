@@ -71,7 +71,7 @@ impl ServerInviteDialog {
         let request = self
             .inner
             .make_request(rsip::Method::Bye, None, None, None, None)?;
-        let resp = self.inner.do_request(&request).await?;
+        let resp = self.inner.do_request(request).await?;
         self.inner.transition(DialogState::Terminated(
             self.id(),
             resp.map(|r| r.status_code),
@@ -92,7 +92,7 @@ impl ServerInviteDialog {
         let request = self
             .inner
             .make_request(rsip::Method::Info, None, None, None, None)?;
-        self.inner.do_request(&request).await?;
+        self.inner.do_request(request).await?;
         Ok(())
     }
 

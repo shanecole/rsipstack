@@ -218,6 +218,18 @@ impl From<rsip::host_with_port::HostWithPort> for SipAddr {
     }
 }
 
+impl TryFrom<&str> for SipAddr {
+    type Error = crate::Error;
+
+    fn try_from(addr: &str) -> Result<Self> {
+        let host_with_port = rsip::HostWithPort::try_from(addr)?;
+        Ok(SipAddr {
+            r#type: None,
+            addr: host_with_port,
+        })
+    }
+}
+
 impl From<UdpConnection> for SipConnection {
     fn from(connection: UdpConnection) -> Self {
         SipConnection::Udp(connection)

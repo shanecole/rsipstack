@@ -45,7 +45,7 @@ mod tests {
         let contact_uri = extract_uri_from_contact(line).expect("failed to parse contact");
         assert_eq!(contact_uri.to_string(), "sip:bob@localhost;transport=UDP");
 
-        let line = "<sip:jinti@restsend.com;transport=udp>;message-expires=2419200;+sip.instance=\"<urn:uuid:12345-81fa-4fe3-aa6c-17bffdbcf619>\"";
+        let line = "<sip:bob@restsend.com;transport=udp>;message-expires=2419200;+sip.instance=\"<urn:uuid:12345-81fa-4fe3-aa6c-17bffdbcf619>\"";
         let contact_uri = extract_uri_from_contact(line).expect("failed to parse contact");
         assert_eq!(
             contact_uri.to_string(),

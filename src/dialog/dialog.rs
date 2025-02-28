@@ -5,6 +5,7 @@ use super::{
     DialogId,
 };
 use crate::{
+    header_pop,
     rsip_ext::extract_uri_from_contact,
     transaction::{
         endpoint::EndpointInnerRef,
@@ -110,7 +111,17 @@ impl DialogInner {
             TransactionRole::Client => (from.to_string(), to.to_string()),
             TransactionRole::Server => (to.to_string(), from.to_string()),
         };
-
+        let route_set = initial_request
+            .headers
+            .iter()
+            .filter_map(|header| {
+                if let Header::RecordRoute(rr) = header {
+                    Some(Route::from(rr.value()))
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
         Ok(Self {
             role,
             cancel_token: CancellationToken::new(),
@@ -121,7 +132,7 @@ impl DialogInner {
             remote_uri,
             remote_seq: AtomicU32::new(cseq),
             credential,
-            route_set: vec![],
+            route_set,
             endpoint_inner,
             state_sender,
             tu_sender: Mutex::new(None),
@@ -277,10 +288,18 @@ impl DialogInner {
         }
     }
 
-    pub(super) async fn do_request(&self, request: &Request) -> Result<Option<rsip::Response>> {
-        let key = TransactionKey::from_request(request, TransactionRole::Client)?;
-        let mut tx =
-            Transaction::new_client(key, request.clone(), self.endpoint_inner.clone(), None);
+    pub(super) async fn do_request(&self, mut request: Request) -> Result<Option<rsip::Response>> {
+        let method = request.method().to_owned();
+        let destination = request
+            .route_header()
+            .map(|r| r.value().try_into().ok())
+            .flatten();
+        header_pop!(request.headers, Header::Route);
+
+        let key = TransactionKey::from_request(&request, TransactionRole::Client)?;
+        let mut tx = Transaction::new_client(key, request, self.endpoint_inner.clone(), None);
+        tx.destination = destination;
+
         tx.send().await?;
         let mut auth_sent = false;
 
@@ -303,7 +322,7 @@ impl DialogInner {
                         }
                         auth_sent = true;
                         if let Some(cred) = &self.credential {
-                            let new_seq = match request.method {
+                            let new_seq = match method {
                                 rsip::Method::Cancel => self.get_local_seq(),
                                 _ => self.increment_local_seq(),
                             };
