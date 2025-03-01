@@ -1,6 +1,6 @@
 use super::{
-    connection::{SipAddr, TransportReceiver, TransportSender},
-    SipConnection,
+    connection::{TransportReceiver, TransportSender},
+    SipAddr, SipConnection,
 };
 use crate::Result;
 use std::sync::{Arc, Mutex};

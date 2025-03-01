@@ -1,12 +1,11 @@
-use super::{channel::ChannelConnection, udp::UdpConnection, ws_wasm::WsWasmConnection};
+use super::{channel::ChannelConnection, udp::UdpConnection, SipAddr};
 use crate::Result;
 use rsip::{
-    host_with_port,
     param::{OtherParam, OtherParamValue, Received},
     prelude::{HeadersExt, ToTypedHeader},
     HostWithPort, Param, SipMessage,
 };
-use std::{fmt, hash::Hash, net::SocketAddr};
+use std::{fmt, net::SocketAddr};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 #[derive(Clone)]
@@ -14,11 +13,6 @@ pub enum TransportEvent {
     Incoming(SipMessage, SipConnection, SipAddr),
     New(SipConnection),
     Closed(SipConnection),
-}
-#[derive(Debug, Eq, PartialEq, Clone)]
-pub struct SipAddr {
-    pub r#type: Option<rsip::transport::Transport>,
-    pub addr: HostWithPort,
 }
 
 pub type TransportReceiver = UnboundedReceiver<TransportEvent>;
@@ -30,7 +24,6 @@ pub const KEEPALIVE_RESPONSE: &[u8] = b"\r\n";
 #[derive(Clone, Debug)]
 pub enum SipConnection {
     Udp(UdpConnection),
-    WsWasm(WsWasmConnection),
     Channel(ChannelConnection),
 }
 
@@ -43,32 +36,20 @@ impl SipConnection {
     }
     pub fn get_addr(&self) -> &SipAddr {
         match self {
-            //Transport::Tcp(transport) => transport.get_addr(),
-            //Transport::Tls(transport) => transport.get_addr(),
             SipConnection::Udp(transport) => transport.get_addr(),
-            SipConnection::WsWasm(transport) => transport.get_addr(),
             SipConnection::Channel(transport) => transport.get_addr(),
-            //Transport::Ws(transport) => transport.get_addr(),
         }
     }
     pub async fn send(&self, msg: rsip::SipMessage, destination: Option<&SipAddr>) -> Result<()> {
         match self {
-            //Transport::Tcp(transport) => transport.send(msg).await,
-            //Transport::Tls(transport) => transport.send(msg).await,
             SipConnection::Udp(transport) => transport.send(msg, destination).await,
-            SipConnection::WsWasm(transport) => transport.send(msg).await,
             SipConnection::Channel(transport) => transport.send(msg).await,
-            //Transport::Ws(transport) => transport.send(msg).await,
         }
     }
     pub async fn serve_loop(&self, sender: TransportSender) -> Result<()> {
         match self {
-            //Transport::Tcp(transport) => transport.server_loop(sender).await,
-            //Transport::Tls(transport) => transport.server_loop(sender).await,
             SipConnection::Udp(transport) => transport.serve_loop(sender).await,
-            SipConnection::WsWasm(transport) => transport.serve_loop(sender).await,
             SipConnection::Channel(transport) => transport.serve_loop(sender).await,
-            //Transport::Ws(transport) => transport.server_loop(sender).await,
         }
     }
 }
@@ -108,7 +89,7 @@ impl SipConnection {
         Ok(())
     }
 
-    fn parse_target_from_via(via: &rsip::headers::untyped::Via) -> Result<HostWithPort> {
+    pub fn parse_target_from_via(via: &rsip::headers::untyped::Via) -> Result<HostWithPort> {
         let mut host_with_port = via.uri()?.host_with_port;
         if let Ok(params) = via.params().as_ref() {
             for param in params {
@@ -142,93 +123,12 @@ impl SipConnection {
 impl fmt::Display for SipConnection {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            //Transport::Tcp(_) => write!(f, "TCP"),
-            //Transport::Tls(_) => write!(f, "TLS"),
             SipConnection::Udp(t) => write!(f, "UDP {}", t),
-            SipConnection::WsWasm(t) => write!(f, "WS-WASM {}", t),
             SipConnection::Channel(t) => write!(f, "CHANNEL {}", t),
-            //Transport::Ws(_) => write!(f, "WS"),
         }
     }
 }
 
-impl fmt::Display for SipAddr {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            SipAddr {
-                r#type: Some(r#type),
-                addr,
-            } => write!(f, "{} {}", r#type, addr),
-            SipAddr { r#type: None, addr } => write!(f, "{}", addr),
-        }
-    }
-}
-
-impl Hash for SipAddr {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.r#type.hash(state);
-        match self.addr.host {
-            host_with_port::Host::Domain(ref domain) => domain.hash(state),
-            host_with_port::Host::IpAddr(ref ip_addr) => ip_addr.hash(state),
-        }
-        self.addr.port.map(|port| port.value().hash(state));
-    }
-}
-
-impl SipAddr {
-    pub fn new(transport: rsip::transport::Transport, addr: HostWithPort) -> Self {
-        SipAddr {
-            r#type: Some(transport),
-            addr,
-        }
-    }
-
-    pub fn get_socketaddr(&self) -> Result<SocketAddr> {
-        match &self.addr.host {
-            host_with_port::Host::Domain(domain) => Err(crate::Error::Error(format!(
-                "Cannot convert domain {} to SocketAddr",
-                domain
-            ))),
-            host_with_port::Host::IpAddr(ip_addr) => {
-                let port = self.addr.port.map_or(5060, |p| p.value().to_owned());
-                Ok(SocketAddr::new(ip_addr.to_owned(), port))
-            }
-        }
-    }
-}
-impl From<SocketAddr> for SipAddr {
-    fn from(addr: SocketAddr) -> Self {
-        let host_with_port = HostWithPort {
-            host: addr.ip().into(),
-            port: Some(addr.port().into()),
-        };
-        SipAddr {
-            r#type: None,
-            addr: host_with_port,
-        }
-    }
-}
-
-impl From<rsip::host_with_port::HostWithPort> for SipAddr {
-    fn from(host_with_port: rsip::host_with_port::HostWithPort) -> Self {
-        SipAddr {
-            r#type: None,
-            addr: host_with_port,
-        }
-    }
-}
-
-impl TryFrom<&rsip::Uri> for SipAddr {
-    type Error = crate::Error;
-
-    fn try_from(uri: &rsip::Uri) -> Result<Self> {
-        let transport = uri.transport().cloned();
-        Ok(SipAddr {
-            r#type: transport,
-            addr: uri.host_with_port.clone(),
-        })
-    }
-}
 impl From<UdpConnection> for SipConnection {
     fn from(connection: UdpConnection) -> Self {
         SipConnection::Udp(connection)
@@ -259,70 +159,5 @@ impl Into<rsip::Uri> for SipAddr {
             host_with_port: self.addr,
             ..Default::default()
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::transport::connection::SipAddr;
-
-    use super::SipConnection;
-    use rsip::{headers::*, prelude::HeadersExt, HostWithPort, SipMessage};
-
-    #[test]
-    fn test_via_received() {
-        let register_req = rsip::message::Request {
-            method: rsip::method::Method::Register,
-            uri: rsip::Uri {
-                scheme: Some(rsip::Scheme::Sip),
-                host_with_port: rsip::HostWithPort::try_from("127.0.0.1:2025")
-                    .expect("host_port parse")
-                    .into(),
-                ..Default::default()
-            },
-            headers: vec![Via::new("SIP/2.0/TLS restsend.com:5061;branch=z9hG4bKnashd92").into()]
-                .into(),
-            version: rsip::Version::V2,
-            body: Default::default(),
-        };
-
-        let parse_addr =
-            SipConnection::parse_target_from_via(&register_req.via_header().expect("via_header"))
-                .expect("get_target_socketaddr");
-
-        let addr = HostWithPort {
-            host: "restsend.com".parse().unwrap(),
-            port: Some(5061.into()),
-        };
-        assert_eq!(parse_addr, addr);
-
-        let addr = "127.0.0.1:1234".parse().unwrap();
-        let msg = SipConnection::update_msg_received(register_req.into(), addr)
-            .expect("update_msg_received");
-
-        match msg {
-            SipMessage::Request(req) => {
-                let parse_addr =
-                    SipConnection::parse_target_from_via(&req.via_header().expect("via_header"))
-                        .expect("get_target_socketaddr");
-                assert_eq!(parse_addr, addr.into());
-            }
-            _ => {}
-        }
-    }
-
-    #[test]
-    fn test_sipaddr() {
-        let addr = "sip:proxy1.example.org:25060;transport=tcp";
-        let uri = rsip::Uri::try_from(addr).expect("parse uri");
-        let sipaddr = SipAddr::try_from(&uri).expect("SipAddr::try_from");
-        assert_eq!(sipaddr.r#type, Some(rsip::transport::Transport::Tcp));
-        assert_eq!(
-            sipaddr.addr,
-            rsip::HostWithPort {
-                host: "proxy1.example.org".parse().unwrap(),
-                port: Some(25060.into()),
-            }
-        );
     }
 }

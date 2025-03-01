@@ -6,7 +6,7 @@ use super::{
     SipConnection, TransactionReceiver, TransactionSender, TransactionTimer,
 };
 use crate::{
-    transport::{connection::SipAddr, TransportEvent, TransportLayer},
+    transport::{SipAddr, TransportEvent, TransportLayer},
     Error, Result, USER_AGENT,
 };
 use rsip::SipMessage;

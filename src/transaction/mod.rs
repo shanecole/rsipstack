@@ -1,4 +1,4 @@
-use crate::transport::{connection::SipAddr, SipConnection};
+use crate::transport::{SipAddr, SipConnection};
 use key::TransactionKey;
 use std::time::Duration;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};

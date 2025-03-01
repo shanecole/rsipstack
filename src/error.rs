@@ -1,7 +1,7 @@
+use crate::{dialog::DialogId, transaction::key::TransactionKey, transport::SipAddr};
 use std::env::VarError;
-
-use crate::{dialog::DialogId, transaction::key::TransactionKey, transport::connection::SipAddr};
 use wasm_bindgen::prelude::*;
+
 #[derive(Debug, Eq, PartialEq, Clone)]
 pub enum Error {
     SipMessageError(String),

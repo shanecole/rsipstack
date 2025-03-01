@@ -4,8 +4,10 @@ pub mod tcp;
 pub mod tls;
 pub mod transport_layer;
 pub mod udp;
-pub mod ws;
-pub mod ws_wasm;
 pub use connection::SipConnection;
 pub use connection::TransportEvent;
 pub use transport_layer::TransportLayer;
+pub mod sip_addr;
+pub use sip_addr::SipAddr;
+#[cfg(test)]
+pub mod tests;

@@ -1,7 +1,4 @@
-use super::{
-    connection::{SipAddr, TransportSender},
-    SipConnection,
-};
+use super::{connection::TransportSender, SipAddr, SipConnection};
 use crate::{transport::TransportEvent, Result};
 use rsip::HostWithPort;
 use rsip_dns::{trust_dns_resolver::TokioAsyncResolver, ResolvableExt};
