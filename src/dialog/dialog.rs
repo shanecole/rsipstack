@@ -16,7 +16,7 @@ use crate::{
 };
 use rsip::{
     headers::Route,
-    prelude::{HasHeaders, HeadersExt, ToTypedHeader, UntypedHeader},
+    prelude::{HeadersExt, ToTypedHeader, UntypedHeader},
     typed::{CSeq, Contact},
     Header, Param, Request, Response, SipMessage, StatusCode,
 };

@@ -1,5 +1,4 @@
 use super::{endpoint::EndpointInner, make_call_id};
-use crate::Result;
 use rsip::{Header, Request, Response, StatusCode};
 
 impl EndpointInner {

@@ -2,7 +2,7 @@ use clap::Parser;
 use get_if_addrs::get_if_addrs;
 use rsip::headers::UntypedHeader;
 use rsip::prelude::{HeadersExt, ToTypedHeader};
-use rsipstack::dialog::{self, DialogId};
+use rsipstack::dialog::DialogId;
 use rsipstack::rsip_ext::{extract_uri_from_contact, RsipHeadersExt};
 use rsipstack::transaction::key::{TransactionKey, TransactionRole};
 use rsipstack::transaction::transaction::Transaction;
