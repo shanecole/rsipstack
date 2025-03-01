@@ -96,7 +96,7 @@ pub async fn bridge_realtime(
             },
         });
         match write
-            .send(Message::Text(item_session_update.to_string()))
+            .send(Message::Text(item_session_update.to_string().into()))
             .await
         {
             Ok(_) => {}

@@ -1,4 +1,6 @@
-use super::{connection::TransportSender, SipAddr, SipConnection};
+use super::tls::{TlsConfig, TlsConnection};
+use super::websocket::WebSocketConnection;
+use super::{connection::TransportSender, sip_addr::SipAddr, tcp::TcpConnection, SipConnection};
 use crate::{transport::TransportEvent, Result};
 use rsip::HostWithPort;
 use rsip_dns::{trust_dns_resolver::TokioAsyncResolver, ResolvableExt};
@@ -11,13 +13,23 @@ use tokio::select;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
+/// 传输层配置
+#[derive(Default, Clone)]
+pub struct TransportConfig {
+    /// TLS 配置
+    pub tls: Option<TlsConfig>,
+    pub enable_ws: bool,
+    pub enable_wss: bool,
+}
+
 #[derive(Default)]
 pub struct TransportLayerInner {
     cancel_token: CancellationToken,
-    listens: Arc<Mutex<HashMap<SipAddr, SipConnection>>>, // Listen transports
+    listens: Arc<Mutex<HashMap<SipAddr, SipConnection>>>, // 监听的传输
+    config: Arc<Mutex<TransportConfig>>,
 }
-#[derive(Default)]
 
+#[derive(Default)]
 pub struct TransportLayer {
     pub outbound: Option<SipAddr>,
     inner: Arc<TransportLayerInner>,
@@ -28,6 +40,19 @@ impl TransportLayer {
         let inner = TransportLayerInner {
             cancel_token,
             listens: Arc::new(Mutex::new(HashMap::new())),
+            config: Arc::new(Mutex::new(TransportConfig::default())),
+        };
+        Self {
+            outbound: None,
+            inner: Arc::new(inner),
+        }
+    }
+
+    pub fn with_config(cancel_token: CancellationToken, config: TransportConfig) -> Self {
+        let inner = TransportLayerInner {
+            cancel_token,
+            listens: Arc::new(Mutex::new(HashMap::new())),
+            config: Arc::new(Mutex::new(config)),
         };
         Self {
             outbound: None,
@@ -48,10 +73,157 @@ impl TransportLayer {
     }
 
     pub async fn serve_listens(&self, sender: TransportSender) -> Result<()> {
-        self.inner.serve_listens(sender).await
+        let listens = self.inner.listens.lock().unwrap().clone();
+        for (_, transport) in listens {
+            let sub_token = self.inner.cancel_token.child_token();
+            let sender_clone = sender.clone();
+            let listens_ref = self.inner.listens.clone();
+
+            tokio::spawn(async move {
+                select! {
+                    _ = sub_token.cancelled() => { }
+                    _ = transport.serve_loop(sender_clone.clone()) => {
+                    }
+                }
+                listens_ref.lock().unwrap().remove(transport.get_addr());
+                warn!("transport serve_loop exited: {}", transport.get_addr());
+                sender_clone.send(TransportEvent::Closed(transport)).ok();
+            });
+        }
+        Ok(())
     }
+
     pub fn get_addrs(&self) -> Vec<SipAddr> {
         self.inner.listens.lock().unwrap().keys().cloned().collect()
+    }
+
+    /// 创建并添加 UDP 监听器
+    pub async fn add_udp_listener(&self, local: SocketAddr) -> Result<SipAddr> {
+        use super::udp::UdpConnection;
+
+        let connection = UdpConnection::create_connection(local, None).await?;
+        let addr = connection.get_addr().clone();
+        self.add_transport(connection.into());
+        Ok(addr)
+    }
+
+    /// 创建并添加 TCP 监听器
+    pub async fn add_tcp_listener(
+        &self,
+        local: SocketAddr,
+        sender: TransportSender,
+    ) -> Result<SipAddr> {
+        let (listener, addr) = TcpConnection::create_listener(local).await?;
+
+        let cancel_token = self.inner.cancel_token.child_token();
+        let addr_clone = addr.clone();
+        let sender_clone = sender.clone();
+
+        tokio::spawn(async move {
+            select! {
+                _ = cancel_token.cancelled() => {
+                    info!("TCP listener cancelled: {}", addr_clone);
+                }
+                result = TcpConnection::serve_listener(listener, addr_clone.clone(), sender_clone) => {
+                    if let Err(e) = result {
+                        warn!("TCP listener error: {}: {:?}", addr_clone, e);
+                    }
+                }
+            }
+        });
+
+        Ok(addr)
+    }
+
+    pub async fn add_tls_listener(
+        &self,
+        local: SocketAddr,
+        sender: TransportSender,
+    ) -> Result<SipAddr> {
+        let config_guard = self.inner.config.lock().unwrap();
+        let config = match &config_guard.tls {
+            Some(cfg) => cfg,
+            None => {
+                return Err(crate::Error::Error(
+                    "TLS configuration not provided".to_string(),
+                ));
+            }
+        };
+
+        let acceptor = TlsConnection::create_acceptor(config).await?;
+        drop(config_guard);
+
+        // Create TCP listener
+        let (listener, addr) = tokio::net::TcpListener::bind(local).await.map(|l| {
+            let local_addr = l.local_addr().unwrap();
+            let sip_addr = SipAddr {
+                r#type: Some(rsip::transport::Transport::Tls),
+                addr: local_addr.into(),
+            };
+            (l, sip_addr)
+        })?;
+
+        // Add listener to the list
+        let mut listeners = self.inner.listens.lock().unwrap();
+
+        listeners.insert(
+            addr.clone(),
+            SipConnection::Tls(TlsConnection::new_with_acceptor(acceptor, addr.clone())),
+        );
+        info!("Added TLS listener on {}", addr);
+        Ok(addr)
+    }
+
+    pub async fn add_ws_listener(
+        &self,
+        local: SocketAddr,
+        sender: TransportSender,
+        secure: bool,
+    ) -> Result<SipAddr> {
+        let config = self.inner.config.lock().unwrap();
+        if secure && !config.enable_wss {
+            return Err(crate::Error::Error(
+                "WSS not enabled in configuration".to_string(),
+            ));
+        } else if !secure && !config.enable_ws {
+            return Err(crate::Error::Error(
+                "WS not enabled in configuration".to_string(),
+            ));
+        }
+        drop(config);
+
+        let listener = tokio::net::TcpListener::bind(local).await?;
+        let local_addr = listener.local_addr()?;
+
+        let transport_type = if secure {
+            rsip::transport::Transport::Wss
+        } else {
+            rsip::transport::Transport::Ws
+        };
+
+        let addr = SipAddr {
+            r#type: Some(transport_type),
+            addr: local_addr.into(),
+        };
+
+        let cancel_token = self.inner.cancel_token.child_token();
+        let addr_clone = addr.clone();
+        let sender_clone = sender.clone();
+
+        tokio::spawn(async move {
+            select! {
+                _ = cancel_token.cancelled() => {
+                    info!("WebSocket listener cancelled: {}", addr_clone);
+                }
+                result = WebSocketConnection::serve_listener(listener, addr_clone.clone(), sender_clone, secure) => {
+                    if let Err(e) = result {
+                        warn!("WebSocket listener error: {}: {:?}", addr_clone, e);
+                    }
+                }
+            }
+        });
+
+        Ok(addr)
     }
 }
 
@@ -110,21 +282,30 @@ impl TransportLayerInner {
         match target.r#type {
             Some(rsip::transport::Transport::Udp) => {
                 let listens = self.listens.lock().unwrap();
-                // lookup first udp transport
                 for (_, transport) in listens.iter() {
                     if transport.get_addr().r#type == Some(rsip::transport::Transport::Udp) {
                         return Ok(transport.clone());
                     }
                 }
             }
-            Some(rsip::transport::Transport::Tcp)
-            | Some(rsip::transport::Transport::Tls)
-            | Some(rsip::transport::Transport::Ws) => {
-                // create new transport and serve it
-                todo!()
+            Some(rsip::transport::Transport::Tcp) => {
+                let connection = TcpConnection::connect(target).await?;
+                let sip_connection = SipConnection::Tcp(connection);
+                return Ok(sip_connection);
+            }
+            Some(rsip::transport::Transport::Tls) => {
+                let connection = TlsConnection::connect(target).await?;
+                let sip_connection = SipConnection::Tls(connection);
+                return Ok(sip_connection);
+            }
+            Some(rsip::transport::Transport::Ws) | Some(rsip::transport::Transport::Wss) => {
+                let connection = WebSocketConnection::connect(target).await?;
+                let sip_connection = SipConnection::WebSocket(connection);
+                return Ok(sip_connection);
             }
             _ => {}
         }
+
         return Err(crate::Error::TransportLayerError(
             format!("unsupported transport type: {:?}", target.r#type),
             target.to_owned(),
@@ -152,11 +333,14 @@ impl TransportLayerInner {
         Ok(())
     }
 }
+
 #[cfg(test)]
 mod tests {
     use crate::{transport::udp::UdpConnection, Result};
     use rsip::Transport;
     use rsip_dns::{trust_dns_resolver::TokioAsyncResolver, ResolvableExt};
+    use tokio::sync::mpsc;
+
     #[tokio::test]
     async fn test_lookup() -> Result<()> {
         let mut tl = super::TransportLayer::new(tokio_util::sync::CancellationToken::new());
@@ -181,6 +365,18 @@ mod tests {
         assert_eq!(target.get_addr(), &outbound);
         Ok(())
     }
+
+    #[tokio::test]
+    async fn test_tcp_listener() -> Result<()> {
+        let tl = super::TransportLayer::new(tokio_util::sync::CancellationToken::new());
+        let (sender, _receiver) = mpsc::unbounded_channel();
+
+        let addr = tl.add_tcp_listener("127.0.0.1:0".parse()?, sender).await?;
+        assert_eq!(addr.r#type, Some(rsip::transport::Transport::Tcp));
+
+        Ok(())
+    }
+
     #[tokio::test]
     async fn test_rsip_dns_lookup() -> Result<()> {
         let check_list = vec![
