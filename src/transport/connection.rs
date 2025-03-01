@@ -218,18 +218,17 @@ impl From<rsip::host_with_port::HostWithPort> for SipAddr {
     }
 }
 
-impl TryFrom<&str> for SipAddr {
+impl TryFrom<&rsip::Uri> for SipAddr {
     type Error = crate::Error;
 
-    fn try_from(addr: &str) -> Result<Self> {
-        let host_with_port = rsip::HostWithPort::try_from(addr)?;
+    fn try_from(uri: &rsip::Uri) -> Result<Self> {
+        let transport = uri.transport().cloned();
         Ok(SipAddr {
-            r#type: None,
-            addr: host_with_port,
+            r#type: transport,
+            addr: uri.host_with_port.clone(),
         })
     }
 }
-
 impl From<UdpConnection> for SipConnection {
     fn from(connection: UdpConnection) -> Self {
         SipConnection::Udp(connection)
@@ -265,6 +264,8 @@ impl Into<rsip::Uri> for SipAddr {
 
 #[cfg(test)]
 mod tests {
+    use crate::transport::connection::SipAddr;
+
     use super::SipConnection;
     use rsip::{headers::*, prelude::HeadersExt, HostWithPort, SipMessage};
 
@@ -308,5 +309,20 @@ mod tests {
             }
             _ => {}
         }
+    }
+
+    #[test]
+    fn test_sipaddr() {
+        let addr = "sip:proxy1.example.org:25060;transport=tcp";
+        let uri = rsip::Uri::try_from(addr).expect("parse uri");
+        let sipaddr = SipAddr::try_from(&uri).expect("SipAddr::try_from");
+        assert_eq!(sipaddr.r#type, Some(rsip::transport::Transport::Tcp));
+        assert_eq!(
+            sipaddr.addr,
+            rsip::HostWithPort {
+                host: "proxy1.example.org".parse().unwrap(),
+                port: Some(25060.into()),
+            }
+        );
     }
 }
