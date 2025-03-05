@@ -2,7 +2,7 @@ use super::endpoint::EndpointInnerRef;
 use super::key::TransactionKey;
 use super::{SipConnection, TransactionState, TransactionTimer, TransactionType};
 use crate::transaction::make_tag;
-use crate::transport::connection::SipAddr;
+use crate::transport::SipAddr;
 use crate::{Error, Result};
 use rsip::prelude::HeadersExt;
 use rsip::headers::ContentLength;

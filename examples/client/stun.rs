@@ -1,5 +1,5 @@
 use get_if_addrs::get_if_addrs;
-use rsipstack::transport::{connection::SipAddr, udp::UdpConnection};
+use rsipstack::transport::{udp::UdpConnection, SipAddr};
 use rsipstack::{Error, Result};
 use std::net::{IpAddr, SocketAddr};
 use std::time::Duration;

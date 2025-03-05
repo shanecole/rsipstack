@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use rsipstack::transport::udp::UdpConnection;
 use rsipstack::Result;
-use rsipstack::{transport::connection::SipAddr, Error};
+use rsipstack::{transport::SipAddr, Error};
 use rtp_rs::RtpPacketBuilder;
 use tokio::select;
 use tokio_util::sync::CancellationToken;

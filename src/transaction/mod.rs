@@ -1,4 +1,4 @@
-use crate::transport::{connection::SipAddr, SipConnection};
+use crate::transport::{SipAddr, SipConnection};
 use key::TransactionKey;
 use std::time::Duration;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
@@ -105,8 +105,8 @@ pub fn make_tag() -> rsip::param::Tag {
 #[cfg(not(target_family = "wasm"))]
 pub fn random_text(count: usize) -> String {
     use rand::Rng;
-    rand::thread_rng()
-        .sample_iter(rand::distributions::Alphanumeric)
+    rand::rng()
+        .sample_iter(rand::distr::Alphanumeric)
         .take(count)
         .map(char::from)
         .collect::<String>()

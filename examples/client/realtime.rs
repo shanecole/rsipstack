@@ -4,8 +4,8 @@ use futures::{SinkExt, StreamExt};
 use openai_api_rs::realtime::api::RealtimeClient;
 use openai_api_rs::realtime::client_event::{InputAudioBufferAppend, SessionUpdate};
 use openai_api_rs::realtime::types::AudioFormat;
-use rsipstack::transport::connection::SipAddr;
 use rsipstack::transport::udp::UdpConnection;
+use rsipstack::transport::SipAddr;
 use rsipstack::Result;
 use rtp_rs::RtpPacketBuilder;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -96,7 +96,7 @@ pub async fn bridge_realtime(
             },
         });
         match write
-            .send(Message::Text(item_session_update.to_string()))
+            .send(Message::Text(item_session_update.to_string().into()))
             .await
         {
             Ok(_) => {}

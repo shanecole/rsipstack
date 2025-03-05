@@ -1,6 +1,6 @@
 use crate::transport::SipConnection;
 use crate::{
-    transport::{channel::ChannelConnection, connection::SipAddr, TransportEvent, TransportLayer},
+    transport::{channel::ChannelConnection, SipAddr, TransportEvent, TransportLayer},
     EndpointBuilder,
 };
 use rsip::headers::*;

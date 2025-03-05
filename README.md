@@ -6,11 +6,11 @@ A RFC 3261 compliant SIP stack written in Rust. The goal of this project is to p
 
 
 ## TODO
-- [ ] Transport support
+- [x] Transport support
   - [x] UDP
-  - [ ] TCP
-  - [ ] TLS
-  - [ ] WebSocket
+  - [x] TCP
+  - [x] TLS
+  - [x] WebSocket
 - [x] Digest Authentication
 - [x] Transaction Layer
 - [x] Dialog Layer

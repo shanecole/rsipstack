@@ -92,6 +92,7 @@ impl DialogInner {
         credential: Option<Credential>,
         local_contact: Option<rsip::Uri>,
     ) -> Result<Self> {
+        let mut initial_request = initial_request;
         let cseq = initial_request.cseq_header()?.seq()?;
 
         let remote_uri = match role {
@@ -111,17 +112,16 @@ impl DialogInner {
             TransactionRole::Client => (from.to_string(), to.to_string()),
             TransactionRole::Server => (to.to_string(), from.to_string()),
         };
-        let route_set = initial_request
-            .headers
-            .iter()
-            .filter_map(|header| {
-                if let Header::RecordRoute(rr) = header {
-                    Some(Route::from(rr.value()))
-                } else {
-                    None
-                }
-            })
-            .collect::<Vec<_>>();
+
+        let mut route_set = vec![];
+        initial_request.headers.retain(|h| {
+            if let Header::RecordRoute(rr) = h {
+                route_set.push(Route::from(rr.value()));
+                false
+            } else {
+                true
+            }
+        });
         Ok(Self {
             role,
             cancel_token: CancellationToken::new(),
@@ -229,9 +229,6 @@ impl DialogInner {
 
         for header in request.headers.iter() {
             match header {
-                Header::RecordRoute(route) => {
-                    resp_headers.push(Header::RecordRoute(route.clone()));
-                }
                 Header::Via(via) => {
                     resp_headers.push(Header::Via(via.clone()));
                 }
@@ -292,13 +289,19 @@ impl DialogInner {
         let method = request.method().to_owned();
         let destination = request
             .route_header()
-            .map(|r| r.value().try_into().ok())
+            .map(|r| {
+                r.typed()
+                    .ok()
+                    .map(|r| r.uris().first().map(|u| u.uri.clone()))
+                    .flatten()
+            })
             .flatten();
+
         header_pop!(request.headers, Header::Route);
 
         let key = TransactionKey::from_request(&request, TransactionRole::Client)?;
         let mut tx = Transaction::new_client(key, request, self.endpoint_inner.clone(), None);
-        tx.destination = destination;
+        tx.destination = destination.as_ref().map(|d| d.try_into().ok()).flatten();
 
         tx.send().await?;
         let mut auth_sent = false;
