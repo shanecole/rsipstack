@@ -1,11 +1,6 @@
-use super::{channel::ChannelConnection, udp::UdpConnection, ws_wasm::WsWasmConnection};
+use super::{channel::ChannelConnection, udp::UdpConnection, ws_wasm::WsWasmConnection, ws::WsConnection};
 use crate::Result;
-use rsip::{
-    host_with_port,
-    param::{OtherParam, OtherParamValue, Received},
-    prelude::{HeadersExt, ToTypedHeader},
-    HostWithPort, Param, SipMessage,
-};
+use rsip::{host_with_port, param::{OtherParam, OtherParamValue, Received}, prelude::{HeadersExt, ToTypedHeader}, Header, HostWithPort, Param, SipMessage};
 use std::{fmt, hash::Hash, net::SocketAddr};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
@@ -32,6 +27,7 @@ pub enum SipConnection {
     Udp(UdpConnection),
     WsWasm(WsWasmConnection),
     Channel(ChannelConnection),
+    Ws(WsConnection),
 }
 
 impl SipConnection {
@@ -48,7 +44,7 @@ impl SipConnection {
             SipConnection::Udp(transport) => transport.get_addr(),
             SipConnection::WsWasm(transport) => transport.get_addr(),
             SipConnection::Channel(transport) => transport.get_addr(),
-            //Transport::Ws(transport) => transport.get_addr(),
+            SipConnection::Ws(transport) => transport.get_addr(),
         }
     }
     pub async fn send(&self, msg: rsip::SipMessage, destination: Option<&SipAddr>) -> Result<()> {
@@ -58,7 +54,7 @@ impl SipConnection {
             SipConnection::Udp(transport) => transport.send(msg, destination).await,
             SipConnection::WsWasm(transport) => transport.send(msg).await,
             SipConnection::Channel(transport) => transport.send(msg).await,
-            //Transport::Ws(transport) => transport.send(msg).await,
+            SipConnection::Ws(transport) => transport.send(msg).await,
         }
     }
     pub async fn serve_loop(&self, sender: TransportSender) -> Result<()> {
@@ -68,7 +64,7 @@ impl SipConnection {
             SipConnection::Udp(transport) => transport.serve_loop(sender).await,
             SipConnection::WsWasm(transport) => transport.serve_loop(sender).await,
             SipConnection::Channel(transport) => transport.serve_loop(sender).await,
-            //Transport::Ws(transport) => transport.server_loop(sender).await,
+            SipConnection::Ws(transport) => transport.serve_loop(sender).await,
         }
     }
 }
@@ -147,7 +143,7 @@ impl fmt::Display for SipConnection {
             SipConnection::Udp(t) => write!(f, "UDP {}", t),
             SipConnection::WsWasm(t) => write!(f, "WS-WASM {}", t),
             SipConnection::Channel(t) => write!(f, "CHANNEL {}", t),
-            //Transport::Ws(_) => write!(f, "WS"),
+            SipConnection::Ws(_) => write!(f, "WS"),
         }
     }
 }
@@ -239,6 +235,12 @@ impl From<UdpConnection> for SipConnection {
 impl From<ChannelConnection> for SipConnection {
     fn from(connection: ChannelConnection) -> Self {
         SipConnection::Channel(connection)
+    }
+}
+
+impl From<WsConnection> for SipConnection {
+    fn from(connection: WsConnection) -> Self {
+        SipConnection::Ws(connection)
     }
 }
 

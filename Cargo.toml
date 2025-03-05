@@ -33,6 +33,7 @@ uuid = "0.8.2"
 rand = "0.8.5"
 get_if_addrs = "0.5.3"
 rsip-dns = { version = "0.1.4", features = ["trust-dns"] }
+tokio-tungstenite = "0.24"
 
 [features]
 default = ["console_error_panic_hook"]

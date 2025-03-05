@@ -91,7 +91,8 @@ impl TransportLayerInner {
                 Some(target) => {
                     &SipAddr {
                         r#type: Some(target.transport),
-                        addr: HostWithPort::from(SocketAddr::new(target.ip_addr, u16::from(target.port)))
+                        addr: HostWithPort::from(SocketAddr::new(target.ip_addr, u16::from(5066 as u16)))
+                        //addr: HostWithPort::from(SocketAddr::new(target.ip_addr, u16::from(target.port)))
                     }
                 },
                 None => {
@@ -109,18 +110,18 @@ impl TransportLayerInner {
         }
 
         match target.r#type {
-            Some(rsip::transport::Transport::Udp) => {
+            Some(rsip::transport::Transport::Udp) |
+            Some(rsip::transport::Transport::Ws) => {
                 let listens = self.listens.lock().unwrap();
                 // lookup first udp transport
                 for (_, transport) in listens.iter() {
-                    if transport.get_addr().r#type == Some(rsip::transport::Transport::Udp) {
+                    if transport.get_addr().r#type == target.r#type {
                         return Ok(transport.clone());
                     }
                 }
             }
             Some(rsip::transport::Transport::Tcp)
-            | Some(rsip::transport::Transport::Tls)
-            | Some(rsip::transport::Transport::Ws) => {
+            | Some(rsip::transport::Transport::Tls) => {
                 // create new transport and serve it
                 todo!()
             }
