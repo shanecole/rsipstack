@@ -21,11 +21,13 @@ type WsSink = futures_util::stream::SplitSink<
     WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>,
     Message,
 >;
+type WsRead = futures_util::stream::SplitStream<WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>>;
 
 pub struct WebSocketInner {
     pub local_addr: SipAddr,
     pub remote_addr: Option<SipAddr>,
     pub ws_sink: Arc<Mutex<WsSink>>,
+    pub ws_read: Arc<Mutex<WsRead>>,
 }
 
 #[derive(Clone)]
@@ -65,6 +67,7 @@ impl WebSocketConnection {
                 local_addr,
                 remote_addr: Some(remote.clone()),
                 ws_sink: Arc::new(Mutex::new(ws_sink)),
+                ws_read: Arc::new(Mutex::new(_ws_stream)),
             }),
         };
 
@@ -127,9 +130,10 @@ impl WebSocketConnection {
                                 local_addr: local_addr_clone.clone(),
                                 remote_addr: Some(remote_sip_addr.clone()),
                                 ws_sink: Arc::new(Mutex::new(ws_sink)),
+                                ws_read: Arc::new(Mutex::new(ws_stream)),
                             }),
                         };
-
+                        connection.serve_loop(sender_clone.clone());
                         let sip_connection = SipConnection::WebSocket(connection.clone());
 
                         if let Err(e) =
@@ -137,87 +141,6 @@ impl WebSocketConnection {
                         {
                             error!("Error sending new connection event: {:?}", e);
                             return;
-                        }
-
-                        // Process incoming WebSocket messages
-                        while let Some(msg) = ws_stream.next().await {
-                            match msg {
-                                Ok(Message::Text(text)) => {
-                                    match SipMessage::try_from(text.as_str()) {
-                                        Ok(sip_msg) => {
-                                            if let Err(e) =
-                                                sender_clone.send(TransportEvent::Incoming(
-                                                    sip_msg,
-                                                    sip_connection.clone(),
-                                                    remote_sip_addr.clone(),
-                                                ))
-                                            {
-                                                error!("Error sending incoming message: {:?}", e);
-                                                break;
-                                            }
-                                        }
-                                        Err(e) => {
-                                            warn!("Error parsing SIP message: {}", e);
-                                        }
-                                    }
-                                }
-                                Ok(Message::Binary(bin)) => {
-                                    if bin == KEEPALIVE_REQUEST {
-                                        if let Err(e) =
-                                            connection.send_raw(KEEPALIVE_RESPONSE).await
-                                        {
-                                            error!("Error sending keepalive response: {:?}", e);
-                                        }
-                                        continue;
-                                    }
-
-                                    match std::str::from_utf8(&bin) {
-                                        Ok(text) => match SipMessage::try_from(text) {
-                                            Ok(sip_msg) => {
-                                                if let Err(e) =
-                                                    sender_clone.send(TransportEvent::Incoming(
-                                                        sip_msg,
-                                                        sip_connection.clone(),
-                                                        remote_sip_addr.clone(),
-                                                    ))
-                                                {
-                                                    error!(
-                                                        "Error sending incoming message: {:?}",
-                                                        e
-                                                    );
-                                                    break;
-                                                }
-                                            }
-                                            Err(e) => {
-                                                warn!("Error parsing SIP message: {}", e);
-                                            }
-                                        },
-                                        Err(e) => {
-                                            warn!("Error decoding binary message: {}", e);
-                                        }
-                                    }
-                                }
-                                Ok(Message::Ping(data)) => {
-                                    let mut sink = connection.inner.ws_sink.lock().await;
-                                    if let Err(e) = sink.send(Message::Pong(data)).await {
-                                        error!("Error sending pong: {}", e);
-                                        break;
-                                    }
-                                }
-                                Ok(Message::Close(_)) => {
-                                    debug!("WebSocket connection closed by peer");
-                                    break;
-                                }
-                                Err(e) => {
-                                    error!("WebSocket error: {}", e);
-                                    break;
-                                }
-                                _ => {}
-                            }
-                        }
-
-                        if let Err(e) = sender_clone.send(TransportEvent::Closed(sip_connection)) {
-                            error!("Error sending connection closed event: {:?}", e);
                         }
                     });
                 }
@@ -238,6 +161,7 @@ impl StreamConnection for WebSocketConnection {
     async fn send_message(&self, msg: SipMessage) -> Result<()> {
         let data = msg.to_string();
         let mut sink = self.inner.ws_sink.lock().await;
+        info!("WebSocket send:{}",data);
         sink.send(Message::Text(data.into())).await?;
         Ok(())
     }
@@ -248,10 +172,90 @@ impl StreamConnection for WebSocketConnection {
         Ok(())
     }
 
-    async fn serve_loop(&self, _sender: TransportSender) -> Result<()> {
-        Err(crate::Error::Error(
-            "WebSocket serve_loop should not be called directly".to_string(),
-        ))
+    async fn serve_loop(&self, sender: TransportSender) -> Result<()> {
+        let sip_connection = SipConnection::WebSocket(self.clone());
+        let remote_addr = self.inner.remote_addr.clone().unwrap().clone();
+        let mut ws_read = self.inner.ws_read.lock().await;
+        while let Some(msg) = ws_read.next().await {
+            match msg {
+                Ok(Message::Text(text)) => {
+                    match SipMessage::try_from(text.as_str()) {
+                        Ok(sip_msg) => {
+                            if let Err(e) =
+                                sender.send(TransportEvent::Incoming(
+                                    sip_msg,
+                                    sip_connection.clone(),
+                                    remote_addr.clone(),
+                                ))
+                            {
+                                error!("Error sending incoming message: {:?}", e);
+                                break;
+                            }
+                        }
+                        Err(e) => {
+                            warn!("Error parsing SIP message: {}", e);
+                        }
+                    }
+                }
+                Ok(Message::Binary(bin)) => {
+                    if bin == KEEPALIVE_REQUEST {
+                        if let Err(e) =
+                            self.send_raw(KEEPALIVE_RESPONSE).await
+                        {
+                            error!("Error sending keepalive response: {:?}", e);
+                        }
+                        continue;
+                    }
+
+                    match std::str::from_utf8(&bin) {
+                        Ok(text) => match SipMessage::try_from(text) {
+                            Ok(sip_msg) => {
+                                if let Err(e) =
+                                    sender.send(TransportEvent::Incoming(
+                                        sip_msg,
+                                        sip_connection.clone(),
+                                        remote_addr.clone(),
+                                    ))
+                                {
+                                    error!(
+                                        "Error sending incoming message: {:?}",
+                                        e
+                                    );
+                                    break;
+                                }
+                            }
+                            Err(e) => {
+                                warn!("Error parsing SIP message: {}", e);
+                            }
+                        },
+                        Err(e) => {
+                            warn!("Error decoding binary message: {}", e);
+                        }
+                    }
+                }
+                Ok(Message::Ping(data)) => {
+                    let mut sink = self.inner.ws_sink.lock().await;
+                    if let Err(e) = sink.send(Message::Pong(data)).await {
+                        error!("Error sending pong: {}", e);
+                        break;
+                    }
+                }
+                Ok(Message::Close(_)) => {
+                    debug!("WebSocket connection closed by peer");
+                    break;
+                }
+                Err(e) => {
+                    error!("WebSocket error: {}", e);
+                    break;
+                }
+                _ => {}
+            }
+        }
+
+        if let Err(e) = sender.send(TransportEvent::Closed(sip_connection.clone())) {
+            error!("Error sending connection closed event: {:?}", e);
+        }
+        Ok(())
     }
 
     async fn close(&self) -> Result<()> {
