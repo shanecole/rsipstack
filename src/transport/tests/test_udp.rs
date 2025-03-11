@@ -13,7 +13,7 @@ use tokio::{select, sync::mpsc::unbounded_channel, time::sleep};
 async fn test_udp_keepalive() -> Result<()> {
     let peer_bob = UdpConnection::create_connection("127.0.0.1:0".parse()?, None).await?;
     let peer_alice = UdpConnection::create_connection("127.0.0.1:0".parse()?, None).await?;
-    let (alice_tx, _) = unbounded_channel();
+    let (alice_tx, _) = unbounded_channel::<TransportEvent>();
 
     let bob_loop = async {
         sleep(Duration::from_millis(20)).await; // wait for serve_loop to start
