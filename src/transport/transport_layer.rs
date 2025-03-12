@@ -305,7 +305,7 @@ impl TransportLayerInner {
                 return Ok(sip_connection);
             }
             Some(rsip::transport::Transport::Tls) => {
-                let connection = TlsConnection::connect(target).await?;
+                let connection = TlsConnection::connect(target, None).await?;
                 let sip_connection = SipConnection::Tls(connection);
                 return Ok(sip_connection);
             }

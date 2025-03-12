@@ -1,13 +1,14 @@
 use super::{
-    connection::TransportSender,
+    connection::{TransportSender, KEEPALIVE_REQUEST, KEEPALIVE_RESPONSE},
     sip_addr::SipAddr,
-    stream::{send_raw_to_stream, send_to_stream, StreamConnection},
+    stream::{send_raw_to_stream, send_to_stream, StreamConnection}, SipConnection, TransportEvent
 };
 use crate::{error::Error, Result};
 use rsip::SipMessage;
 use std::{fmt, net::SocketAddr, sync::Arc};
+use rustls::client::danger::ServerCertVerifier;
 use tokio::{
-    io::AsyncWriteExt,
+    io::{AsyncWriteExt, AsyncReadExt},
     net::{TcpListener, TcpStream},
     sync::Mutex,
 };
@@ -15,7 +16,7 @@ use tokio_rustls::{
     rustls::{pki_types, ClientConfig, RootCertStore, ServerConfig},
     TlsAcceptor, TlsConnector,
 };
-use tracing::error;
+use tracing::{error, info};
 
 // TLS configuration
 #[derive(Clone, Debug)]
@@ -51,31 +52,40 @@ type TlsClientStream = tokio_rustls::client::TlsStream<TcpStream>;
 #[derive(Debug, Clone)]
 pub struct TlsConnection {
     remote_addr: SipAddr,
+    read_half: Arc<Mutex<Option<tokio::io::ReadHalf<TlsClientStream>>>>,
     write_half: Arc<Mutex<Option<tokio::io::WriteHalf<TlsClientStream>>>>,
 }
 
 impl TlsConnection {
     // Create a new TLS connection with an acceptor
     pub fn new_with_acceptor(_acceptor: TlsAcceptor, addr: SipAddr) -> Self {
+        let read_half = Arc::new(Mutex::new(None));
         let write_half = Arc::new(Mutex::new(None));
 
         Self {
             remote_addr: addr,
+            read_half,
             write_half,
         }
     }
 
     // Connect to a remote TLS server
-    pub async fn connect(remote_addr: &SipAddr) -> Result<Self> {
+    pub async fn connect(remote_addr: &SipAddr, custom_verifier: Option<Arc<dyn ServerCertVerifier>>) -> Result<Self> {
         // Create TLS configuration
         let root_store = RootCertStore::empty();
 
         // Use webpki-roots to add trusted root certificates
         // Create client configuration
-        let config = ClientConfig::builder()
+        let mut config = ClientConfig::builder()
             .with_root_certificates(root_store)
             .with_no_client_auth();
 
+        match custom_verifier {
+            Some(verifier) => {
+                config.dangerous().set_certificate_verifier(verifier);
+            }
+            None => {}
+        }
         // Create TLS connector
         let connector = TlsConnector::from(Arc::new(config));
 
@@ -106,11 +116,12 @@ impl TlsConnection {
         let tls_stream = connector.connect(server_name, stream).await?;
 
         // Split stream into read and write halves
-        let (_read_half, write_half) = tokio::io::split(tls_stream);
+        let (read_half, write_half) = tokio::io::split(tls_stream);
 
         // Create TLS connection
         let connection = Self {
             remote_addr: remote_addr.clone(),
+            read_half: Arc::new(Mutex::new(Some(read_half))),
             write_half: Arc::new(Mutex::new(Some(write_half))),
         };
 
@@ -120,11 +131,12 @@ impl TlsConnection {
     // Create TLS connection from existing TLS stream
     pub async fn from_stream(stream: TlsClientStream, remote_addr: SipAddr) -> Result<Self> {
         // Split stream into read and write halves
-        let (_read_half, write_half) = tokio::io::split(stream);
+        let (read_half, write_half) = tokio::io::split(stream);
 
         // Create TLS connection
         let connection = Self {
             remote_addr,
+            read_half: Arc::new(Mutex::new(Some(read_half))),
             write_half: Arc::new(Mutex::new(Some(write_half))),
         };
 
@@ -321,6 +333,7 @@ impl StreamConnection for TlsConnection {
     }
 
     async fn send_message(&self, msg: SipMessage) -> Result<()> {
+        info!("TlsConnection send:{}", msg);
         let mut write_half_guard = self.write_half.lock().await;
         if let Some(write_half) = &mut *write_half_guard {
             let mut buf = Vec::new();
@@ -353,11 +366,71 @@ impl StreamConnection for TlsConnection {
         Ok(())
     }
 
-    async fn serve_loop(&self, _sender: TransportSender) -> Result<()> {
-        // This method should not be called directly
-        Err(Error::Error(
-            "TLS connection serve_loop should not be called directly".to_string(),
-        ))
+    async fn serve_loop(&self, sender: TransportSender) -> Result<()> {
+        let mut buf = vec![0u8; 2048];
+        let sip_connection = SipConnection::Tls(self.clone());
+        let remote_addr = self.remote_addr.clone();
+        let mut read_half_guard = self.read_half.lock().await;
+        loop {
+            let mut len = 0;
+            if let Some(read_half) = &mut *read_half_guard {
+                len = read_half.read(&mut buf).await?;
+                if len <= 0 {
+                    continue;
+                }
+            } else {
+                continue;
+            }
+
+            match &buf[..len] {
+                KEEPALIVE_REQUEST => {
+                    self.send_raw(KEEPALIVE_RESPONSE);
+                    continue;
+                }
+                KEEPALIVE_RESPONSE => continue,
+                _ => {
+                    if buf.iter().all(|&b| b.is_ascii_whitespace()) {
+                        continue;
+                    }
+                }
+            }
+
+            let undecoded = match std::str::from_utf8(&buf[..len]) {
+                Ok(s) => s,
+                Err(e) => {
+                    info!(
+                        "decoding text ferror: {} buf: {:?}",
+                        e,
+                        &buf[..len]
+                    );
+                    continue;
+                }
+            };
+
+            let sip_msg = match rsip::SipMessage::try_from(undecoded) {
+                Ok(msg) => msg,
+                Err(e) => {
+                    info!(
+                        "error parsing SIP message error: {} buf: {}",
+                        e, undecoded
+                    );
+                    continue;
+                }
+            };
+
+            if let Err(e) =
+                sender.send(TransportEvent::Incoming(
+                    sip_msg,
+                    sip_connection.clone(),
+                    remote_addr.clone(),
+                ))
+            {
+                error!("Error sending incoming message: {:?}", e);
+                break;
+            }
+        }
+        info!("TLS connection closed");
+        Ok(())
     }
 }
 
