@@ -1,6 +1,6 @@
 use crate::{
     transport::{
-        connection::{TransportSender, KEEPALIVE_REQUEST},
+        connection::{TransportSender, KEEPALIVE_REQUEST, KEEPALIVE_RESPONSE},
         sip_addr::SipAddr,
         stream::{handle_stream, send_raw_to_stream, send_to_stream, StreamConnection},
         SipConnection, TransportEvent,
@@ -15,8 +15,6 @@ use tokio::{
     sync::Mutex,
 };
 use tracing::{debug, error, info};
-use crate::transport::connection::KEEPALIVE_RESPONSE;
-
 pub struct TcpInner {
     pub local_addr: SipAddr,
     pub remote_addr: Option<SipAddr>,
