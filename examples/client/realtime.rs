@@ -112,8 +112,9 @@ pub async fn bridge_realtime(
                 output_audio_format: Some(AudioFormat::G711ULAW),
                 input_audio_transcription: Some(
                     openai_api_rs::realtime::types::AudioTranscription {
-                        enabled: true,
-                        model: "whisper-1".to_string(),
+                        prompt: Some(prompt.clone()),
+                        language: Some("en".to_string()),
+                        model: Some("whisper-1".to_string()),
                     },
                 ),
                 ..Default::default()
