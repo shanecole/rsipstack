@@ -68,8 +68,8 @@ impl TransportLayer {
         self.inner.del_connection(addr)
     }
 
-    pub async fn lookup(&self, uri: &rsip::uri::Uri) -> Result<SipConnection> {
-        self.inner.lookup(uri, self.outbound.as_ref()).await
+    pub async fn lookup(&self, uri: &rsip::uri::Uri, sender: TransportSender) -> Result<SipConnection> {
+        self.inner.lookup(uri, self.outbound.as_ref(), sender).await
     }
 
     pub async fn serve_listens(&self, sender: TransportSender) -> Result<()> {
@@ -243,6 +243,7 @@ impl TransportLayerInner {
         &'a self,
         uri: &rsip::uri::Uri,
         outbound: Option<&'a SipAddr>,
+        sender: TransportSender
     ) -> Result<SipConnection> {
         let target = if let Some(addr) = outbound {
             addr
@@ -302,16 +303,19 @@ impl TransportLayerInner {
             Some(rsip::transport::Transport::Tcp) => {
                 let connection = TcpConnection::connect(target).await?;
                 let sip_connection = SipConnection::Tcp(connection);
+                self.start_serve(sip_connection.clone(), sender);
                 return Ok(sip_connection);
             }
             Some(rsip::transport::Transport::Tls) => {
                 let connection = TlsConnection::connect(target, None).await?;
                 let sip_connection = SipConnection::Tls(connection);
+                self.start_serve(sip_connection.clone(), sender);
                 return Ok(sip_connection);
             }
             Some(rsip::transport::Transport::Ws) | Some(rsip::transport::Transport::Wss) => {
                 let connection = WebSocketConnection::connect(target).await?;
                 let sip_connection = SipConnection::WebSocket(connection);
+                self.start_serve(sip_connection.clone(), sender);
                 return Ok(sip_connection);
             }
             _ => {}
@@ -330,18 +334,26 @@ impl TransportLayerInner {
             let sender_clone = sender.clone();
             let listens_ref = self.listens.clone();
 
-            tokio::spawn(async move {
-                select! {
+            self.start_serve(transport.clone(), sender_clone);
+        }
+        Ok(())
+    }
+
+    pub fn start_serve(&self, transport: SipConnection, sender: TransportSender) {
+        let sub_token = self.cancel_token.child_token();
+        let sender_clone = sender.clone();
+        let listens_ref = self.listens.clone();
+
+        tokio::spawn(async move {
+            select! {
                     _ = sub_token.cancelled() => { }
                     _ = transport.serve_loop(sender_clone.clone()) => {
                     }
                 }
-                listens_ref.lock().unwrap().remove(transport.get_addr());
-                warn!("transport serve_loop exited: {}", transport.get_addr());
-                sender_clone.send(TransportEvent::Closed(transport)).ok();
-            });
-        }
-        Ok(())
+            listens_ref.lock().unwrap().remove(transport.get_addr());
+            warn!("transport serve_loop exited: {}", transport.get_addr());
+            sender_clone.send(TransportEvent::Closed(transport)).ok();
+        });
     }
 }
 

@@ -2,14 +2,15 @@ use super::endpoint::EndpointInnerRef;
 use super::key::TransactionKey;
 use super::{SipConnection, TransactionState, TransactionTimer, TransactionType};
 use crate::transaction::make_tag;
-use crate::transport::SipAddr;
+use crate::transport::{SipAddr, TransportEvent};
 use crate::{Error, Result};
 use rsip::prelude::HeadersExt;
 use rsip::headers::ContentLength;
 use rsip::message::HasHeaders;
 use rsip::{Header, Method, Request, Response, SipMessage, StatusCode};
+use tokio::select;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
-use tracing::{debug, info, instrument, span, Level, Span};
+use tracing::{debug, info, instrument, span, warn, Level, Span};
 
 pub type TransactionEventReceiver = UnboundedReceiver<TransactionEvent>;
 pub type TransactionEventSender = UnboundedSender<TransactionEvent>;
@@ -121,7 +122,7 @@ impl Transaction {
             let connection = self
                 .endpoint_inner
                 .transport_layer
-                .lookup(&self.original.uri)
+                .lookup(&self.original.uri, self.endpoint_inner.transport_tx.clone())
                 .await?;
             self.connection.replace(connection.clone());
         }

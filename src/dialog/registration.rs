@@ -1,3 +1,5 @@
+use std::net::IpAddr;
+use get_if_addrs::get_if_addrs;
 use super::{
     authenticate::{handle_client_authenticate, Credential},
     DialogId,
@@ -10,8 +12,12 @@ use crate::{
         transaction::Transaction,
     },
     Result,
+    Error,
+    transport::SipAddr,
 };
-use rsip::{Response, SipMessage, StatusCode};
+use rsip::{HostWithPort, Response, SipMessage, StatusCode};
+use rsip_dns::ResolvableExt;
+use rsip_dns::trust_dns_resolver::TokioAsyncResolver;
 use tracing::info;
 
 pub struct Registration {
@@ -41,6 +47,17 @@ impl Registration {
             .unwrap_or(50)
     }
 
+    fn get_first_non_loopback_interface() -> Result<IpAddr> {
+        get_if_addrs()?
+            .iter()
+            .find(|i| !i.is_loopback())
+            .map(|i| match i.addr {
+                get_if_addrs::IfAddr::V4(ref addr) => Ok(std::net::IpAddr::V4(addr.ip)),
+                _ => Err(Error::Error("No IPv4 address found".to_string())),
+            })
+            .unwrap_or(Err(Error::Error("No interface found".to_string())))
+    }
+
     pub async fn register(&mut self, server: &String) -> Result<Response> {
         self.last_seq += 1;
 
@@ -66,13 +83,30 @@ impl Registration {
         }
         .with_tag(make_tag());
 
-        let first_addr = self
-            .endpoint
-            .get_addrs()
-            .first()
-            .ok_or(crate::Error::Error("no address found".to_string()))?
-            .clone();
+        let first_addr = {
+            let mut addr = SipAddr::from(HostWithPort::from(Self::get_first_non_loopback_interface()?));
+            let context = rsip_dns::Context::initialize_from(
+                recipient.clone(),
+                rsip_dns::AsyncTrustDnsClient::new(
+                    TokioAsyncResolver::tokio(Default::default(), Default::default()).unwrap(),
+                ),
+                rsip_dns::SupportedTransports::any(),
+            )?;
 
+            let mut lookup = rsip_dns::Lookup::from(context);
+            match lookup.resolve_next().await {
+                Some(target) => {
+                    addr.r#type = Some(target.transport);
+                    addr
+                }
+                None => {
+                    Err(crate::Error::DnsResolutionError(format!(
+                        "DNS resolution error: {}",
+                        recipient
+                    )))
+                }?
+            }
+        };
         let contact = self
             .contact
             .clone()
@@ -81,13 +115,13 @@ impl Registration {
                 uri: rsip::Uri {
                     auth: to.uri.auth.clone(),
                     scheme: Some(rsip::Scheme::Sip),
-                    host_with_port: first_addr.addr.into(),
+                    host_with_port: first_addr.clone().into(),
                     params: vec![],
                     headers: vec![],
                 },
                 params: vec![],
             });
-        let via = self.endpoint.get_via(None)?;
+        let via = self.endpoint.get_via(Some(first_addr.clone()), None)?;
         let mut request = self.endpoint.make_request(
             rsip::Method::Register,
             recipient,

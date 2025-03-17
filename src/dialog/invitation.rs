@@ -42,7 +42,7 @@ impl DialogLayer {
         }
         .with_tag(make_tag());
 
-        let via = self.endpoint.get_via(None)?;
+        let via = self.endpoint.get_via(None, None)?;
         let mut request =
             self.endpoint
                 .make_request(rsip::Method::Invite, recipient, via, form, to, last_seq);
