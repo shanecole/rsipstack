@@ -20,6 +20,7 @@ use tokio::{
     sync::mpsc::{error, unbounded_channel},
     time::sleep,
 };
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, trace, warn};
 
@@ -32,6 +33,8 @@ pub struct EndpointInner {
     incoming_sender: Mutex<Option<TransactionSender>>,
     cancel_token: CancellationToken,
     timer_interval: Duration,
+    pub transport_tx: UnboundedSender<TransportEvent>,
+    transport_rx: Mutex<UnboundedReceiver<TransportEvent>>,
 
     pub t1: Duration,
     pub t4: Duration,
@@ -57,6 +60,7 @@ impl EndpointInner {
         cancel_token: CancellationToken,
         timer_interval: Option<Duration>,
     ) -> Arc<Self> {
+        let (transport_tx, mut transport_rx) = unbounded_channel();
         Arc::new(EndpointInner {
             user_agent,
             timers: Timer::new(),
@@ -64,6 +68,8 @@ impl EndpointInner {
             transactions: Mutex::new(HashMap::new()),
             finished_transactions: Mutex::new(HashMap::new()),
             timer_interval: timer_interval.unwrap_or(Duration::from_millis(20)),
+            transport_tx,
+            transport_rx: Mutex::new(transport_rx),
             cancel_token,
             incoming_sender: Mutex::new(None),
             t1: Duration::from_millis(500),
@@ -88,9 +94,10 @@ impl EndpointInner {
 
     // process transport layer, receive message from transport layer
     async fn process_transport_layer(self: Arc<Self>) -> Result<()> {
-        let (transport_tx, mut transport_rx) = unbounded_channel();
+        let transport_tx = self.transport_tx.clone();
         self.transport_layer.serve_listens(transport_tx).await.ok();
 
+        let mut transport_rx = self.transport_rx.lock().unwrap();
         while let Some(event) = transport_rx.recv().await {
             match event {
                 TransportEvent::Incoming(msg, connection, from) => {
@@ -265,13 +272,19 @@ impl EndpointInner {
         }]);
         Ok(rr.into())
     }
-    pub fn get_via(&self, branch: Option<rsip::Param>) -> Result<rsip::typed::Via> {
-        let first_addr = self
-            .transport_layer
-            .get_addrs()
-            .first()
-            .ok_or(Error::EndpointError("not sipaddrs".to_string()))
-            .cloned()?;
+
+    pub fn get_via(&self, addr: Option<crate::transport::SipAddr>, branch: Option<rsip::Param>) -> Result<rsip::typed::Via> {
+        let first_addr = match addr {
+            Some(addr) => addr,
+            None => {
+                self
+                    .transport_layer
+                    .get_addrs()
+                    .first()
+                    .ok_or(Error::EndpointError("not sipaddrs".to_string()))
+                    .cloned()?
+            }
+        };
 
         let via = rsip::typed::Via {
             version: rsip::Version::V2,

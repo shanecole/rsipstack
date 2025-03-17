@@ -170,6 +170,7 @@ impl DialogInner {
         &self,
         method: rsip::Method,
         cseq: Option<u32>,
+        addr: Option<crate::transport::SipAddr>,
         branch: Option<Param>,
         headers: Option<Vec<rsip::Header>>,
         body: Option<Vec<u8>>,
@@ -180,7 +181,7 @@ impl DialogInner {
             method,
         };
 
-        let via = self.endpoint_inner.get_via(branch)?;
+        let via = self.endpoint_inner.get_via(addr, branch)?;
         headers.push(via.into());
         headers.push(Header::CallId(
             self.id.lock().unwrap().call_id.clone().into(),

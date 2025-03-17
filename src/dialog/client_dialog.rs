@@ -29,7 +29,7 @@ impl ClientInviteDialog {
         }
         let request = self
             .inner
-            .make_request(rsip::Method::Bye, None, None, None, None)?;
+            .make_request(rsip::Method::Bye, None, None, None, None, None)?;
         let resp = self.inner.do_request(request).await?;
         self.inner.transition(DialogState::Terminated(
             self.id(),
@@ -63,7 +63,7 @@ impl ClientInviteDialog {
 
         let request = self
             .inner
-            .make_request(rsip::Method::Info, None, None, None, None)?;
+            .make_request(rsip::Method::Info, None, None, None, None, None)?;
         self.inner.do_request(request.clone()).await?;
         self.inner
             .transition(DialogState::Info(self.id(), request))?;
@@ -207,6 +207,7 @@ impl ClientInviteDialog {
                     let ack = self.inner.make_request(
                         rsip::Method::Ack,
                         resp.cseq_header()?.seq().ok(),
+                        None,
                         branch,
                         None,
                         None,
