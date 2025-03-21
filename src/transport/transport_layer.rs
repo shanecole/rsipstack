@@ -363,18 +363,20 @@ mod tests {
     use rsip::{Host, Transport};
     use rsip_dns::{trust_dns_resolver::TokioAsyncResolver, ResolvableExt};
     use tokio::sync::mpsc;
+    use tokio::sync::mpsc::unbounded_channel;
 
     #[tokio::test]
     async fn test_lookup() -> Result<()> {
         let mut tl = super::TransportLayer::new(tokio_util::sync::CancellationToken::new());
+        let (sender, mut receiver) = unbounded_channel();
 
         let first_uri = "sip:bob@127.0.0.1:5060".try_into().expect("parse uri");
-        assert!(tl.lookup(&first_uri).await.is_err());
+        assert!(tl.lookup(&first_uri, sender.clone()).await.is_err());
         let udp_peer = UdpConnection::create_connection("127.0.0.1:0".parse()?, None).await?;
         let udp_peer_addr = udp_peer.get_addr().to_owned();
         tl.add_transport(udp_peer.into());
 
-        let target = tl.lookup(&first_uri).await?;
+        let target = tl.lookup(&first_uri, sender.clone()).await?;
         assert_eq!(target.get_addr(), &udp_peer_addr);
 
         // test outbound
@@ -384,7 +386,7 @@ mod tests {
         tl.outbound = Some(outbound.clone());
 
         // must return the outbound transport
-        let target = tl.lookup(&first_uri).await?;
+        let target = tl.lookup(&first_uri, sender.clone()).await?;
         assert_eq!(target.get_addr(), &outbound);
         Ok(())
     }
