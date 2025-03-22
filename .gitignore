@@ -5,3 +5,5 @@ Cargo.lock
 .env.*
 *~
 prompt.txt
+/test/web/.next
+/test/web/node_modules
