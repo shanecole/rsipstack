@@ -155,7 +155,7 @@ async fn test_tcp_udp_interop() -> Result<()> {
 /// Test WebSocket functionality
 #[cfg(feature = "websocket")]
 #[tokio::test]
-#[ignore] // Requires external WebSocket server to run
+//#[ignore] // Requires external WebSocket server to run
 async fn test_websocket() -> Result<()> {
     // Create transport layer
     let cancel_token = CancellationToken::new();
@@ -174,7 +174,7 @@ async fn test_websocket() -> Result<()> {
     info!("Created WebSocket server on {}", ws_addr);
 
     // Start transport layer
-    transport_layer.serve_listens(sender.clone()).await?;
+    //transport_layer.serve_listens(sender.clone()).await?;
 
     // Create WebSocket client connection
     let uri: rsip::Uri = format!(
@@ -198,13 +198,24 @@ async fn test_websocket() -> Result<()> {
     let sip_message = SipMessage::try_from(test_message)?;
     connection.send(sip_message.clone(), None).await?;
 
-    // Wait for message
-    let event = wait_for_event(&mut receiver).await?;
-    match event {
-        TransportEvent::Incoming(msg, _, _) => {
-            assert_eq!(msg.to_string(), sip_message.to_string());
+    // Wait for create
+    {
+        let event = wait_for_event(&mut receiver).await?;
+        match event {
+            TransportEvent::New(sg) => {}
+            _ => panic!("Expected New event"),
         }
-        _ => panic!("Expected Incoming event"),
+    }
+
+    // Wait for message
+    {
+        let event = wait_for_event(&mut receiver).await?;
+        match event {
+            TransportEvent::Incoming(msg, _, _) => {
+                assert_eq!(msg.to_string(), sip_message.to_string());
+            }
+            _ => panic!("Expected Incoming event"),
+        }
     }
 
     cancel_token.cancel();
