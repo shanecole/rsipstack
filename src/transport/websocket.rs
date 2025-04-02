@@ -133,7 +133,6 @@ impl WebSocketConnection {
                                 ws_read: Arc::new(Mutex::new(ws_stream)),
                             }),
                         };
-                        connection.serve_loop(sender_clone.clone());
                         let sip_connection = SipConnection::WebSocket(connection.clone());
 
                         if let Err(e) =
@@ -142,6 +141,7 @@ impl WebSocketConnection {
                             error!("Error sending new connection event: {:?}", e);
                             return;
                         }
+                        connection.serve_loop(sender_clone.clone()).await;
                     });
                 }
                 Err(e) => {
