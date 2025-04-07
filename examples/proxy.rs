@@ -184,13 +184,13 @@ impl TryFrom<&rsip::Request> for User {
             rsip::Param::Transport(t) => {
                 destination.r#type = Some(t.clone());
             }
-            rsip::Param::Received(r) => match r.value().to_string().as_str().try_into() {
+            rsip::Param::Received(r) => match r.value().try_into() {
                 Ok(addr) => destination.addr.host = addr,
                 Err(_) => {}
             },
             rsip::Param::Other(o, Some(v)) => {
                 if o.value().eq_ignore_ascii_case("rport") {
-                    match v.value().to_string().try_into() {
+                    match v.value().try_into() {
                         Ok(port) => destination.addr.port = Some(port),
                         Err(_) => {}
                     }
