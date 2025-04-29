@@ -21,7 +21,8 @@ type WsSink = futures_util::stream::SplitSink<
     WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>,
     Message,
 >;
-type WsRead = futures_util::stream::SplitStream<WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>>;
+type WsRead =
+    futures_util::stream::SplitStream<WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>>;
 
 pub struct WebSocketInner {
     pub local_addr: SipAddr,
@@ -122,7 +123,7 @@ impl WebSocketConnection {
                             };
 
                         // Split the WebSocket stream
-                        let (ws_sink, mut ws_stream) = ws_stream.split();
+                        let (ws_sink, ws_stream) = ws_stream.split();
 
                         // Create a new WebSocket connection
                         let connection = WebSocketConnection {
@@ -141,7 +142,12 @@ impl WebSocketConnection {
                             error!("Error sending new connection event: {:?}", e);
                             return;
                         }
-                        connection.serve_loop(sender_clone.clone()).await;
+                        match connection.serve_loop(sender_clone.clone()).await {
+                            Ok(_) => {}
+                            Err(e) => {
+                                error!("Error serving WebSocket connection: {:?}", e);
+                            }
+                        }
                     });
                 }
                 Err(e) => {
@@ -161,7 +167,7 @@ impl StreamConnection for WebSocketConnection {
     async fn send_message(&self, msg: SipMessage) -> Result<()> {
         let data = msg.to_string();
         let mut sink = self.inner.ws_sink.lock().await;
-        info!("WebSocket send:{}",data);
+        info!("WebSocket send:{}", data);
         sink.send(Message::Text(data.into())).await?;
         Ok(())
     }
@@ -178,30 +184,24 @@ impl StreamConnection for WebSocketConnection {
         let mut ws_read = self.inner.ws_read.lock().await;
         while let Some(msg) = ws_read.next().await {
             match msg {
-                Ok(Message::Text(text)) => {
-                    match SipMessage::try_from(text.as_str()) {
-                        Ok(sip_msg) => {
-                            if let Err(e) =
-                                sender.send(TransportEvent::Incoming(
-                                    sip_msg,
-                                    sip_connection.clone(),
-                                    remote_addr.clone(),
-                                ))
-                            {
-                                error!("Error sending incoming message: {:?}", e);
-                                break;
-                            }
-                        }
-                        Err(e) => {
-                            warn!("Error parsing SIP message: {}", e);
+                Ok(Message::Text(text)) => match SipMessage::try_from(text.as_str()) {
+                    Ok(sip_msg) => {
+                        if let Err(e) = sender.send(TransportEvent::Incoming(
+                            sip_msg,
+                            sip_connection.clone(),
+                            remote_addr.clone(),
+                        )) {
+                            error!("Error sending incoming message: {:?}", e);
+                            break;
                         }
                     }
-                }
+                    Err(e) => {
+                        warn!("Error parsing SIP message: {}", e);
+                    }
+                },
                 Ok(Message::Binary(bin)) => {
-                    if bin == KEEPALIVE_REQUEST {
-                        if let Err(e) =
-                            self.send_raw(KEEPALIVE_RESPONSE).await
-                        {
+                    if bin == *KEEPALIVE_REQUEST {
+                        if let Err(e) = self.send_raw(KEEPALIVE_RESPONSE).await {
                             error!("Error sending keepalive response: {:?}", e);
                         }
                         continue;
@@ -210,17 +210,12 @@ impl StreamConnection for WebSocketConnection {
                     match std::str::from_utf8(&bin) {
                         Ok(text) => match SipMessage::try_from(text) {
                             Ok(sip_msg) => {
-                                if let Err(e) =
-                                    sender.send(TransportEvent::Incoming(
-                                        sip_msg,
-                                        sip_connection.clone(),
-                                        remote_addr.clone(),
-                                    ))
-                                {
-                                    error!(
-                                        "Error sending incoming message: {:?}",
-                                        e
-                                    );
+                                if let Err(e) = sender.send(TransportEvent::Incoming(
+                                    sip_msg,
+                                    sip_connection.clone(),
+                                    remote_addr.clone(),
+                                )) {
+                                    error!("Error sending incoming message: {:?}", e);
                                     break;
                                 }
                             }

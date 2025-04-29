@@ -15,12 +15,12 @@ use std::{
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio::{
     select,
     sync::mpsc::{error, unbounded_channel},
     time::sleep,
 };
-use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, trace, warn};
 
@@ -60,7 +60,7 @@ impl EndpointInner {
         cancel_token: CancellationToken,
         timer_interval: Option<Duration>,
     ) -> Arc<Self> {
-        let (transport_tx, mut transport_rx) = unbounded_channel();
+        let (transport_tx, transport_rx) = unbounded_channel();
         Arc::new(EndpointInner {
             user_agent,
             timers: Timer::new(),
@@ -273,17 +273,19 @@ impl EndpointInner {
         Ok(rr.into())
     }
 
-    pub fn get_via(&self, addr: Option<crate::transport::SipAddr>, branch: Option<rsip::Param>) -> Result<rsip::typed::Via> {
+    pub fn get_via(
+        &self,
+        addr: Option<crate::transport::SipAddr>,
+        branch: Option<rsip::Param>,
+    ) -> Result<rsip::typed::Via> {
         let first_addr = match addr {
             Some(addr) => addr,
-            None => {
-                self
-                    .transport_layer
-                    .get_addrs()
-                    .first()
-                    .ok_or(Error::EndpointError("not sipaddrs".to_string()))
-                    .cloned()?
-            }
+            None => self
+                .transport_layer
+                .get_addrs()
+                .first()
+                .ok_or(Error::EndpointError("not sipaddrs".to_string()))
+                .cloned()?,
         };
 
         let via = rsip::typed::Via {

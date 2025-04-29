@@ -1,6 +1,6 @@
 [package]
 name = "rsipstack"
-version = "0.1.4"
+version = "0.1.5"
 edition = "2021"
 description = "SIP Stack Rust library for building SIP applications"
 license = "MIT"
@@ -15,11 +15,11 @@ categories = ["network-programming", "multimedia"]
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-async-trait = "0.1.83"
+async-trait = "0.1.88"
 futures = "0.3.31"
-log = "0.4.22"
+log = "0.4.27"
 rsip = { version = "0.4.0" }
-tracing = "0.1.40"
+tracing = "0.1.41"
 wasm-bindgen = "0.2.84"
 # The `console_error_panic_hook` crate provides better debugging of panics by
 # logging them with `console.error`. This is great for development, but requires
@@ -27,18 +27,18 @@ wasm-bindgen = "0.2.84"
 # code size when deploying.
 console_error_panic_hook = { version = "0.1.7", optional = true }
 wasm-bindgen-futures = "0.4.45"
-tokio-util = { version = "0.7.13", features = ["full"] }
+tokio-util = { version = "0.7.15", features = ["full"] }
 tracing-subscriber = { version = "0.3.19", features = ["local-time"] }
-uuid = { version = "1.15.1", features = ["v4"] }
-rand = { version = "0.9.0" }
+uuid = { version = "1.16.0", features = ["v4"] }
+rand = { version = "0.9.1" }
 get_if_addrs = "0.5.3"
 rsip-dns = { version = "0.1.4", features = ["trust-dns"] }
-bytes = "1.5.0"
+bytes = "1.10.1"
 futures-util = "0.3.30"
-tokio-tungstenite = { version = "0.24.0", optional = true }
-tokio-rustls = { version = "0.26.1", optional = true }
+tokio-tungstenite = { version = "0.26.2", optional = true }
+tokio-rustls = { version = "0.26.2", optional = true }
 rustls-pemfile = { version = "2.2.0", optional = true }
-webpki-roots = { version = "0.26.8", optional = true }
+webpki-roots = { version = "0.26.9", optional = true }
 rustls = "0.23.23"
 
 [features]
@@ -48,24 +48,24 @@ websocket = ["tokio-tungstenite"]
 all-transports = ["rustls", "websocket"]
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-tokio = { version = "1.43.0", features = ["time", "sync", "macros", "io-util"] }
-getrandom = { version = "0.3.1" }
-uuid = { version = "1.15.1" }
+tokio = { version = "1.44.2", features = ["time", "sync", "macros", "io-util"] }
+getrandom = { version = "0.3.2" }
+uuid = { version = "1.16.0" }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-tokio = { version = "1.43.0", features = ["full"] }
+tokio = { version = "1.44.2", features = ["full"] }
 
 [dev-dependencies]
-wasm-bindgen-test = "0.3.34"
+wasm-bindgen-test = "0.3.50"
 dotenv = "0.15"
-clap = { version = "4.0", features = ["derive"] }
+clap = { version = "4.5.37", features = ["derive"] }
 sdp-rs = "0.2.1"
 rtp-rs = "0.6.0"
-stun-rs = "0.1.9"
+stun-rs = "0.1.11"
 openai-api-rs = "6.0.3"
 base64 = "0.22.1"
 serde = "1.0.217"
-serde_json = "1.0.135"
+serde_json = "1.0.140"
 dasp = { version = "0.11", features = ["all"] }
 
 

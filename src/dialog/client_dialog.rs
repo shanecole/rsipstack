@@ -98,6 +98,7 @@ impl ClientInviteDialog {
                 rsip::Method::Invite => {}
                 rsip::Method::Bye => return self.handle_bye(tx).await,
                 rsip::Method::Info => return self.handle_info(tx).await,
+                rsip::Method::Options => return self.handle_options(tx).await,
                 _ => {
                     info!("invalid request method: {:?}", tx.original.method);
                     tx.reply(rsip::StatusCode::MethodNotAllowed).await?;
@@ -125,8 +126,17 @@ impl ClientInviteDialog {
     }
 
     async fn handle_info(&mut self, mut tx: Transaction) -> Result<()> {
+        info!("received info {}", tx.original.uri);
         self.inner
             .transition(DialogState::Info(self.id(), tx.original.clone()))?;
+        tx.reply(rsip::StatusCode::OK).await?;
+        Ok(())
+    }
+
+    async fn handle_options(&mut self, mut tx: Transaction) -> Result<()> {
+        info!("received options {}", tx.original.uri);
+        self.inner
+            .transition(DialogState::Options(self.id(), tx.original.clone()))?;
         tx.reply(rsip::StatusCode::OK).await?;
         Ok(())
     }
@@ -220,7 +230,7 @@ impl ClientInviteDialog {
                     match resp.status_code {
                         StatusCode::OK => {
                             self.inner
-                                .transition(DialogState::WaitAck(dialog_id.clone(), resp))?;
+                                .transition(DialogState::Confirmed(dialog_id.clone()))?;
                         }
                         _ => {
                             info!("received failure response: {}", resp.status_code);

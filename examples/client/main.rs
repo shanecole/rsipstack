@@ -20,7 +20,6 @@ use tokio::{select, time::sleep};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info};
 mod play_file;
-mod realtime;
 mod stun;
 #[derive(Debug, Clone)]
 struct MediaSessionOption {
@@ -28,10 +27,6 @@ struct MediaSessionOption {
     pub stun_server: Option<String>,
     pub external_ip: Option<String>,
     pub rtp_start_port: u16,
-    pub use_realtime: bool,
-    pub realtime_token: String,
-    pub realtime_endpoint: String,
-    pub realtime_prompt: String,
 }
 
 /// A SIP client example that sends a REGISTER request to a SIP server.
@@ -70,21 +65,6 @@ struct Args {
 
     #[arg(long)]
     call: Option<String>,
-
-    #[arg(long)]
-    realtime: bool,
-
-    #[arg(long)]
-    realtime_token: Option<String>,
-
-    #[arg(long)]
-    realtime_endpoint: Option<String>,
-
-    #[arg(
-        long,
-        default_value = "You are a helpful, witty, and friendly AI. Act like a human, but remember that you aren't a human and that you can't do human things in the real world"
-    )]
-    prompt: Option<String>,
 }
 
 // A sip client example, that sends a REGISTER request to a sip server.
@@ -116,39 +96,11 @@ async fn main() -> rsipstack::Result<()> {
         .password
         .unwrap_or(env::var("SIP_PASSWORD").unwrap_or_default());
 
-    let realtime_token = args
-        .realtime_token
-        .clone()
-        .unwrap_or(env::var("OPENAI_API_KEY").unwrap_or_default());
-    let realtime_endpoint = args
-        .realtime_endpoint
-        .clone()
-        .unwrap_or(env::var("WSS_URL").unwrap_or_default());
-
-    if args.realtime && (realtime_token.is_empty() || realtime_endpoint.is_empty()) {
-        info!("realtime token or endpoint is empty");
-        return Err(rsipstack::Error::Error(
-            "realtime token or endpoint is empty".to_string(),
-        ));
-    }
-
-    let prompt = match args.prompt {
-        Some(p) => match std::fs::read_to_string(&p) {
-            Ok(p) => p,
-            Err(_) => p,
-        },
-        None => String::new(),
-    };
-
     let opt = MediaSessionOption {
         stun: args.stun,
         stun_server: args.stun_server.clone(),
         external_ip: args.external_ip.clone(),
         rtp_start_port: args.rtp_start_port,
-        use_realtime: args.realtime,
-        realtime_token,
-        realtime_endpoint,
-        realtime_prompt: prompt,
     };
 
     let token = CancellationToken::new();
@@ -435,24 +387,9 @@ async fn make_call(
 
     let peer_addr = format!("{}:{}", peer_addr, peer_port);
     info!("Peer address: {}", peer_addr);
-
-    if media_option.use_realtime {
-        realtime::bridge_realtime(
-            media_option.realtime_token,
-            media_option.realtime_endpoint,
-            media_option.realtime_prompt,
-            rtp_conn,
-            rtp_token,
-            ssrc,
-            peer_addr,
-        )
+    play_example_file(rtp_conn, rtp_token, ssrc, peer_addr)
         .await
-        .expect("bridge_realtime");
-    } else {
-        play_example_file(rtp_conn, rtp_token, ssrc, peer_addr)
-            .await
-            .expect("play example file");
-    }
+        .expect("play example file");
     dialog.bye().await.expect("send BYE");
     Ok(())
 }
@@ -491,29 +428,10 @@ async fn play_example_pcmu(opt: &MediaSessionOption, dialog: ServerInviteDialog)
 
     let peer_addr = format!("{}:{}", peer_addr, peer_port);
     let rtp_token = dialog.cancel_token().child_token();
-    let use_realtime = opt.use_realtime;
-
-    let realtime_token = opt.realtime_token.clone();
-    let realtime_endpoint = opt.realtime_endpoint.clone();
-    let realtime_prompt = opt.realtime_prompt.clone();
     tokio::spawn(async move {
-        if use_realtime {
-            realtime::bridge_realtime(
-                realtime_token,
-                realtime_endpoint,
-                realtime_prompt,
-                conn,
-                rtp_token,
-                ssrc,
-                peer_addr,
-            )
+        play_example_file(conn, rtp_token, ssrc, peer_addr)
             .await
-            .expect("bridge_realtime");
-        } else {
-            play_example_file(conn, rtp_token, ssrc, peer_addr)
-                .await
-                .expect("play example file");
-        }
+            .expect("play example file");
         dialog.bye().await.expect("send BYE");
     });
     Ok(())

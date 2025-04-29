@@ -46,8 +46,8 @@ pub async fn build_rtp_conn(
             }
         }
     }
-    let codec = if opt.use_realtime { 8 } else { 0 };
-    let codec_name = if opt.use_realtime { "PCMA" } else { "PCMU" };
+    let codec = 0;
+    let codec_name = "PCMU";
     let socketaddr: SocketAddr = conn.get_addr().addr.to_owned().try_into()?;
     let sdp = format!(
         "v=0\r\n\

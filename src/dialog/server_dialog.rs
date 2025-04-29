@@ -34,9 +34,11 @@ impl ServerInviteDialog {
                 body,
             );
 
-            sender
-                .send(TransactionEvent::Respond(resp))
-                .map_err(Into::into)
+            sender.send(TransactionEvent::Respond(resp.clone()))?;
+
+            self.inner
+                .transition(DialogState::WaitAck(self.id(), resp))?;
+            Ok(())
         } else {
             Err(crate::Error::DialogError(
                 "transaction is already terminated".to_string(),
@@ -122,10 +124,15 @@ impl ServerInviteDialog {
 
         if self.inner.is_confirmed() {
             match tx.original.method {
-                rsip::Method::Invite => {}
-                rsip::Method::Ack => {}
+                rsip::Method::Invite | rsip::Method::Ack => {
+                    info!(
+                        "invalid request received {} {}",
+                        tx.original.method, tx.original.uri
+                    );
+                }
                 rsip::Method::Bye => return self.handle_bye(tx).await,
                 rsip::Method::Info => return self.handle_info(tx).await,
+                rsip::Method::Options => return self.handle_options(tx).await,
                 _ => {
                     info!("invalid request method: {:?}", tx.original.method);
                     tx.reply(rsip::StatusCode::MethodNotAllowed).await?;
@@ -155,7 +162,7 @@ impl ServerInviteDialog {
     }
 
     async fn handle_bye(&mut self, mut tx: Transaction) -> Result<()> {
-        info!("received bye");
+        info!("received bye {}", tx.original.uri);
         self.inner
             .transition(DialogState::Terminated(self.id(), None))?;
         tx.reply(rsip::StatusCode::OK).await?;
@@ -163,8 +170,17 @@ impl ServerInviteDialog {
     }
 
     async fn handle_info(&mut self, mut tx: Transaction) -> Result<()> {
+        info!("received info {}", tx.original.uri);
         self.inner
             .transition(DialogState::Info(self.id(), tx.original.clone()))?;
+        tx.reply(rsip::StatusCode::OK).await?;
+        Ok(())
+    }
+
+    async fn handle_options(&mut self, mut tx: Transaction) -> Result<()> {
+        info!("received options {}", tx.original.uri);
+        self.inner
+            .transition(DialogState::Options(self.id(), tx.original.clone()))?;
         tx.reply(rsip::StatusCode::OK).await?;
         Ok(())
     }
@@ -186,11 +202,11 @@ impl ServerInviteDialog {
                 match msg {
                     SipMessage::Request(req) => match req.method {
                         rsip::Method::Ack => {
-                            info!("received ack");
+                            info!("received ack {}", req.uri);
                             self.inner.transition(DialogState::Confirmed(self.id()))?;
                         }
                         rsip::Method::Cancel => {
-                            info!("received cancel");
+                            info!("received cancel {}", req.uri);
                             tx.reply(rsip::StatusCode::RequestTerminated).await?;
                             self.inner.transition(DialogState::Terminated(
                                 self.id(),

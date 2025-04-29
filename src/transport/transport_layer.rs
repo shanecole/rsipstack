@@ -68,7 +68,11 @@ impl TransportLayer {
         self.inner.del_connection(addr)
     }
 
-    pub async fn lookup(&self, uri: &rsip::uri::Uri, sender: TransportSender) -> Result<SipConnection> {
+    pub async fn lookup(
+        &self,
+        uri: &rsip::uri::Uri,
+        sender: TransportSender,
+    ) -> Result<SipConnection> {
         self.inner.lookup(uri, self.outbound.as_ref(), sender).await
     }
 
@@ -138,7 +142,7 @@ impl TransportLayer {
     pub async fn add_tls_listener(
         &self,
         local: SocketAddr,
-        sender: TransportSender,
+        _sender: TransportSender,
     ) -> Result<SipAddr> {
         let config_guard = self.inner.config.lock().unwrap();
         let config = match &config_guard.tls {
@@ -243,7 +247,7 @@ impl TransportLayerInner {
         &'a self,
         uri: &rsip::uri::Uri,
         outbound: Option<&'a SipAddr>,
-        sender: TransportSender
+        sender: TransportSender,
     ) -> Result<SipConnection> {
         let target = if let Some(addr) = outbound {
             addr
@@ -259,23 +263,22 @@ impl TransportLayerInner {
             let mut lookup = rsip_dns::Lookup::from(context);
             match lookup.resolve_next().await {
                 Some(mut target) => {
-                        match uri.host_with_port.host {
-                            rsip::Host::IpAddr(_) => {
-                                if let Some(port) = uri.host_with_port.port {
-                                    target.port = port;
-                                }
-                            }
-                            _ => {
+                    match uri.host_with_port.host {
+                        rsip::Host::IpAddr(_) => {
+                            if let Some(port) = uri.host_with_port.port {
+                                target.port = port;
                             }
                         }
-                        &SipAddr {
-                            r#type: Some(target.transport),
-                            addr: HostWithPort::from(SocketAddr::new(
-                                target.ip_addr,
-                                u16::from(target.port),
-                            )),
-                        }
-                },
+                        _ => {}
+                    }
+                    &SipAddr {
+                        r#type: Some(target.transport),
+                        addr: HostWithPort::from(SocketAddr::new(
+                            target.ip_addr,
+                            u16::from(target.port),
+                        )),
+                    }
+                }
                 None => {
                     return Err(crate::Error::DnsResolutionError(format!(
                         "DNS resolution error: {}",
@@ -346,10 +349,10 @@ impl TransportLayerInner {
 
         tokio::spawn(async move {
             select! {
-                    _ = sub_token.cancelled() => { }
-                    _ = transport.serve_loop(sender_clone.clone()) => {
-                    }
+                _ = sub_token.cancelled() => { }
+                _ = transport.serve_loop(sender_clone.clone()) => {
                 }
+            }
             listens_ref.lock().unwrap().remove(transport.get_addr());
             warn!("transport serve_loop exited: {}", transport.get_addr());
             sender_clone.send(TransportEvent::Closed(transport)).ok();
@@ -368,7 +371,7 @@ mod tests {
     #[tokio::test]
     async fn test_lookup() -> Result<()> {
         let mut tl = super::TransportLayer::new(tokio_util::sync::CancellationToken::new());
-        let (sender, mut receiver) = unbounded_channel();
+        let (sender, receiver) = unbounded_channel();
 
         let first_uri = "sip:bob@127.0.0.1:5060".try_into().expect("parse uri");
         assert!(tl.lookup(&first_uri, sender.clone()).await.is_err());
@@ -452,13 +455,12 @@ mod tests {
                         target.port = port;
                     }
                 }
-                _ => {
-                }
+                _ => {}
             }
             assert_eq!(uri.user().unwrap(), item.1 .0);
             assert_eq!(target.transport, item.1 .3);
             assert_eq!(target.ip_addr.to_string(), item.1 .1);
-            assert_eq!(target.port, item.1.2.into());
+            assert_eq!(target.port, item.1 .2.into());
         }
         Ok(())
     }

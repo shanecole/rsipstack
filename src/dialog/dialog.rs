@@ -39,6 +39,7 @@ pub enum DialogState {
     Updated(DialogId, rsip::Request),
     Notify(DialogId, rsip::Request),
     Info(DialogId, rsip::Request),
+    Options(DialogId, rsip::Request),
     Terminated(DialogId, Option<rsip::StatusCode>),
 }
 #[derive(Clone)]
@@ -375,6 +376,7 @@ impl std::fmt::Display for DialogState {
             DialogState::Updated(id, _) => write!(f, "{}(Updated)", id),
             DialogState::Notify(id, _) => write!(f, "{}(Notify)", id),
             DialogState::Info(id, _) => write!(f, "{}(Info)", id),
+            DialogState::Options(id, _) => write!(f, "{}(Options)", id),
             DialogState::Terminated(id, code) => write!(f, "{}(Terminated {:?})", id, code),
         }
     }

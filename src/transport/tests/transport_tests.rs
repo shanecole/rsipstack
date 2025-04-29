@@ -18,7 +18,6 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 
-
 /// Test TCP client and server
 #[tokio::test]
 async fn test_tcp_client_server() -> Result<()> {

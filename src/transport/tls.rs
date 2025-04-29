@@ -1,14 +1,15 @@
 use super::{
     connection::{TransportSender, KEEPALIVE_REQUEST, KEEPALIVE_RESPONSE},
     sip_addr::SipAddr,
-    stream::{send_raw_to_stream, send_to_stream, StreamConnection}, SipConnection, TransportEvent
+    stream::StreamConnection,
+    SipConnection, TransportEvent,
 };
 use crate::{error::Error, Result};
 use rsip::SipMessage;
-use std::{fmt, net::SocketAddr, sync::Arc};
 use rustls::client::danger::ServerCertVerifier;
+use std::{fmt, net::SocketAddr, sync::Arc};
 use tokio::{
-    io::{AsyncWriteExt, AsyncReadExt},
+    io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
     sync::Mutex,
 };
@@ -70,7 +71,10 @@ impl TlsConnection {
     }
 
     // Connect to a remote TLS server
-    pub async fn connect(remote_addr: &SipAddr, custom_verifier: Option<Arc<dyn ServerCertVerifier>>) -> Result<Self> {
+    pub async fn connect(
+        remote_addr: &SipAddr,
+        custom_verifier: Option<Arc<dyn ServerCertVerifier>>,
+    ) -> Result<Self> {
         // Create TLS configuration
         let root_store = RootCertStore::empty();
 
@@ -383,10 +387,13 @@ impl StreamConnection for TlsConnection {
             }
 
             match &buf[..len] {
-                KEEPALIVE_REQUEST => {
-                    self.send_raw(KEEPALIVE_RESPONSE);
-                    continue;
-                }
+                KEEPALIVE_REQUEST => match self.send_raw(KEEPALIVE_RESPONSE).await {
+                    Ok(_) => continue,
+                    Err(e) => {
+                        error!("Failed to send keepalive response: {}", e);
+                        break;
+                    }
+                },
                 KEEPALIVE_RESPONSE => continue,
                 _ => {
                     if buf.iter().all(|&b| b.is_ascii_whitespace()) {
@@ -398,11 +405,7 @@ impl StreamConnection for TlsConnection {
             let undecoded = match std::str::from_utf8(&buf[..len]) {
                 Ok(s) => s,
                 Err(e) => {
-                    info!(
-                        "decoding text ferror: {} buf: {:?}",
-                        e,
-                        &buf[..len]
-                    );
+                    info!("decoding text ferror: {} buf: {:?}", e, &buf[..len]);
                     continue;
                 }
             };
@@ -410,21 +413,16 @@ impl StreamConnection for TlsConnection {
             let sip_msg = match rsip::SipMessage::try_from(undecoded) {
                 Ok(msg) => msg,
                 Err(e) => {
-                    info!(
-                        "error parsing SIP message error: {} buf: {}",
-                        e, undecoded
-                    );
+                    info!("error parsing SIP message error: {} buf: {}", e, undecoded);
                     continue;
                 }
             };
 
-            if let Err(e) =
-                sender.send(TransportEvent::Incoming(
-                    sip_msg,
-                    sip_connection.clone(),
-                    remote_addr.clone(),
-                ))
-            {
+            if let Err(e) = sender.send(TransportEvent::Incoming(
+                sip_msg,
+                sip_connection.clone(),
+                remote_addr.clone(),
+            )) {
                 error!("Error sending incoming message: {:?}", e);
                 break;
             }
