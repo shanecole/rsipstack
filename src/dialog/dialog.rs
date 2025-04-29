@@ -353,7 +353,10 @@ impl DialogInner {
     pub(super) fn transition(&self, state: DialogState) -> Result<()> {
         self.state_sender.send(state.clone())?;
         match state {
-            DialogState::Updated(_, _) | DialogState::Notify(_, _) | DialogState::Info(_, _) => {
+            DialogState::Updated(_, _)
+            | DialogState::Notify(_, _)
+            | DialogState::Info(_, _)
+            | DialogState::Options(_, _) => {
                 return Ok(());
             }
             _ => {}
