@@ -1,6 +1,7 @@
 use super::dialog::DialogInnerRef;
 use super::DialogId;
 use crate::dialog::{authenticate::handle_client_authenticate, dialog::DialogState};
+use crate::rsip_ext::RsipResponseExt;
 use crate::transaction::transaction::Transaction;
 use crate::Result;
 use rsip::prelude::HeadersExt;
@@ -240,25 +241,17 @@ impl ClientInviteDialog {
                                 .transition(DialogState::Confirmed(dialog_id.clone()))?;
                         }
                         _ => {
-                            info!("received failure response: {}", resp.status_code);
+                            let mut reason = format!("{}", resp.status_code);
+                            if let Some(reason_phrase) = resp.reason_phrase() {
+                                reason = format!("{};{}", reason, reason_phrase);
+                            }
                             self.inner.transition(DialogState::Terminated(
                                 self.id(),
-                                Some(resp.status_code),
+                                Some(resp.status_code.clone()),
                             ))?;
+                            return Err(crate::Error::DialogError(reason, self.id()));
                         }
                     }
-                }
-            }
-        }
-
-        if let Some(ref resp) = final_response {
-            match resp.status_code.kind() {
-                StatusCodeKind::Successful | StatusCodeKind::Provisional => {}
-                _ => {
-                    return Err(crate::Error::DialogError(
-                        resp.status_code.to_string(),
-                        self.id(),
-                    ));
                 }
             }
         }

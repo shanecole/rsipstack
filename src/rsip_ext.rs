@@ -1,4 +1,22 @@
-pub trait RsipMessageExt {}
+use rsip::message::HasHeaders;
+pub trait RsipResponseExt {
+    fn reason_phrase(&self) -> Option<&str>;
+}
+
+impl RsipResponseExt for rsip::Response {
+    fn reason_phrase(&self) -> Option<&str> {
+        let headers = self.headers();
+        for header in headers.iter() {
+            if let rsip::Header::Other(name, value) = header {
+                if name.eq_ignore_ascii_case("reason") {
+                    return Some(value);
+                }
+            }
+        }
+        None
+    }
+}
+
 pub trait RsipHeadersExt {
     fn push_front(&mut self, header: rsip::Header);
 }
