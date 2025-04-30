@@ -168,6 +168,7 @@ impl ClientInviteDialog {
                         }
                         StatusCode::ProxyAuthenticationRequired | StatusCode::Unauthorized => {
                             if auth_sent {
+                                final_response = Some(resp.clone());
                                 info!("received {} response after auth sent", resp.status_code);
                                 self.inner.transition(DialogState::Terminated(
                                     self.id(),
@@ -197,12 +198,11 @@ impl ClientInviteDialog {
                         }
                         _ => {}
                     };
-                    let to_tag = resp.to_header()?.tag()?;
-                    let tag = to_tag.as_ref().ok_or(crate::Error::DialogError(
-                        "to tag not found".to_string(),
-                        self.id(),
-                    ))?;
-                    self.inner.update_remote_tag(tag.value())?;
+
+                    match resp.to_header()?.tag()? {
+                        Some(tag) => self.inner.update_remote_tag(tag.value())?,
+                        None => {}
+                    }
 
                     let branch = match resp.status_code.kind() {
                         StatusCodeKind::Successful => resp
@@ -223,10 +223,10 @@ impl ClientInviteDialog {
                         None,
                     )?;
 
-                    dialog_id = DialogId::try_from(&ack)?.clone();
-                    final_response = Some(resp.clone());
+                    if let Ok(id) = DialogId::try_from(&ack) {
+                        dialog_id = id;
+                    }
                     tx.send_ack(ack).await?;
-
                     match resp.status_code {
                         StatusCode::OK => {
                             self.inner
@@ -243,7 +243,18 @@ impl ClientInviteDialog {
                 }
             }
         }
-        trace!("process done");
+
+        if let Some(ref resp) = final_response {
+            match resp.status_code.kind() {
+                StatusCodeKind::Successful | StatusCodeKind::Provisional => {}
+                _ => {
+                    return Err(crate::Error::DialogError(
+                        resp.status_code.to_string(),
+                        self.id(),
+                    ));
+                }
+            }
+        }
         Ok((dialog_id, final_response))
     }
 }

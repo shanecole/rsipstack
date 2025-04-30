@@ -162,7 +162,7 @@ impl StreamConnection for TcpConnection {
 
             match &buf[..len] {
                 KEEPALIVE_REQUEST => {
-                    self.send_raw(KEEPALIVE_RESPONSE);
+                    self.send_raw(KEEPALIVE_RESPONSE).await?;
                     continue;
                 }
                 KEEPALIVE_RESPONSE => continue,

@@ -147,11 +147,7 @@ impl Transaction {
         headers: Vec<rsip::Header>,
         body: Option<Vec<u8>>,
     ) -> Result<()> {
-        let mut resp = self
-            .endpoint_inner
-            .make_response(&self.original, status_code, body);
-        resp.headers.extend(headers);
-        match resp.status_code.kind() {
+        match status_code.kind() {
             rsip::StatusCodeKind::Provisional => {}
             _ => {
                 let to = self.original.to_header()?;
@@ -162,6 +158,10 @@ impl Transaction {
                 }
             }
         }
+        let mut resp = self
+            .endpoint_inner
+            .make_response(&self.original, status_code, body);
+        resp.headers.extend(headers);
         self.respond(resp).await
     }
     /// Quick reply with status code
