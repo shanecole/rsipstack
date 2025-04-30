@@ -9,7 +9,7 @@ use rsip::message::HasHeaders;
 use rsip::prelude::HeadersExt;
 use rsip::{Header, Method, Request, Response, SipMessage, StatusCode};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
-use tracing::{debug, info, instrument, span, Level, Span};
+use tracing::{debug, info, instrument};
 
 pub type TransactionEventReceiver = UnboundedReceiver<TransactionEvent>;
 pub type TransactionEventSender = UnboundedSender<TransactionEvent>;
@@ -37,7 +37,6 @@ pub struct Transaction {
     pub timer_d: Option<u64>,
     pub timer_k: Option<u64>, // server invite only
     pub timer_g: Option<u64>, // server invite only
-    span: Span,
     is_cleaned_up: bool,
 }
 
@@ -50,7 +49,6 @@ impl Transaction {
         endpoint_inner: EndpointInnerRef,
     ) -> Self {
         let (tu_sender, tu_receiver) = unbounded_channel();
-        let span = span!(Level::INFO, "transaction", key = %key);
         info!("transaction created {:?} {}", transaction_type, key);
         let tx = Self {
             transaction_type,
@@ -69,7 +67,6 @@ impl Transaction {
             timer_g: None,
             tu_receiver,
             tu_sender,
-            span,
             is_cleaned_up: false,
         };
         tx.endpoint_inner
@@ -105,8 +102,6 @@ impl Transaction {
     // send client request
     #[instrument(skip(self))]
     pub async fn send(&mut self) -> Result<()> {
-        let span = self.span.clone();
-        let _enter = span.enter();
         match self.transaction_type {
             TransactionType::ClientInvite | TransactionType::ClientNonInvite => {}
             _ => {
@@ -172,8 +167,6 @@ impl Transaction {
     // send server response
     #[instrument(skip(self, response))]
     pub async fn respond(&mut self, response: Response) -> Result<()> {
-        let span = self.span.clone();
-        let _enter = span.or_current();
         match self.transaction_type {
             TransactionType::ServerInvite | TransactionType::ServerNonInvite => {}
             _ => {
@@ -239,8 +232,6 @@ impl Transaction {
     }
     #[instrument(skip(self, cancel))]
     pub async fn send_cancel(&mut self, cancel: Request) -> Result<()> {
-        let span = self.span.clone();
-        let _enter = span.or_current();
         if self.transaction_type != TransactionType::ClientInvite {
             return Err(Error::TransactionError(
                 "send_cancel is only valid for client invite transactions".to_string(),
@@ -267,8 +258,6 @@ impl Transaction {
     }
     #[instrument(skip(self, ack))]
     pub async fn send_ack(&mut self, ack: Request) -> Result<()> {
-        let span = self.span.clone();
-        let _enter = span.or_current();
         if self.transaction_type != TransactionType::ClientInvite {
             return Err(Error::TransactionError(
                 "send_ack is only valid for client invite transactions".to_string(),
@@ -300,8 +289,6 @@ impl Transaction {
     }
 
     pub async fn receive(&mut self) -> Option<SipMessage> {
-        let span = self.span.clone();
-        let _enter = span.enter();
         while let Some(event) = self.tu_receiver.recv().await {
             match event {
                 TransactionEvent::Received(msg, connection) => {
@@ -328,8 +315,6 @@ impl Transaction {
     }
 
     pub async fn send_trying(&mut self) -> Result<()> {
-        let span = self.span.clone();
-        let _enter = span.or_current();
         let response =
             self.endpoint_inner
                 .make_response(&self.original, rsip::StatusCode::Trying, None);
@@ -664,7 +649,6 @@ impl Transaction {
 impl Drop for Transaction {
     fn drop(&mut self) {
         self.cleanup();
-        let _enter = self.span.enter();
-        info!("transaction dropped");
+        info!("transaction dropped: {}", self.key);
     }
 }

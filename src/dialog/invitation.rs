@@ -119,7 +119,6 @@ impl DialogLayer {
                 return Ok((dialog, resp));
             }
             Err(e) => {
-                info!("client invite dialog failed: {:?}", e);
                 self.inner.dialogs.write().unwrap().remove(&id);
                 return Err(e);
             }

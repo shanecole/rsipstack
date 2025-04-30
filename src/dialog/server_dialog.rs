@@ -99,9 +99,6 @@ impl ServerInviteDialog {
     }
 
     pub async fn handle(&mut self, mut tx: Transaction) -> Result<()> {
-        let span = info_span!("server_invite_dialog", dialog_id = %self.id());
-        let _enter = span.enter();
-
         trace!(
             "handle request: {:?} state:{}",
             tx.original,

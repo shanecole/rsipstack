@@ -72,9 +72,6 @@ impl ClientInviteDialog {
     }
 
     pub async fn handle(&mut self, mut tx: Transaction) -> Result<()> {
-        let span = info_span!("client_invite_dialog", dialog_id = %self.id());
-        let _enter = span.enter();
-
         trace!(
             "handle request: {:?} state:{}",
             tx.original,
@@ -146,9 +143,6 @@ impl ClientInviteDialog {
         &self,
         mut tx: Transaction,
     ) -> Result<(DialogId, Option<Response>)> {
-        let span = info_span!("client_dialog", dialog_id = %self.id());
-        let _enter = span.enter();
-
         self.inner.transition(DialogState::Calling(self.id()))?;
         let mut auth_sent = false;
         tx.send().await?;
@@ -199,7 +193,7 @@ impl ClientInviteDialog {
                         }
                         _ => {}
                     };
-
+                    final_response = Some(resp.clone());
                     match resp.to_header()?.tag()? {
                         Some(tag) => self.inner.update_remote_tag(tag.value())?,
                         None => {}
