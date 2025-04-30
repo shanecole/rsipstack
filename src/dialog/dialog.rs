@@ -178,7 +178,7 @@ impl DialogInner {
     ) -> Result<rsip::Request> {
         let mut headers = headers.unwrap_or_default();
         let cseq_header = CSeq {
-            seq: cseq.unwrap_or(self.increment_remove_seq()),
+            seq: cseq.unwrap_or_else(|| self.increment_remove_seq()),
             method,
         };
 

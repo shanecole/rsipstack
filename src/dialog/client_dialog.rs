@@ -204,21 +204,28 @@ impl ClientInviteDialog {
                         None => {}
                     }
 
-                    let branch = match resp.status_code.kind() {
-                        StatusCodeKind::Successful => resp
-                            .via_header()?
-                            .params()?
-                            .iter()
-                            .find(|p| matches!(p, rsip::Param::Branch(_)))
-                            .map(|p| p.clone()),
-                        _ => None,
+                    let branch = match tx
+                        .original
+                        .via_header()?
+                        .params()?
+                        .iter()
+                        .find(|p| matches!(p, rsip::Param::Branch(_)))
+                    {
+                        Some(p) => p.clone(),
+                        None => {
+                            info!("no branch found in via header");
+                            return Err(crate::Error::DialogError(
+                                "no branch found in via header".to_string(),
+                                self.id(),
+                            ));
+                        }
                     };
 
                     let ack = self.inner.make_request(
                         rsip::Method::Ack,
                         resp.cseq_header()?.seq().ok(),
                         None,
-                        branch,
+                        Some(branch),
                         None,
                         None,
                     )?;

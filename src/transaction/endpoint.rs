@@ -293,7 +293,7 @@ impl EndpointInner {
             transport: first_addr.r#type.unwrap_or_default(),
             uri: first_addr.addr.into(),
             params: vec![
-                branch.unwrap_or(make_via_branch()),
+                branch.unwrap_or_else(|| make_via_branch()),
                 rsip::Param::Other("rport".into(), None),
             ]
             .into(),
