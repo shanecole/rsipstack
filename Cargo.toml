@@ -1,6 +1,6 @@
 [package]
 name = "rsipstack"
-version = "0.1.7"
+version = "0.1.8"
 edition = "2021"
 description = "SIP Stack Rust library for building SIP applications"
 license = "MIT"
@@ -38,7 +38,7 @@ futures-util = "0.3.30"
 tokio-tungstenite = { version = "0.26.2", optional = true }
 tokio-rustls = { version = "0.26.2", optional = true }
 rustls-pemfile = { version = "2.2.0", optional = true }
-webpki-roots = { version = "0.26.9", optional = true }
+webpki-roots = { version = "1.0.0", optional = true }
 rustls = "0.23.23"
 
 [features]

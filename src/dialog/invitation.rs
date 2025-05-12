@@ -23,6 +23,7 @@ pub struct InviteOption {
     pub offer: Option<Vec<u8>>,
     pub contact: rsip::Uri,
     pub credential: Option<Credential>,
+    pub headers: Option<Vec<rsip::Header>>,
 }
 
 impl DialogLayer {
@@ -63,6 +64,12 @@ impl DialogLayer {
                 .unwrap_or("application/sdp".to_string())
                 .into(),
         ));
+        // can override default headers
+        if let Some(headers) = opt.headers.as_ref() {
+            for header in headers {
+                request.headers.unique_push(header.clone());
+            }
+        }
         Ok(request)
     }
 

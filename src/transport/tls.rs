@@ -258,7 +258,7 @@ impl TlsConnection {
                     }
                 };
 
-                let mut root_store = RootCertStore::empty();
+                let root_store = RootCertStore::empty();
 
                 // Use webpki-roots to add trusted root certificates
                 //root_store.add_server_trust_anchors(&webpki_roots::TLS_SERVER_ROOTS);

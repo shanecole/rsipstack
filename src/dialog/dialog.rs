@@ -408,4 +408,17 @@ impl Dialog {
             }
         }
     }
+
+    pub async fn hangup(&self) -> Result<()> {
+        match self {
+            Dialog::ServerInvite(d) => d.bye().await,
+            Dialog::ClientInvite(d) => {
+                if d.inner.is_confirmed() {
+                    d.bye().await
+                } else {
+                    d.cancel().await
+                }
+            }
+        }
+    }
 }

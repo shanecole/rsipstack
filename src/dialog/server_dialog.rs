@@ -7,7 +7,7 @@ use rsip::prelude::HeadersExt;
 use rsip::{Header, Request, SipMessage, StatusCode};
 use std::sync::atomic::Ordering;
 use tokio_util::sync::CancellationToken;
-use tracing::{info, info_span, trace, warn};
+use tracing::{info, trace, warn};
 
 #[derive(Clone)]
 pub struct ServerInviteDialog {

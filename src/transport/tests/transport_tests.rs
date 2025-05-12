@@ -5,10 +5,6 @@ use crate::{
     },
     Result,
 };
-
-#[cfg(feature = "rustls")]
-use crate::transport::tls::{TlsConfig, TlsConnection};
-
 use rsip::{SipMessage, Transport};
 use std::time::Duration;
 use tokio::{
@@ -201,7 +197,7 @@ async fn test_websocket() -> Result<()> {
     {
         let event = wait_for_event(&mut receiver).await?;
         match event {
-            TransportEvent::New(sg) => {}
+            TransportEvent::New(_sg) => {}
             _ => panic!("Expected New event"),
         }
     }

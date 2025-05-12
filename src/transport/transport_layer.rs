@@ -158,7 +158,7 @@ impl TransportLayer {
         drop(config_guard);
 
         // Create TCP listener
-        let (listener, addr) = tokio::net::TcpListener::bind(local).await.map(|l| {
+        let (_listener, addr) = tokio::net::TcpListener::bind(local).await.map(|l| {
             let local_addr = l.local_addr().unwrap();
             let sip_addr = SipAddr {
                 r#type: Some(rsip::transport::Transport::Tls),

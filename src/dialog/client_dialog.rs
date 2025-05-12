@@ -5,10 +5,10 @@ use crate::rsip_ext::RsipResponseExt;
 use crate::transaction::transaction::Transaction;
 use crate::Result;
 use rsip::prelude::HeadersExt;
-use rsip::{Response, SipMessage, StatusCode, StatusCodeKind};
+use rsip::{Response, SipMessage, StatusCode};
 use std::sync::atomic::Ordering;
 use tokio_util::sync::CancellationToken;
-use tracing::{info, info_span, trace};
+use tracing::{info, trace};
 
 #[derive(Clone)]
 pub struct ClientInviteDialog {
