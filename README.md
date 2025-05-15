@@ -36,18 +36,26 @@ cargo run --example client
 ```
 
 Make a call to `sip:YOUR_NETWORK_IP:25060` from another sip client.(e.g. [linphone](https://www.linphone.org/))
-# Run with OpenAI realtime voice model
-
-1. apply for OpenAI API key
-2. set the API key in the environment variable `OPENAI_API_KEY`
+# Benchmark tools
+```bash
+# run server
+cargo run -r --bin bench_ua  -- -m server -p 5060
+```
 
 ```bash
-export OPENAI_API_KEY=your_openai_api_key
-# or moddify the .env file
+# run client with 1000 calls
+cargo run -r  --bin bench_ua  -- -m client -p 5061 -s 127.0.0.1:5060 -c 1000
+```
 
-cargo run --example client -- --realtime --prompt "What is the meaning of life?"
+The test monitor:
 
-# or prompt from the text
-cargo run --example client -- --realtime --prompt prompt.txt
-
+```bash
+=== SIP Benchmark UA Stats ===
+Dialogs: 9992
+Active Calls: 9983
+Rejected Calls: 0
+Failed Calls: 0
+Total Calls: 250276
+Calls/Second: 1501
+============================
 ```

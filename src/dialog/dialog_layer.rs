@@ -85,6 +85,10 @@ impl DialogLayer {
         self.inner.last_seq.load(Ordering::Relaxed)
     }
 
+    pub fn len(&self) -> usize {
+        self.inner.dialogs.read().unwrap().len()
+    }
+
     pub fn get_dialog(&self, id: &DialogId) -> Option<Dialog> {
         let dialogs = self.inner.dialogs.read().unwrap();
         match dialogs.get(id) {
