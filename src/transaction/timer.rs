@@ -60,38 +60,45 @@ impl<T> Timer<T> {
     }
 
     pub fn cancel(&self, task_id: u64) -> Option<T> {
-        self.id_to_tasks
-            .write()
-            .unwrap()
-            .remove(&task_id)
-            .and_then(|execute_at| {
-                let position = TimerKey {
-                    task_id,
-                    execute_at,
-                };
-                self.tasks.write().unwrap().remove(&position)
+        let position = { self.id_to_tasks.write().unwrap().remove(&task_id) };
+        if let Some(execute_at) = position {
+            self.tasks.write().unwrap().remove(&TimerKey {
+                task_id,
+                execute_at,
             })
+        } else {
+            None
+        }
     }
 
     pub fn poll(&self, now: Instant) -> Vec<T> {
         let mut result = Vec::new();
-        let mut tasks = self.tasks.write().unwrap();
+        let keys_to_remove = {
+            let mut tasks = self.tasks.write().unwrap();
+            let keys_to_remove = tasks
+                .range(
+                    ..=TimerKey {
+                        task_id: 0,
+                        execute_at: now,
+                    },
+                )
+                .map(|(key, _)| key.clone())
+                .collect::<Vec<_>>();
 
-        let keys_to_remove: Vec<_> = tasks
-            .range(
-                ..=TimerKey {
-                    task_id: 0,
-                    execute_at: now,
-                },
-            )
-            .map(|(key, _)| key.clone())
-            .collect();
-
-        let mut id_to_tasks = self.id_to_tasks.write().unwrap();
-
-        for key in keys_to_remove {
-            id_to_tasks.remove(&key.task_id);
-            tasks.remove(&key).map(|value| result.push(value));
+            if keys_to_remove.len() == 0 {
+                return result;
+            }
+            result.reserve(keys_to_remove.len());
+            for key in keys_to_remove.iter() {
+                tasks.remove(&key).map(|value| result.push(value));
+            }
+            keys_to_remove
+        };
+        {
+            let mut id_to_tasks = self.id_to_tasks.write().unwrap();
+            for key in keys_to_remove {
+                id_to_tasks.remove(&key.task_id);
+            }
         }
         result
     }
