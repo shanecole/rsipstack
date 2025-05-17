@@ -1,5 +1,3 @@
-use std::net::IpAddr;
-use get_if_addrs::get_if_addrs;
 use super::{
     authenticate::{handle_client_authenticate, Credential},
     DialogId,
@@ -11,13 +9,14 @@ use crate::{
         make_tag,
         transaction::Transaction,
     },
-    Result,
-    Error,
     transport::SipAddr,
+    Error, Result,
 };
+use get_if_addrs::get_if_addrs;
 use rsip::{HostWithPort, Response, SipMessage, StatusCode};
-use rsip_dns::ResolvableExt;
 use rsip_dns::trust_dns_resolver::TokioAsyncResolver;
+use rsip_dns::ResolvableExt;
+use std::net::IpAddr;
 use tracing::info;
 
 pub struct Registration {
@@ -84,7 +83,8 @@ impl Registration {
         .with_tag(make_tag());
 
         let first_addr = {
-            let mut addr = SipAddr::from(HostWithPort::from(Self::get_first_non_loopback_interface()?));
+            let mut addr =
+                SipAddr::from(HostWithPort::from(Self::get_first_non_loopback_interface()?));
             let context = rsip_dns::Context::initialize_from(
                 recipient.clone(),
                 rsip_dns::AsyncTrustDnsClient::new(
@@ -104,7 +104,7 @@ impl Registration {
                         "DNS resolution error: {}",
                         recipient
                     )))
-                }?
+                }?,
             }
         };
         let contact = self

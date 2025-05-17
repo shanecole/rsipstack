@@ -78,8 +78,6 @@ impl ServerInviteDialog {
             self.id(),
             resp.map(|r| r.status_code),
         ))?;
-        self.inner
-            .transition(DialogState::Terminated(self.id(), None))?;
         Ok(())
     }
 
