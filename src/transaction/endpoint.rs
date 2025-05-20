@@ -25,6 +25,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, trace, warn};
 
 pub struct EndpointInner {
+    pub allows: Vec<rsip::Method>,
     pub user_agent: String,
     pub timers: Timer<TransactionTimer>,
     pub transport_layer: TransportLayer,
@@ -43,6 +44,7 @@ pub struct EndpointInner {
 pub type EndpointInnerRef = Arc<EndpointInner>;
 
 pub struct EndpointBuilder {
+    allows: Vec<rsip::Method>,
     user_agent: String,
     transport_layer: Option<TransportLayer>,
     cancel_token: Option<CancellationToken>,
@@ -59,9 +61,11 @@ impl EndpointInner {
         transport_layer: TransportLayer,
         cancel_token: CancellationToken,
         timer_interval: Option<Duration>,
+        allows: Vec<rsip::Method>,
     ) -> Arc<Self> {
         let (transport_tx, transport_rx) = unbounded_channel();
         Arc::new(EndpointInner {
+            allows,
             user_agent,
             timers: Timer::new(),
             transport_layer,
@@ -305,6 +309,7 @@ impl EndpointInner {
 impl EndpointBuilder {
     pub fn new() -> Self {
         EndpointBuilder {
+            allows: Vec::new(),
             user_agent: USER_AGENT.to_string(),
             transport_layer: None,
             cancel_token: None,
@@ -312,26 +317,29 @@ impl EndpointBuilder {
         }
     }
 
-    pub fn user_agent(&mut self, user_agent: &str) -> &mut Self {
+    pub fn with_user_agent(&mut self, user_agent: &str) -> &mut Self {
         self.user_agent = user_agent.to_string();
         self
     }
 
-    pub fn transport_layer(&mut self, transport_layer: TransportLayer) -> &mut Self {
+    pub fn with_transport_layer(&mut self, transport_layer: TransportLayer) -> &mut Self {
         self.transport_layer.replace(transport_layer);
         self
     }
 
-    pub fn cancel_token(&mut self, cancel_token: CancellationToken) -> &mut Self {
+    pub fn with_cancel_token(&mut self, cancel_token: CancellationToken) -> &mut Self {
         self.cancel_token.replace(cancel_token);
         self
     }
 
-    pub fn timer_interval(&mut self, timer_interval: Duration) -> &mut Self {
+    pub fn with_timer_interval(&mut self, timer_interval: Duration) -> &mut Self {
         self.timer_interval.replace(timer_interval);
         self
     }
-
+    pub fn with_allows(&mut self, allows: Vec<rsip::Method>) -> &mut Self {
+        self.allows = allows;
+        self
+    }
     pub fn build(&mut self) -> Endpoint {
         let cancel_token = self.cancel_token.take().unwrap_or_default();
 
@@ -340,11 +348,16 @@ impl EndpointBuilder {
             .take()
             .unwrap_or(TransportLayer::new(cancel_token.child_token()));
 
+        let allows = self.allows.to_owned();
+        let user_agent = self.user_agent.to_owned();
+        let timer_interval = self.timer_interval.to_owned();
+
         let core = EndpointInner::new(
-            self.user_agent.clone(),
+            user_agent,
             transport_layer,
             cancel_token,
-            self.timer_interval,
+            timer_interval,
+            allows,
         );
 
         Endpoint { inner: core }

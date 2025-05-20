@@ -29,8 +29,8 @@ async fn test_server_transaction() {
     tl.add_transport(mock_conn.clone());
 
     let endpoint = EndpointBuilder::new()
-        .user_agent("rsipstack-test")
-        .transport_layer(tl)
+        .with_user_agent("rsipstack-test")
+        .with_transport_layer(tl)
         .build();
 
     let addr = endpoint

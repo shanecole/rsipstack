@@ -135,8 +135,8 @@ async fn main() -> rsipstack::Result<()> {
     transport_layer.add_transport(connection.into());
 
     let endpoint = EndpointBuilder::new()
-        .cancel_token(token.clone())
-        .transport_layer(transport_layer)
+        .with_cancel_token(token.clone())
+        .with_transport_layer(transport_layer)
         .build();
 
     let credential = Credential {

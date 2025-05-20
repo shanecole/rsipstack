@@ -19,8 +19,8 @@ pub(super) async fn create_test_endpoint(addr: Option<&str>) -> Result<Endpoint>
     }
 
     let endpoint = EndpointBuilder::new()
-        .user_agent("rsipstack-test")
-        .transport_layer(tl)
+        .with_user_agent("rsipstack-test")
+        .with_transport_layer(tl)
         .build();
     Ok(endpoint)
 }
