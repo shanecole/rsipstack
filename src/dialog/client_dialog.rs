@@ -55,25 +55,57 @@ impl ClientInviteDialog {
         Ok(())
     }
 
-    pub async fn reinvite(&self) -> Result<()> {
+    pub async fn reinvite(
+        &self,
+        headers: Option<Vec<rsip::Header>>,
+        body: Option<Vec<u8>>,
+    ) -> Result<Option<rsip::Response>> {
         if !self.inner.is_confirmed() {
-            return Ok(());
+            return Ok(None);
         }
-        todo!()
+        let request =
+            self.inner
+                .make_request(rsip::Method::Invite, None, None, None, headers, body)?;
+        let resp = self.inner.do_request(request.clone()).await;
+        match resp {
+            Ok(Some(ref resp)) => {
+                if resp.status_code == StatusCode::OK {
+                    self.inner
+                        .transition(DialogState::Updated(self.id(), request))?;
+                }
+            }
+            _ => {}
+        }
+        resp
     }
 
-    pub async fn info(&self) -> Result<()> {
+    pub async fn update(
+        &self,
+        headers: Option<Vec<rsip::Header>>,
+        body: Option<Vec<u8>>,
+    ) -> Result<Option<rsip::Response>> {
         if !self.inner.is_confirmed() {
-            return Ok(());
+            return Ok(None);
+        }
+        let request =
+            self.inner
+                .make_request(rsip::Method::Update, None, None, None, headers, body)?;
+        self.inner.do_request(request.clone()).await
+    }
+
+    pub async fn info(
+        &self,
+        headers: Option<Vec<rsip::Header>>,
+        body: Option<Vec<u8>>,
+    ) -> Result<Option<rsip::Response>> {
+        if !self.inner.is_confirmed() {
+            return Ok(None);
         }
 
-        let request = self
-            .inner
-            .make_request(rsip::Method::Info, None, None, None, None, None)?;
-        self.inner.do_request(request.clone()).await?;
-        self.inner
-            .transition(DialogState::Info(self.id(), request))?;
-        Ok(())
+        let request =
+            self.inner
+                .make_request(rsip::Method::Info, None, None, None, headers, body)?;
+        self.inner.do_request(request.clone()).await
     }
 
     pub async fn handle(&mut self, mut tx: Transaction) -> Result<()> {
