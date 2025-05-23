@@ -73,11 +73,15 @@ impl ServerInviteDialog {
         let request = self
             .inner
             .make_request(rsip::Method::Bye, None, None, None, None, None)?;
-        let resp = self.inner.do_request(request).await?;
-        self.inner.transition(DialogState::Terminated(
-            self.id(),
-            resp.map(|r| r.status_code),
-        ))?;
+        let status_code = match self.inner.do_request(request).await {
+            Ok(resp) => resp.map(|r| r.status_code),
+            Err(e) => {
+                info!("bye error: {}", e);
+                None
+            }
+        };
+        self.inner
+            .transition(DialogState::Terminated(self.id(), status_code))?;
         Ok(())
     }
 
@@ -128,6 +132,7 @@ impl ServerInviteDialog {
                 rsip::Method::Bye => return self.handle_bye(tx).await,
                 rsip::Method::Info => return self.handle_info(tx).await,
                 rsip::Method::Options => return self.handle_options(tx).await,
+                rsip::Method::Update => return self.handle_update(tx).await,
                 _ => {
                     info!("invalid request method: {:?}", tx.original.method);
                     tx.reply(rsip::StatusCode::MethodNotAllowed).await?;
@@ -176,6 +181,14 @@ impl ServerInviteDialog {
         info!("received options {}", tx.original.uri);
         self.inner
             .transition(DialogState::Options(self.id(), tx.original.clone()))?;
+        tx.reply(rsip::StatusCode::OK).await?;
+        Ok(())
+    }
+
+    async fn handle_update(&mut self, mut tx: Transaction) -> Result<()> {
+        info!("received update {}", tx.original.uri);
+        self.inner
+            .transition(DialogState::Updated(self.id(), tx.original.clone()))?;
         tx.reply(rsip::StatusCode::OK).await?;
         Ok(())
     }
