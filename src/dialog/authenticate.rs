@@ -9,12 +9,181 @@ use rsip::services::DigestGenerator;
 use rsip::typed::{Authorization, ProxyAuthorization};
 use rsip::{Header, Param, Response};
 
+/// SIP Authentication Credentials
+///
+/// `Credential` contains the authentication information needed for SIP
+/// digest authentication. This is used when a SIP server challenges
+/// a request with a 401 Unauthorized or 407 Proxy Authentication Required
+/// response.
+///
+/// # Fields
+///
+/// * `username` - The username for authentication
+/// * `password` - The password for authentication
+/// * `realm` - Optional authentication realm (extracted from challenge)
+///
+/// # Examples
+///
+/// ## Basic Usage
+///
+/// ```rust,no_run
+/// # use rsipstack::dialog::authenticate::Credential;
+/// # fn example() -> rsipstack::Result<()> {
+/// let credential = Credential {
+///     username: "alice".to_string(),
+///     password: "secret123".to_string(),
+///     realm: Some("example.com".to_string()),
+/// };
+/// # Ok(())
+/// # }
+/// ```
+///
+/// ## Usage with Registration
+///
+/// ```rust,no_run
+/// # use rsipstack::dialog::authenticate::Credential;
+/// # fn example() -> rsipstack::Result<()> {
+/// let credential = Credential {
+///     username: "alice".to_string(),
+///     password: "secret123".to_string(),
+///     realm: None, // Will be extracted from server challenge
+/// };
+///
+/// // Use credential with registration
+/// // let registration = Registration::new(endpoint.inner.clone(), Some(credential));
+/// # Ok(())
+/// # }
+/// ```
+///
+/// ## Usage with INVITE
+///
+/// ```rust,no_run
+/// # use rsipstack::dialog::authenticate::Credential;
+/// # use rsipstack::dialog::invitation::InviteOption;
+/// # fn example() -> rsipstack::Result<()> {
+/// # let sdp_bytes = vec![];
+/// # let credential = Credential {
+/// #     username: "alice".to_string(),
+/// #     password: "secret123".to_string(),
+/// #     realm: Some("example.com".to_string()),
+/// # };
+/// let invite_option = InviteOption {
+///     caller: rsip::Uri::try_from("sip:alice@example.com")?,
+///     callee: rsip::Uri::try_from("sip:bob@example.com")?,
+///     content_type: Some("application/sdp".to_string()),
+///     offer: Some(sdp_bytes),
+///     contact: rsip::Uri::try_from("sip:alice@192.168.1.100:5060")?,
+///     credential: Some(credential),
+///     headers: None,
+/// };
+/// # Ok(())
+/// # }
+/// ```
 #[derive(Clone)]
 pub struct Credential {
     pub username: String,
     pub password: String,
+    pub realm: Option<String>,
 }
 
+/// Handle client-side authentication challenge
+///
+/// This function processes a 401 Unauthorized or 407 Proxy Authentication Required
+/// response and creates a new transaction with proper authentication headers.
+/// It implements SIP digest authentication according to RFC 3261 and RFC 2617.
+///
+/// # Parameters
+///
+/// * `new_seq` - New CSeq number for the authenticated request
+/// * `tx` - Original transaction that received the authentication challenge
+/// * `resp` - Authentication challenge response (401 or 407)
+/// * `cred` - User credentials for authentication
+///
+/// # Returns
+///
+/// * `Ok(Transaction)` - New transaction with authentication headers
+/// * `Err(Error)` - Failed to process authentication challenge
+///
+/// # Examples
+///
+/// ## Automatic Authentication Handling
+///
+/// ```rust,no_run
+/// # use rsipstack::dialog::authenticate::{handle_client_authenticate, Credential};
+/// # use rsipstack::transaction::transaction::Transaction;
+/// # use rsip::Response;
+/// # async fn example() -> rsipstack::Result<()> {
+/// # let new_seq = 1u32;
+/// # let original_tx: Transaction = todo!();
+/// # let auth_challenge_response: Response = todo!();
+/// # let credential = Credential {
+/// #     username: "alice".to_string(),
+/// #     password: "secret123".to_string(),
+/// #     realm: Some("example.com".to_string()),
+/// # };
+/// // This is typically called automatically by dialog methods
+/// let new_tx = handle_client_authenticate(
+///     new_seq,
+///     original_tx,
+///     auth_challenge_response,
+///     &credential
+/// ).await?;
+///
+/// // Send the authenticated request
+/// new_tx.send().await?;
+/// # Ok(())
+/// # }
+/// ```
+///
+/// ## Manual Authentication Flow
+///
+/// ```rust,no_run
+/// # use rsipstack::dialog::authenticate::{handle_client_authenticate, Credential};
+/// # use rsipstack::transaction::transaction::Transaction;
+/// # use rsip::{SipMessage, StatusCode, Response};
+/// # async fn example() -> rsipstack::Result<()> {
+/// # let mut tx: Transaction = todo!();
+/// # let credential = Credential {
+/// #     username: "alice".to_string(),
+/// #     password: "secret123".to_string(),
+/// #     realm: Some("example.com".to_string()),
+/// # };
+/// # let new_seq = 2u32;
+/// // Send initial request
+/// tx.send().await?;
+///
+/// while let Some(message) = tx.receive().await {
+///     match message {
+///         SipMessage::Response(resp) => {
+///             match resp.status_code {
+///                 StatusCode::Unauthorized | StatusCode::ProxyAuthenticationRequired => {
+///                     // Handle authentication challenge
+///                     let auth_tx = handle_client_authenticate(
+///                         new_seq, tx, resp, &credential
+///                     ).await?;
+///                     
+///                     // Send authenticated request
+///                     auth_tx.send().await?;
+///                     tx = auth_tx;
+///                 },
+///                 StatusCode::OK => {
+///                     println!("Request successful");
+///                     break;
+///                 },
+///                 _ => {
+///                     println!("Request failed: {}", resp.status_code);
+///                     break;
+///                 }
+///             }
+///         },
+///         _ => {}
+///     }
+/// }
+/// # Ok(())
+/// # }
+/// ```
+///
+/// This function handles SIP authentication challenges and creates authenticated requests.
 pub async fn handle_client_authenticate(
     new_seq: u32,
     tx: Transaction,

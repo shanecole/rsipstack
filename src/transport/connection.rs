@@ -13,6 +13,41 @@ use std::{fmt, net::SocketAddr};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tracing::debug;
 
+/// Transport Layer Events
+///
+/// `TransportEvent` represents events that occur at the transport layer,
+/// such as incoming messages, new connections, and connection closures.
+/// These events are used to coordinate between the transport layer and
+/// higher protocol layers.
+///
+/// # Events
+///
+/// * `Incoming` - A SIP message was received from the network
+/// * `New` - A new connection has been established
+/// * `Closed` - An existing connection has been closed
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// use rsipstack::transport::connection::TransportEvent;
+///
+/// # fn handle_event(event: TransportEvent) {
+/// match event {
+///     TransportEvent::Incoming(message, connection, source) => {
+///         // Process incoming SIP message
+///         println!("Received message from {}", source);
+///     },
+///     TransportEvent::New(connection) => {
+///         // Handle new connection
+///         println!("New connection established");
+///     },
+///     TransportEvent::Closed(connection) => {
+///         // Handle connection closure
+///         println!("Connection closed");
+///     }
+/// }
+/// # }
+/// ```
 #[derive(Debug)]
 pub enum TransportEvent {
     Incoming(SipMessage, SipConnection, SipAddr),
@@ -26,6 +61,85 @@ pub type TransportSender = UnboundedSender<TransportEvent>;
 pub const KEEPALIVE_REQUEST: &[u8] = b"\r\n\r\n";
 pub const KEEPALIVE_RESPONSE: &[u8] = b"\r\n";
 
+/// SIP Connection
+///
+/// `SipConnection` is an enum that abstracts different transport protocols
+/// used for SIP communication. It provides a unified interface for sending
+/// SIP messages regardless of the underlying transport mechanism.
+///
+/// # Supported Transports
+///
+/// * `Udp` - UDP transport for connectionless communication
+/// * `Channel` - In-memory channel for testing and local communication
+/// * `Tcp` - TCP transport for reliable connection-oriented communication
+/// * `Tls` - TLS transport for secure communication over TCP
+/// * `WebSocket` - WebSocket transport for web-based SIP clients
+///
+/// # Key Features
+///
+/// * Transport abstraction - uniform interface across protocols
+/// * Reliability detection - distinguishes reliable vs unreliable transports
+/// * Address management - tracks local and remote addresses
+/// * Message sending - handles protocol-specific message transmission
+/// * Via header processing - automatic received parameter handling
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// use rsipstack::transport::{SipConnection, SipAddr};
+/// use rsip::SipMessage;
+///
+/// // Send a message through any connection type
+/// async fn send_message(
+///     connection: &SipConnection,
+///     message: SipMessage,
+///     destination: Option<&SipAddr>
+/// ) -> rsipstack::Result<()> {
+///     connection.send(message, destination).await?;
+///     Ok(())
+/// }
+///
+/// # fn example(connection: &SipConnection) {
+/// // Check if transport is reliable
+/// let is_reliable = connection.is_reliable();
+/// if is_reliable {
+///     println!("Using reliable transport");
+/// } else {
+///     println!("Using unreliable transport - retransmissions may be needed");
+/// }
+/// # }
+/// ```
+///
+/// # Transport Characteristics
+///
+/// ## UDP
+/// * Connectionless and unreliable
+/// * Requires retransmission handling
+/// * Lower overhead
+/// * Default SIP transport
+///
+/// ## TCP
+/// * Connection-oriented and reliable
+/// * No retransmission needed
+/// * Higher overhead
+/// * Better for large messages
+///
+/// ## TLS
+/// * Secure TCP with encryption
+/// * Reliable transport
+/// * Certificate-based authentication
+/// * Used for SIPS URIs
+///
+/// ## WebSocket
+/// * Web-friendly transport
+/// * Reliable connection
+/// * Firewall and NAT friendly
+/// * Used in web applications
+///
+/// # Via Header Processing
+///
+/// SipConnection automatically handles Via header processing for incoming
+/// messages, adding 'received' and 'rport' parameters as needed per RFC 3261.
 #[derive(Clone, Debug)]
 pub enum SipConnection {
     Udp(UdpConnection),

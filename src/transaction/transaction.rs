@@ -13,6 +13,43 @@ use tracing::{debug, info, instrument};
 
 pub type TransactionEventReceiver = UnboundedReceiver<TransactionEvent>;
 pub type TransactionEventSender = UnboundedSender<TransactionEvent>;
+
+/// SIP Transaction Events
+///
+/// `TransactionEvent` represents the various events that can occur during
+/// a SIP transaction's lifecycle. These events drive the transaction state machine
+/// and coordinate between the transaction layer and transaction users.
+///
+/// # Events
+///
+/// * `Received` - A SIP message was received for this transaction
+/// * `Timer` - A transaction timer has fired
+/// * `Respond` - Request to send a response (server transactions only)
+/// * `Terminate` - Request to terminate the transaction
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// use rsipstack::transaction::transaction::TransactionEvent;
+/// use rsip::SipMessage;
+///
+/// # fn handle_event(event: TransactionEvent) {
+/// match event {
+///     TransactionEvent::Received(msg, conn) => {
+///         // Process received SIP message
+///     },
+///     TransactionEvent::Timer(timer) => {
+///         // Handle timer expiration
+///     },
+///     TransactionEvent::Respond(response) => {
+///         // Send response
+///     },
+///     TransactionEvent::Terminate => {
+///         // Clean up transaction
+///     }
+/// }
+/// # }
+/// ```
 pub enum TransactionEvent {
     Received(SipMessage, Option<SipConnection>),
     Timer(TransactionTimer),
@@ -20,6 +57,95 @@ pub enum TransactionEvent {
     Terminate,
 }
 
+/// SIP Transaction
+///
+/// `Transaction` implements the SIP transaction layer as defined in RFC 3261.
+/// A transaction consists of a client transaction (sends requests) or server
+/// transaction (receives requests) that handles the reliable delivery of SIP
+/// messages and manages retransmissions and timeouts.
+///
+/// # Key Features
+///
+/// * Automatic retransmission handling
+/// * Timer management per RFC 3261
+/// * State machine implementation
+/// * Reliable message delivery
+/// * Connection management
+///
+/// # Transaction Types
+///
+/// * `ClientInvite` - Client INVITE transaction
+/// * `ClientNonInvite` - Client non-INVITE transaction  
+/// * `ServerInvite` - Server INVITE transaction
+/// * `ServerNonInvite` - Server non-INVITE transaction
+///
+/// # State Machine
+///
+/// Transactions follow the state machines defined in RFC 3261:
+/// * Calling → Trying → Proceeding → Completed → Terminated
+/// * Additional states for INVITE transactions: Confirmed
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// use rsipstack::transaction::{
+///     transaction::Transaction,
+///     key::{TransactionKey, TransactionRole}
+/// };
+/// use rsip::SipMessage;
+///
+/// # async fn example() -> rsipstack::Result<()> {
+/// # let endpoint_inner = todo!();
+/// # let connection = None;
+/// // Create a mock request
+/// let request = rsip::Request {
+///     method: rsip::Method::Register,
+///     uri: rsip::Uri::try_from("sip:example.com")?,
+///     headers: vec![
+///         rsip::Header::Via("SIP/2.0/UDP example.com:5060;branch=z9hG4bKnashds".into()),
+///         rsip::Header::CSeq("1 REGISTER".into()),
+///         rsip::Header::From("Alice <sip:alice@example.com>;tag=1928301774".into()),
+///         rsip::Header::CallId("a84b4c76e66710@pc33.atlanta.com".into()),
+///     ].into(),
+///     version: rsip::Version::V2,
+///     body: Default::default(),
+/// };
+/// let key = TransactionKey::from_request(&request, TransactionRole::Client)?;
+///
+/// // Create a client transaction
+/// let mut transaction = Transaction::new_client(
+///     key,
+///     request,
+///     endpoint_inner,
+///     connection
+/// );
+///
+/// // Send the request
+/// transaction.send().await?;
+///
+/// // Receive responses
+/// while let Some(message) = transaction.receive().await {
+///     match message {
+///         SipMessage::Response(response) => {
+///             // Handle response
+///         },
+///         _ => {}
+///     }
+/// }
+/// # Ok(())
+/// # }
+/// ```
+///
+/// # Timer Handling
+///
+/// The transaction automatically manages SIP timers:
+/// * Timer A: Retransmission timer for unreliable transports
+/// * Timer B: Transaction timeout timer
+/// * Timer D: Wait time for response retransmissions
+/// * Timer E: Non-INVITE retransmission timer
+/// * Timer F: Non-INVITE transaction timeout
+/// * Timer G: INVITE response retransmission timer
+/// * Timer K: Wait time for ACK
 pub struct Transaction {
     pub transaction_type: TransactionType,
     pub key: TransactionKey,

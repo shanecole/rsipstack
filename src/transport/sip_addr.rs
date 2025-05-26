@@ -2,6 +2,63 @@ use crate::Result;
 use rsip::{host_with_port, HostWithPort};
 use std::{fmt, hash::Hash, net::SocketAddr};
 
+/// SIP Address
+///
+/// `SipAddr` represents a SIP network address that combines a host/port
+/// with an optional transport protocol. It provides a unified way to
+/// handle SIP addressing across different transport types.
+///
+/// # Fields
+///
+/// * `r#type` - Optional transport protocol (UDP, TCP, TLS, WS, WSS)
+/// * `addr` - Host and port information
+///
+/// # Transport Types
+///
+/// * `UDP` - User Datagram Protocol (unreliable)
+/// * `TCP` - Transmission Control Protocol (reliable)
+/// * `TLS` - Transport Layer Security over TCP (reliable, encrypted)
+/// * `WS` - WebSocket (reliable)
+/// * `WSS` - WebSocket Secure (reliable, encrypted)
+///
+/// # Examples
+///
+/// ```rust
+/// use rsipstack::transport::SipAddr;
+/// use rsip::transport::Transport;
+/// use std::net::SocketAddr;
+///
+/// // Create from socket address
+/// let socket_addr: SocketAddr = "192.168.1.100:5060".parse().unwrap();
+/// let sip_addr = SipAddr::from(socket_addr);
+///
+/// // Create with specific transport
+/// let sip_addr = SipAddr::new(
+///     Transport::Tcp,
+///     rsip::HostWithPort::try_from("example.com:5060").unwrap()
+/// );
+///
+/// // Convert to socket address (for IP addresses)
+/// if let Ok(socket_addr) = sip_addr.get_socketaddr() {
+///     println!("Socket address: {}", socket_addr);
+/// }
+/// ```
+///
+/// # Usage in SIP
+///
+/// SipAddr is used throughout the stack for:
+/// * Via header processing
+/// * Contact header handling
+/// * Route and Record-Route processing
+/// * Transport layer addressing
+/// * Connection management
+///
+/// # Conversion
+///
+/// SipAddr can be converted to/from:
+/// * `SocketAddr` (for IP addresses only)
+/// * `rsip::Uri` (SIP URI format)
+/// * `rsip::HostWithPort` (host/port only)
 #[derive(Debug, Eq, PartialEq, Clone)]
 pub struct SipAddr {
     pub r#type: Option<rsip::transport::Transport>,

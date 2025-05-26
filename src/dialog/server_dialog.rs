@@ -9,22 +9,143 @@ use std::sync::atomic::Ordering;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, trace, warn};
 
+/// Server-side INVITE Dialog (UAS)
+///
+/// `ServerInviteDialog` represents a server-side INVITE dialog in SIP. This is used
+/// when the local user agent acts as a User Agent Server (UAS) and receives
+/// an INVITE transaction from a remote party to establish a session.
+///
+/// # Key Features
+///
+/// * **Session Acceptance** - Accepts or rejects incoming INVITE requests
+/// * **In-dialog Requests** - Handles UPDATE, INFO, OPTIONS within established dialogs
+/// * **Session Termination** - Handles BYE for ending sessions
+/// * **Re-INVITE Support** - Supports session modification via re-INVITE
+/// * **ACK Handling** - Properly handles ACK for 2xx responses
+/// * **State Management** - Tracks dialog state transitions
+///
+/// # Dialog Lifecycle
+///
+/// 1. **Creation** - Dialog created when receiving INVITE
+/// 2. **Processing** - Can send provisional responses (1xx)
+/// 3. **Decision** - Accept (2xx) or reject (3xx-6xx) the INVITE
+/// 4. **Wait ACK** - If accepted, wait for ACK from client
+/// 5. **Confirmed** - ACK received, dialog established
+/// 6. **Active** - Can handle in-dialog requests
+/// 7. **Termination** - Receives BYE or sends BYE to end session
+///
+/// # Examples
+///
+/// ## Basic Call Handling
+///
+/// ```rust,no_run
+/// # use rsipstack::dialog::server_dialog::ServerInviteDialog;
+/// # fn example() -> rsipstack::Result<()> {
+/// # let dialog: ServerInviteDialog = todo!(); // Dialog is typically created by DialogLayer
+/// # let answer_sdp = vec![];
+/// // After receiving INVITE:
+///
+/// // Accept the call
+/// dialog.accept(None, Some(answer_sdp))?;
+///
+/// // Or reject the call
+/// dialog.reject()?;
+/// # Ok(())
+/// # }
+/// ```
+///
+/// ```rust,no_run
+/// # use rsipstack::dialog::server_dialog::ServerInviteDialog;
+/// # async fn example() -> rsipstack::Result<()> {
+/// # let dialog: ServerInviteDialog = todo!();
+/// // End an established call
+/// dialog.bye().await?;
+/// # Ok(())
+/// # }
+/// ```
+///
+/// ## Session Modification
+///
+/// ```rust,no_run
+/// # use rsipstack::dialog::server_dialog::ServerInviteDialog;
+/// # async fn example() -> rsipstack::Result<()> {
+/// # let dialog: ServerInviteDialog = todo!();
+/// # let new_sdp = vec![];
+/// // Send re-INVITE to modify session
+/// let headers = vec![
+///     rsip::Header::ContentType("application/sdp".into())
+/// ];
+/// let response = dialog.reinvite(Some(headers), Some(new_sdp)).await?;
+/// # Ok(())
+/// # }
+/// ```
+///
+/// # Thread Safety
+///
+/// ServerInviteDialog is thread-safe and can be cloned and shared across tasks.
+/// All operations are atomic and properly synchronized.
 #[derive(Clone)]
 pub struct ServerInviteDialog {
     pub(super) inner: DialogInnerRef,
 }
 
 impl ServerInviteDialog {
+    /// Get the dialog identifier
+    ///
+    /// Returns the unique DialogId that identifies this dialog instance.
+    /// The DialogId consists of Call-ID, from-tag, and to-tag.
     pub fn id(&self) -> DialogId {
         self.inner.id.lock().unwrap().clone()
     }
+
+    /// Get the cancellation token for this dialog
+    ///
+    /// Returns a reference to the CancellationToken that can be used to
+    /// cancel ongoing operations for this dialog.
     pub fn cancel_token(&self) -> &CancellationToken {
         &self.inner.cancel_token
     }
+
+    /// Get the initial INVITE request
+    ///
+    /// Returns a reference to the initial INVITE request that created
+    /// this dialog. This can be used to access the original request
+    /// headers, body, and other information.
     pub fn initial_request(&self) -> &Request {
         &self.inner.initial_request
     }
 
+    /// Accept the incoming INVITE request
+    ///
+    /// Sends a 200 OK response to accept the incoming INVITE request.
+    /// This establishes the dialog and transitions it to the WaitAck state,
+    /// waiting for the ACK from the client.
+    ///
+    /// # Parameters
+    ///
+    /// * `headers` - Optional additional headers to include in the response
+    /// * `body` - Optional message body (typically SDP answer)
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(())` - Response sent successfully
+    /// * `Err(Error)` - Failed to send response or transaction terminated
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// # use rsipstack::dialog::server_dialog::ServerInviteDialog;
+    /// # fn example() -> rsipstack::Result<()> {
+    /// # let dialog: ServerInviteDialog = todo!();
+    /// // Accept with SDP answer
+    /// let answer_sdp = b"v=0\r\no=- 123 456 IN IP4 192.168.1.1\r\n...";
+    /// let headers = vec![
+    ///     rsip::Header::ContentType("application/sdp".into())
+    /// ];
+    /// dialog.accept(Some(headers), Some(answer_sdp.to_vec()))?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn accept(&self, headers: Option<Vec<Header>>, body: Option<Vec<u8>>) -> Result<()> {
         if let Some(sender) = self.inner.tu_sender.lock().unwrap().as_ref() {
             let resp = self.inner.make_response(
@@ -47,6 +168,27 @@ impl ServerInviteDialog {
         }
     }
 
+    /// Reject the incoming INVITE request
+    ///
+    /// Sends a 603 Decline response to reject the incoming INVITE request.
+    /// This terminates the dialog creation process.
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(())` - Response sent successfully
+    /// * `Err(Error)` - Failed to send response or transaction terminated
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// # use rsipstack::dialog::server_dialog::ServerInviteDialog;
+    /// # fn example() -> rsipstack::Result<()> {
+    /// # let dialog: ServerInviteDialog = todo!();
+    /// // Reject the incoming call
+    /// dialog.reject()?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn reject(&self) -> Result<()> {
         if let Some(sender) = self.inner.tu_sender.lock().unwrap().as_ref() {
             let resp = self.inner.make_response(
@@ -66,6 +208,28 @@ impl ServerInviteDialog {
         }
     }
 
+    /// Send a BYE request to terminate the dialog
+    ///
+    /// Sends a BYE request to gracefully terminate an established dialog.
+    /// This should only be called for confirmed dialogs. If the dialog
+    /// is not confirmed, this method returns immediately without error.
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(())` - BYE was sent successfully or dialog not confirmed
+    /// * `Err(Error)` - Failed to send BYE request
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// # use rsipstack::dialog::server_dialog::ServerInviteDialog;
+    /// # async fn example() -> rsipstack::Result<()> {
+    /// # let dialog: ServerInviteDialog = todo!();
+    /// // End an established call
+    /// dialog.bye().await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn bye(&self) -> Result<()> {
         if !self.inner.is_confirmed() {
             return Ok(());
@@ -85,6 +249,34 @@ impl ServerInviteDialog {
         Ok(())
     }
 
+    /// Send a re-INVITE request to modify the session
+    ///
+    /// Sends a re-INVITE request within an established dialog to modify
+    /// the session parameters (e.g., change media, add/remove streams).
+    /// This can only be called for confirmed dialogs.
+    ///
+    /// # Parameters
+    ///
+    /// * `headers` - Optional additional headers to include
+    /// * `body` - Optional message body (typically new SDP)
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(Some(Response))` - Response to the re-INVITE
+    /// * `Ok(None)` - Dialog not confirmed, no request sent
+    /// * `Err(Error)` - Failed to send re-INVITE
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// # use rsipstack::dialog::server_dialog::ServerInviteDialog;
+    /// # async fn example() -> rsipstack::Result<()> {
+    /// # let dialog: ServerInviteDialog = todo!();
+    /// let new_sdp = b"v=0\r\no=- 123 456 IN IP4 192.168.1.1\r\n...";
+    /// let response = dialog.reinvite(None, Some(new_sdp.to_vec())).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn reinvite(
         &self,
         headers: Option<Vec<rsip::Header>>,
@@ -109,6 +301,34 @@ impl ServerInviteDialog {
         resp
     }
 
+    /// Send an UPDATE request to modify session parameters
+    ///
+    /// Sends an UPDATE request within an established dialog to modify
+    /// session parameters without the complexity of a re-INVITE.
+    /// This is typically used for smaller session modifications.
+    ///
+    /// # Parameters
+    ///
+    /// * `headers` - Optional additional headers to include
+    /// * `body` - Optional message body (typically SDP)
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(Some(Response))` - Response to the UPDATE
+    /// * `Ok(None)` - Dialog not confirmed, no request sent
+    /// * `Err(Error)` - Failed to send UPDATE
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// # use rsipstack::dialog::server_dialog::ServerInviteDialog;
+    /// # async fn example() -> rsipstack::Result<()> {
+    /// # let dialog: ServerInviteDialog = todo!();
+    /// # let sdp_body = vec![];
+    /// let response = dialog.update(None, Some(sdp_body)).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn update(
         &self,
         headers: Option<Vec<rsip::Header>>,
@@ -123,6 +343,38 @@ impl ServerInviteDialog {
         self.inner.do_request(request.clone()).await
     }
 
+    /// Send an INFO request for mid-dialog information
+    ///
+    /// Sends an INFO request within an established dialog to exchange
+    /// application-level information. This is commonly used for DTMF
+    /// tones, but can carry any application-specific data.
+    ///
+    /// # Parameters
+    ///
+    /// * `headers` - Optional additional headers to include
+    /// * `body` - Optional message body (application-specific data)
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(Some(Response))` - Response to the INFO
+    /// * `Ok(None)` - Dialog not confirmed, no request sent
+    /// * `Err(Error)` - Failed to send INFO
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// # use rsipstack::dialog::server_dialog::ServerInviteDialog;
+    /// # async fn example() -> rsipstack::Result<()> {
+    /// # let dialog: ServerInviteDialog = todo!();
+    /// // Send DTMF tone
+    /// let dtmf_body = b"Signal=1\r\nDuration=100\r\n";
+    /// let headers = vec![
+    ///     rsip::Header::ContentType("application/dtmf-relay".into())
+    /// ];
+    /// let response = dialog.info(Some(headers), Some(dtmf_body.to_vec())).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn info(
         &self,
         headers: Option<Vec<rsip::Header>>,
@@ -138,6 +390,29 @@ impl ServerInviteDialog {
         self.inner.do_request(request.clone()).await
     }
 
+    /// Handle incoming transaction for this dialog
+    ///
+    /// Processes incoming SIP requests that are routed to this dialog.
+    /// This method handles sequence number validation and dispatches
+    /// to appropriate handlers based on the request method and dialog state.
+    ///
+    /// # Parameters
+    ///
+    /// * `tx` - The incoming transaction to handle
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(())` - Request handled successfully
+    /// * `Err(Error)` - Failed to handle request
+    ///
+    /// # Supported Methods
+    ///
+    /// * `ACK` - Confirms 2xx response (transitions to Confirmed state)
+    /// * `BYE` - Terminates the dialog
+    /// * `INFO` - Handles information exchange
+    /// * `OPTIONS` - Handles capability queries
+    /// * `UPDATE` - Handles session updates
+    /// * `INVITE` - Handles initial INVITE or re-INVITE
     pub async fn handle(&mut self, mut tx: Transaction) -> Result<()> {
         trace!(
             "handle request: {:?} state:{}",

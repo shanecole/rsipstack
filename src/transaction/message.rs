@@ -2,6 +2,86 @@ use super::{endpoint::EndpointInner, make_call_id};
 use rsip::{Header, Request, Response, StatusCode};
 
 impl EndpointInner {
+    /// Create a SIP request message
+    ///
+    /// Constructs a properly formatted SIP request with all required headers
+    /// according to RFC 3261. This method is used internally by the endpoint
+    /// to create outgoing SIP requests for various purposes.
+    ///
+    /// # Parameters
+    ///
+    /// * `method` - SIP method (INVITE, REGISTER, BYE, etc.)
+    /// * `req_uri` - Request-URI indicating the target of the request
+    /// * `via` - Via header for response routing
+    /// * `from` - From header identifying the request originator
+    /// * `to` - To header identifying the request target
+    /// * `seq` - CSeq sequence number for the request
+    ///
+    /// # Returns
+    ///
+    /// A complete SIP request with all mandatory headers
+    ///
+    /// # Generated Headers
+    ///
+    /// The method automatically includes these mandatory headers:
+    /// * **Via** - Response routing information
+    /// * **Call-ID** - Unique identifier for the call/session
+    /// * **From** - Request originator with tag parameter
+    /// * **To** - Request target (tag added by recipient)
+    /// * **CSeq** - Command sequence with method and number
+    /// * **Max-Forwards** - Hop count limit (set to 70)
+    /// * **User-Agent** - Endpoint identification
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// # use rsipstack::transaction::endpoint::EndpointInner;
+    /// # async fn example(endpoint: &EndpointInner) -> rsipstack::Result<()> {
+    /// // Create an INVITE request
+    /// let via = endpoint.get_via(None, None)?;
+    /// let from = rsip::typed::From {
+    ///     display_name: None,
+    ///     uri: rsip::Uri::try_from("sip:alice@example.com")?,
+    ///     params: vec![rsip::Param::Tag("alice-tag".into())],
+    /// };
+    /// let to = rsip::typed::To {
+    ///     display_name: None,
+    ///     uri: rsip::Uri::try_from("sip:bob@example.com")?,
+    ///     params: vec![],
+    /// };
+    ///
+    /// let request = endpoint.make_request(
+    ///     rsip::Method::Invite,
+    ///     rsip::Uri::try_from("sip:bob@example.com")?,
+    ///     via,
+    ///     from,
+    ///     to,
+    ///     1
+    /// );
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// # Usage Context
+    ///
+    /// This method is typically used by:
+    /// * Dialog layer for creating in-dialog requests
+    /// * Registration module for REGISTER requests
+    /// * Transaction layer for creating client transactions
+    /// * Application layer for custom request types
+    ///
+    /// # Header Ordering
+    ///
+    /// Headers are added in the order specified by RFC 3261 recommendations:
+    /// 1. Via (topmost first)
+    /// 2. Call-ID
+    /// 3. From
+    /// 4. To
+    /// 5. CSeq
+    /// 6. Max-Forwards
+    /// 7. User-Agent
+    ///
+    /// Additional headers can be added after creation using the headers API.
     pub fn make_request(
         &self,
         method: rsip::Method,
@@ -29,6 +109,103 @@ impl EndpointInner {
         }
     }
 
+    /// Create a SIP response message
+    ///
+    /// Constructs a properly formatted SIP response based on the received
+    /// request. This method copies appropriate headers from the request
+    /// and adds the response-specific information according to RFC 3261.
+    ///
+    /// # Parameters
+    ///
+    /// * `req` - Original request being responded to
+    /// * `status_code` - SIP response status code (1xx-6xx)
+    /// * `body` - Optional response body content
+    ///
+    /// # Returns
+    ///
+    /// A complete SIP response ready to be sent
+    ///
+    /// # Header Processing
+    ///
+    /// The method processes headers as follows:
+    /// * **Copied from request**: Via, Call-ID, From, To, CSeq, Max-Forwards
+    /// * **Added by endpoint**: User-Agent
+    /// * **Filtered out**: All other headers from the request
+    ///
+    /// Additional response-specific headers should be added after creation.
+    ///
+    /// # Examples
+    ///
+    /// ## Success Response
+    ///
+    /// ```rust,no_run
+    /// # use rsipstack::transaction::endpoint::EndpointInner;
+    /// # fn example(endpoint: &EndpointInner, request: &rsip::Request, sdp_answer: String) {
+    /// let response = endpoint.make_response(
+    ///     &request,
+    ///     rsip::StatusCode::OK,
+    ///     Some(sdp_answer.into_bytes())
+    /// );
+    /// # }
+    /// ```
+    ///
+    /// ## Error Response
+    ///
+    /// ```rust,no_run
+    /// # use rsipstack::transaction::endpoint::EndpointInner;
+    /// # fn example(endpoint: &EndpointInner, request: &rsip::Request) {
+    /// let response = endpoint.make_response(
+    ///     &request,
+    ///     rsip::StatusCode::NotFound,
+    ///     None
+    /// );
+    /// # }
+    /// ```
+    ///
+    /// ## Provisional Response
+    ///
+    /// ```rust,no_run
+    /// # use rsipstack::transaction::endpoint::EndpointInner;
+    /// # fn example(endpoint: &EndpointInner, request: &rsip::Request) {
+    /// let response = endpoint.make_response(
+    ///     &request,
+    ///     rsip::StatusCode::Ringing,
+    ///     None
+    /// );
+    /// # }
+    /// ```
+    ///
+    /// # Response Categories
+    ///
+    /// * **1xx Provisional** - Request received, processing continues
+    /// * **2xx Success** - Request successfully received, understood, and accepted
+    /// * **3xx Redirection** - Further action needed to complete request
+    /// * **4xx Client Error** - Request contains bad syntax or cannot be fulfilled
+    /// * **5xx Server Error** - Server failed to fulfill valid request
+    /// * **6xx Global Failure** - Request cannot be fulfilled at any server
+    ///
+    /// # Usage Context
+    ///
+    /// This method is used by:
+    /// * Server transactions to create responses
+    /// * Dialog layer for dialog-specific responses
+    /// * Application layer for handling incoming requests
+    /// * Error handling for protocol violations
+    ///
+    /// # Header Compliance
+    ///
+    /// The response includes all headers required by RFC 3261:
+    /// * Via headers are copied exactly (for response routing)
+    /// * Call-ID is preserved (dialog/transaction identification)
+    /// * From/To headers maintain dialog state
+    /// * CSeq is copied for transaction matching
+    /// * User-Agent identifies the responding endpoint
+    ///
+    /// # Content Handling
+    ///
+    /// * If body is provided, Content-Length should be added separately
+    /// * Content-Type should be added for non-empty bodies
+    /// * Body encoding is handled by the application layer
     pub fn make_response(
         &self,
         req: &Request,

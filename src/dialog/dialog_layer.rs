@@ -14,12 +14,120 @@ use std::{
 };
 use tracing::info;
 
+/// Internal Dialog Layer State
+///
+/// `DialogLayerInner` contains the core state for managing multiple SIP dialogs.
+/// It maintains a registry of active dialogs and tracks sequence numbers for
+/// dialog creation.
+///
+/// # Fields
+///
+/// * `last_seq` - Atomic counter for generating unique sequence numbers
+/// * `dialogs` - Thread-safe map of active dialogs indexed by DialogId
+///
+/// # Thread Safety
+///
+/// This structure is designed to be shared across multiple threads safely:
+/// * `last_seq` uses atomic operations for lock-free increments
+/// * `dialogs` uses RwLock for concurrent read access with exclusive writes
 pub struct DialogLayerInner {
     pub(super) last_seq: AtomicU32,
     pub(super) dialogs: RwLock<HashMap<DialogId, Dialog>>,
 }
 pub type DialogLayerInnerRef = Arc<DialogLayerInner>;
 
+/// SIP Dialog Layer
+///
+/// `DialogLayer` provides high-level dialog management functionality for SIP
+/// applications. It handles dialog creation, lookup, and lifecycle management
+/// while coordinating with the transaction layer.
+///
+/// # Key Responsibilities
+///
+/// * Creating and managing SIP dialogs
+/// * Dialog identification and routing
+/// * Dialog state tracking and cleanup
+/// * Integration with transaction layer
+/// * Sequence number management
+///
+/// # Usage Patterns
+///
+/// ## Server-side Dialog Creation
+///
+/// ```rust,no_run
+/// use rsipstack::dialog::dialog_layer::DialogLayer;
+/// use rsipstack::transaction::endpoint::EndpointInner;
+/// use std::sync::Arc;
+///
+/// # fn example() -> rsipstack::Result<()> {
+/// # let endpoint: Arc<EndpointInner> = todo!();
+/// # let transaction = todo!();
+/// # let state_sender = todo!();
+/// # let credential = None;
+/// # let contact_uri = None;
+/// // Create dialog layer
+/// let dialog_layer = DialogLayer::new(endpoint.clone());
+///
+/// // Handle incoming INVITE transaction
+/// let server_dialog = dialog_layer.get_or_create_server_invite(
+///     &transaction,
+///     state_sender,
+///     credential,
+///     contact_uri
+/// )?;
+///
+/// // Accept the call
+/// server_dialog.accept(None, None)?;
+/// # Ok(())
+/// # }
+/// ```
+///
+/// ## Dialog Lookup and Routing
+///
+/// ```rust,no_run
+/// # use rsipstack::dialog::dialog_layer::DialogLayer;
+/// # async fn example() -> rsipstack::Result<()> {
+/// # let dialog_layer: DialogLayer = todo!();
+/// # let request = todo!();
+/// # let transaction = todo!();
+/// // Find existing dialog for incoming request
+/// if let Some(mut dialog) = dialog_layer.match_dialog(&request) {
+///     // Route to existing dialog
+///     dialog.handle(transaction).await?;
+/// } else {
+///     // Create new dialog or reject
+/// }
+/// # Ok(())
+/// # }
+/// ```
+///
+/// ## Dialog Cleanup
+///
+/// ```rust,no_run
+/// # use rsipstack::dialog::dialog_layer::DialogLayer;
+/// # fn example() {
+/// # let dialog_layer: DialogLayer = todo!();
+/// # let dialog_id = todo!();
+/// // Remove completed dialog
+/// dialog_layer.remove_dialog(&dialog_id);
+/// # }
+/// ```
+///
+/// # Dialog Lifecycle
+///
+/// 1. **Creation** - Dialog created from incoming INVITE or outgoing request
+/// 2. **Early State** - Dialog exists but not yet confirmed
+/// 3. **Confirmed** - Dialog established with 2xx response and ACK
+/// 4. **Active** - Dialog can exchange in-dialog requests
+/// 5. **Terminated** - Dialog ended with BYE or error
+/// 6. **Cleanup** - Dialog removed from layer
+///
+/// # Thread Safety
+///
+/// DialogLayer is thread-safe and can be shared across multiple tasks:
+/// * Dialog lookup operations are concurrent
+/// * Dialog creation is serialized when needed
+/// * Automatic cleanup prevents memory leaks
 pub struct DialogLayer {
     pub endpoint: EndpointInnerRef,
     pub inner: DialogLayerInnerRef,

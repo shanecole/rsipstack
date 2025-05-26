@@ -24,6 +24,40 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, trace, warn};
 
+/// SIP Endpoint Core Implementation
+///
+/// `EndpointInner` is the core implementation of a SIP endpoint that manages
+/// transactions, timers, and transport layer communication. It serves as the
+/// central coordination point for all SIP protocol operations.
+///
+/// # Key Responsibilities
+///
+/// * Managing active SIP transactions
+/// * Handling SIP timers (Timer A, B, D, E, F, G, K)
+/// * Coordinating with the transport layer
+/// * Processing incoming and outgoing SIP messages
+/// * Maintaining transaction state and cleanup
+///
+/// # Fields
+///
+/// * `allows` - List of supported SIP methods
+/// * `user_agent` - User-Agent header value for outgoing messages
+/// * `timers` - Timer management system for SIP timers
+/// * `transport_layer` - Transport layer for network communication
+/// * `finished_transactions` - Cache of completed transactions
+/// * `transactions` - Active transaction senders
+/// * `incoming_sender` - Channel for incoming transaction notifications
+/// * `cancel_token` - Cancellation token for graceful shutdown
+/// * `timer_interval` - Interval for timer processing
+/// * `transport_tx` - Transport event sender
+/// * `transport_rx` - Transport event receiver
+/// * `t1`, `t4`, `t1x64` - SIP timer values as per RFC 3261
+///
+/// # Timer Values
+///
+/// * `t1` - RTT estimate (default 500ms)
+/// * `t4` - Maximum duration a message will remain in the network (default 4s)
+/// * `t1x64` - Maximum retransmission timeout (default 32s)
 pub struct EndpointInner {
     pub allows: Vec<rsip::Method>,
     pub user_agent: String,
@@ -43,6 +77,24 @@ pub struct EndpointInner {
 }
 pub type EndpointInnerRef = Arc<EndpointInner>;
 
+/// SIP Endpoint Builder
+///
+/// `EndpointBuilder` provides a fluent interface for constructing SIP endpoints
+/// with custom configuration. It follows the builder pattern to allow flexible
+/// endpoint configuration.
+///
+/// # Examples
+///
+/// ```rust
+/// use rsipstack::EndpointBuilder;
+/// use std::time::Duration;
+///
+/// let endpoint = EndpointBuilder::new()
+///     .with_user_agent("MyApp/1.0")
+///     .with_timer_interval(Duration::from_millis(10))
+///     .with_allows(vec![rsip::Method::Invite, rsip::Method::Bye])
+///     .build();
+/// ```
 pub struct EndpointBuilder {
     allows: Vec<rsip::Method>,
     user_agent: String,
@@ -51,6 +103,57 @@ pub struct EndpointBuilder {
     timer_interval: Option<Duration>,
 }
 
+/// SIP Endpoint
+///
+/// `Endpoint` is the main entry point for SIP protocol operations. It provides
+/// a high-level interface for creating and managing SIP transactions, handling
+/// incoming requests, and coordinating with the transport layer.
+///
+/// # Key Features
+///
+/// * Transaction management and lifecycle
+/// * Automatic timer handling per RFC 3261
+/// * Transport layer abstraction
+/// * Graceful shutdown support
+/// * Incoming request processing
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// use rsipstack::EndpointBuilder;
+/// use tokio_util::sync::CancellationToken;
+///
+/// #[tokio::main]
+/// async fn main() -> Result<(), Box<dyn std::error::Error>> {
+///     let endpoint = EndpointBuilder::new()
+///         .with_user_agent("MyApp/1.0")
+///         .build();
+///     
+///     // Get incoming transactions
+///     let mut incoming = endpoint.incoming_transactions();
+///     
+///     // Start the endpoint (in production, you'd run this in a separate task)
+///     // let endpoint_inner = endpoint.inner.clone();
+///     // tokio::spawn(async move {
+///     //     endpoint_inner.serve().await.ok();
+///     // });
+///     
+///     // Process incoming transactions
+///     while let Some(transaction) = incoming.recv().await {
+///         // Handle transaction
+///         break; // Exit for example
+///     }
+///     
+///     Ok(())
+/// }
+/// ```
+///
+/// # Lifecycle
+///
+/// 1. Create endpoint using `EndpointBuilder`
+/// 2. Start serving with `serve()` method
+/// 3. Process incoming transactions via `incoming_transactions()`
+/// 4. Shutdown gracefully with `shutdown()`
 pub struct Endpoint {
     pub inner: EndpointInnerRef,
 }

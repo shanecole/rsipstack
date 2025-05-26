@@ -28,7 +28,42 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info};
 
-/// DialogState is the state of the dialog
+/// SIP Dialog State
+///
+/// Represents the various states a SIP dialog can be in during its lifecycle.
+/// These states follow the SIP dialog state machine as defined in RFC 3261.
+///
+/// # States
+///
+/// * `Calling` - Initial state when a dialog is created for an outgoing INVITE
+/// * `Trying` - Dialog has received a 100 Trying response
+/// * `Early` - Dialog is in early state (1xx response received, except 100)
+/// * `WaitAck` - Server dialog waiting for ACK after sending 2xx response
+/// * `Confirmed` - Dialog is established and confirmed (2xx response received/sent and ACK sent/received)
+/// * `Updated` - Dialog received an UPDATE request
+/// * `Notify` - Dialog received a NOTIFY request  
+/// * `Info` - Dialog received an INFO request
+/// * `Options` - Dialog received an OPTIONS request
+/// * `Terminated` - Dialog has been terminated
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// use rsipstack::dialog::dialog::DialogState;
+/// use rsipstack::dialog::DialogId;
+///
+/// # fn example() {
+/// # let dialog_id = DialogId {
+/// #     call_id: "test@example.com".to_string(),
+/// #     from_tag: "from-tag".to_string(),
+/// #     to_tag: "to-tag".to_string(),
+/// # };
+/// let state = DialogState::Confirmed(dialog_id);
+/// if state.is_confirmed() {
+///     println!("Dialog is established");
+/// }
+/// # }
+/// ```
 #[derive(Clone)]
 pub enum DialogState {
     Calling(DialogId),
@@ -42,12 +77,72 @@ pub enum DialogState {
     Options(DialogId, rsip::Request),
     Terminated(DialogId, Option<rsip::StatusCode>),
 }
+
+/// SIP Dialog
+///
+/// Represents a SIP dialog which can be either a server-side or client-side INVITE dialog.
+/// A dialog is a peer-to-peer SIP relationship between two user agents that persists
+/// for some time. Dialogs are established by SIP methods like INVITE.
+///
+/// # Variants
+///
+/// * `ServerInvite` - Server-side INVITE dialog (UAS)
+/// * `ClientInvite` - Client-side INVITE dialog (UAC)
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// use rsipstack::dialog::dialog::Dialog;
+///
+/// # fn handle_dialog(dialog: Dialog) {
+/// match dialog {
+///     Dialog::ServerInvite(server_dialog) => {
+///         // Handle server dialog
+///     },
+///     Dialog::ClientInvite(client_dialog) => {
+///         // Handle client dialog  
+///     }
+/// }
+/// # }
+/// ```
 #[derive(Clone)]
 pub enum Dialog {
     ServerInvite(ServerInviteDialog),
     ClientInvite(ClientInviteDialog),
 }
 
+/// Internal Dialog State and Management
+///
+/// `DialogInner` contains the core state and functionality shared between
+/// client and server dialogs. It manages dialog state transitions, sequence numbers,
+/// routing information, and communication with the transaction layer.
+///
+/// # Key Responsibilities
+///
+/// * Managing dialog state transitions
+/// * Tracking local and remote sequence numbers
+/// * Maintaining routing information (route set, contact URIs)
+/// * Handling authentication credentials
+/// * Coordinating with the transaction layer
+///
+/// # Fields
+///
+/// * `role` - Whether this is a client or server dialog
+/// * `cancel_token` - Token for canceling dialog operations
+/// * `id` - Unique dialog identifier
+/// * `state` - Current dialog state
+/// * `local_seq` - Local CSeq number for outgoing requests
+/// * `remote_seq` - Remote CSeq number for incoming requests
+/// * `local_contact` - Local contact URI
+/// * `remote_uri` - Remote target URI
+/// * `from` - From header value
+/// * `to` - To header value
+/// * `credential` - Authentication credentials if needed
+/// * `route_set` - Route set for request routing
+/// * `endpoint_inner` - Reference to the SIP endpoint
+/// * `state_sender` - Channel for sending state updates
+/// * `tu_sender` - Transaction user sender
+/// * `initial_request` - The initial request that created this dialog
 pub struct DialogInner {
     pub role: TransactionRole,
     pub cancel_token: CancellationToken,

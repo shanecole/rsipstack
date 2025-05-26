@@ -142,6 +142,7 @@ async fn main() -> rsipstack::Result<()> {
     let credential = Credential {
         username: sip_username.clone(),
         password: sip_password,
+        realm: None,
     };
 
     let incoming = endpoint.incoming_transactions();
