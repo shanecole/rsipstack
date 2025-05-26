@@ -101,7 +101,11 @@ impl UdpConnection {
                 }
             };
 
-            let msg = match SipConnection::update_msg_received(msg, addr) {
+            let msg = match SipConnection::update_msg_received(
+                msg,
+                addr,
+                rsip::transport::Transport::Udp,
+            ) {
                 Ok(msg) => msg,
                 Err(e) => {
                     info!(

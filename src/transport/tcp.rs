@@ -1,6 +1,6 @@
 use crate::{
     transport::{
-        connection::{TransportSender, KEEPALIVE_REQUEST, KEEPALIVE_RESPONSE},
+        connection::TransportSender,
         sip_addr::SipAddr,
         stream::{send_raw_to_stream, send_to_stream, StreamConnection},
         SipConnection, TransportEvent,
@@ -150,52 +150,64 @@ impl StreamConnection for TcpConnection {
     }
 
     async fn serve_loop(&self, sender: TransportSender) -> Result<()> {
-        let mut buf = vec![0u8; 2048];
+        let local_addr = self.inner.local_addr.clone();
+        let remote_addr = self.inner.remote_addr.clone().unwrap();
         let sip_connection = SipConnection::Tcp(self.clone());
-        let remote_addr = self.inner.remote_addr.clone().unwrap().clone();
-        let mut read_half = self.inner.read_half.lock().await;
-        loop {
-            let len = read_half.read(&mut buf).await?;
-            if len <= 0 {
-                continue;
-            }
 
-            match &buf[..len] {
-                KEEPALIVE_REQUEST => {
-                    self.send_raw(KEEPALIVE_RESPONSE).await?;
-                    continue;
+        // We need to reconstruct the stream, but that's not easily possible
+        // So let's keep using the manual approach but with SipCodec
+        use crate::transport::stream::SipCodec;
+        use bytes::BytesMut;
+        use tokio_util::codec::Decoder;
+
+        let mut codec = SipCodec::new();
+        let mut buffer = BytesMut::with_capacity(4096);
+        let mut read_buf = [0u8; 4096];
+        let mut read_half = self.inner.read_half.lock().await;
+
+        loop {
+            match read_half.read(&mut read_buf).await {
+                Ok(0) => {
+                    info!("TCP connection closed: {}", local_addr);
+                    break;
                 }
-                KEEPALIVE_RESPONSE => continue,
-                _ => {
-                    if buf.iter().all(|&b| b.is_ascii_whitespace()) {
-                        continue;
+                Ok(n) => {
+                    buffer.extend_from_slice(&read_buf[0..n]);
+
+                    loop {
+                        match codec.decode(&mut buffer) {
+                            Ok(Some(msg)) => {
+                                info!("TCP received message from {}: {}", remote_addr, msg);
+
+                                if let Err(e) = sender.send(TransportEvent::Incoming(
+                                    msg,
+                                    sip_connection.clone(),
+                                    remote_addr.clone(),
+                                )) {
+                                    error!("Error sending incoming message: {:?}", e);
+                                    return Err(e.into());
+                                }
+                            }
+                            Ok(None) => {
+                                // Need more data
+                                break;
+                            }
+                            Err(crate::Error::Keepalive) => {
+                                // Handle keepalive
+                                self.send_raw(crate::transport::connection::KEEPALIVE_RESPONSE)
+                                    .await?;
+                            }
+                            Err(e) => {
+                                error!("Error decoding message from {}: {:?}", remote_addr, e);
+                                // Continue processing despite decode errors
+                            }
+                        }
                     }
                 }
-            }
-
-            let undecoded = match std::str::from_utf8(&buf[..len]) {
-                Ok(s) => s,
                 Err(e) => {
-                    info!("decoding text ferror: {} buf: {:?}", e, &buf[..len]);
-                    continue;
+                    error!("Error reading from TCP stream: {}", e);
+                    break;
                 }
-            };
-
-            let sip_msg = match rsip::SipMessage::try_from(undecoded) {
-                Ok(msg) => msg,
-                Err(e) => {
-                    info!("error parsing SIP message error: {} buf: {}", e, undecoded);
-                    continue;
-                }
-            };
-
-            if let Err(e) = sender.send(TransportEvent::Incoming(
-                sip_msg,
-                sip_connection.clone(),
-                remote_addr.clone(),
-            )) {
-                error!("Error sending incoming message: {:?}", e);
-                break;
             }
         }
         Ok(())

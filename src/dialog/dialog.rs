@@ -351,7 +351,11 @@ impl DialogInner {
     }
 
     pub(super) fn transition(&self, state: DialogState) -> Result<()> {
-        self.state_sender.send(state.clone())?;
+        // Try to send state update, but don't fail if channel is closed
+        if let Err(_) = self.state_sender.send(state.clone()) {
+            debug!("State sender channel closed, continuing with state transition");
+        }
+
         match state {
             DialogState::Updated(_, _)
             | DialogState::Notify(_, _)
@@ -380,7 +384,10 @@ impl std::fmt::Display for DialogState {
             DialogState::Notify(id, _) => write!(f, "{}(Notify)", id),
             DialogState::Info(id, _) => write!(f, "{}(Info)", id),
             DialogState::Options(id, _) => write!(f, "{}(Options)", id),
-            DialogState::Terminated(id, code) => write!(f, "{}(Terminated {:?})", id, code),
+            DialogState::Terminated(id, code) => match code {
+                Some(status_code) => write!(f, "{}(Terminated {})", id, status_code.code()),
+                None => write!(f, "{}(Terminated)", id),
+            },
         }
     }
 }

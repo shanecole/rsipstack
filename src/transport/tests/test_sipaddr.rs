@@ -29,8 +29,12 @@ fn test_via_received() {
     assert_eq!(parse_addr, addr);
 
     let addr = "127.0.0.1:1234".parse().unwrap();
-    let msg =
-        SipConnection::update_msg_received(register_req.into(), addr).expect("update_msg_received");
+    let msg = SipConnection::update_msg_received(
+        register_req.into(),
+        addr,
+        rsip::transport::Transport::Udp,
+    )
+    .expect("update_msg_received");
 
     match msg {
         SipMessage::Request(req) => {

@@ -11,6 +11,10 @@ pub mod dialog_layer;
 pub mod invitation;
 pub mod registration;
 pub mod server_dialog;
+
+#[cfg(test)]
+mod tests;
+
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct DialogId {
     pub call_id: String,

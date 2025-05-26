@@ -109,23 +109,48 @@ impl SipConnection {
 }
 
 impl SipConnection {
-    pub fn update_msg_received(msg: SipMessage, addr: SocketAddr) -> Result<SipMessage> {
+    pub fn update_msg_received(
+        msg: SipMessage,
+        addr: SocketAddr,
+        transport: rsip::transport::Transport,
+    ) -> Result<SipMessage> {
         match msg {
             SipMessage::Request(mut req) => {
                 let via = req.via_header_mut()?;
-                Self::build_via_received(via, addr)?;
+                Self::build_via_received(via, addr, transport)?;
                 Ok(req.into())
             }
             SipMessage::Response(_) => Ok(msg),
         }
     }
 
-    pub fn build_via_received(via: &mut rsip::headers::Via, addr: SocketAddr) -> Result<()> {
+    pub fn build_via_received(
+        via: &mut rsip::headers::Via,
+        addr: SocketAddr,
+        transport: rsip::transport::Transport,
+    ) -> Result<()> {
         let received = addr.into();
         let mut typed_via = via.typed()?;
+
+        // Only add received parameter if the source address differs from Via header
         if typed_via.uri.host_with_port == received {
             return Ok(());
         }
+
+        // For reliable transports (TCP/TLS/WS), we need to be more careful about received parameter
+        let should_add_received = match transport {
+            rsip::transport::Transport::Udp => true,
+            _ => {
+                // For connection-oriented protocols, only add if explicitly different
+                typed_via.uri.host_with_port.host != received.host
+            }
+        };
+
+        if !should_add_received {
+            return Ok(());
+        }
+
+        // Remove existing rport parameter
         typed_via.params.retain(|param| {
             if let Param::Other(key, _) = param {
                 !key.value().eq_ignore_ascii_case("rport")
@@ -133,6 +158,7 @@ impl SipConnection {
                 true
             }
         });
+
         *via = typed_via
             .with_param(Param::Received(rsip::param::Received::new(
                 received.host.to_string(),

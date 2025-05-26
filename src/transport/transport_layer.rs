@@ -13,10 +13,10 @@ use tokio::select;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
-/// 传输层配置
+/// Transport layer configuration
 #[derive(Default, Clone)]
 pub struct TransportConfig {
-    /// TLS 配置
+    /// TLS configuration
     pub tls: Option<TlsConfig>,
     pub enable_ws: bool,
     pub enable_wss: bool,
@@ -25,7 +25,7 @@ pub struct TransportConfig {
 #[derive(Default)]
 pub struct TransportLayerInner {
     cancel_token: CancellationToken,
-    listens: Arc<Mutex<HashMap<SipAddr, SipConnection>>>, // 监听的传输
+    listens: Arc<Mutex<HashMap<SipAddr, SipConnection>>>, // listening transports
     config: Arc<Mutex<TransportConfig>>,
 }
 
@@ -79,20 +79,7 @@ impl TransportLayer {
     pub async fn serve_listens(&self, sender: TransportSender) -> Result<()> {
         let listens = self.inner.listens.lock().unwrap().clone();
         for (_, transport) in listens {
-            let sub_token = self.inner.cancel_token.child_token();
-            let sender_clone = sender.clone();
-            let listens_ref = self.inner.listens.clone();
-
-            tokio::spawn(async move {
-                select! {
-                    _ = sub_token.cancelled() => { }
-                    _ = transport.serve_loop(sender_clone.clone()) => {
-                    }
-                }
-                listens_ref.lock().unwrap().remove(transport.get_addr());
-                warn!("transport serve_loop exited: {}", transport.get_addr());
-                sender_clone.send(TransportEvent::Closed(transport)).ok();
-            });
+            self.inner.start_serve(transport.clone(), sender.clone());
         }
         Ok(())
     }
@@ -101,7 +88,7 @@ impl TransportLayer {
         self.inner.listens.lock().unwrap().keys().cloned().collect()
     }
 
-    /// 创建并添加 UDP 监听器
+    /// Create and add UDP listener
     pub async fn add_udp_listener(&self, local: SocketAddr) -> Result<SipAddr> {
         use super::udp::UdpConnection;
 
@@ -111,7 +98,7 @@ impl TransportLayer {
         Ok(addr)
     }
 
-    /// 创建并添加 TCP 监听器
+    /// Create and add TCP listener
     pub async fn add_tcp_listener(
         &self,
         local: SocketAddr,
@@ -330,18 +317,6 @@ impl TransportLayerInner {
         ));
     }
 
-    async fn serve_listens(&self, sender: TransportSender) -> Result<()> {
-        let listens = self.listens.lock().unwrap().clone();
-        for (_, transport) in listens {
-            let sub_token = self.cancel_token.child_token();
-            let sender_clone = sender.clone();
-            let listens_ref = self.listens.clone();
-
-            self.start_serve(transport.clone(), sender_clone);
-        }
-        Ok(())
-    }
-
     pub fn start_serve(&self, transport: SipConnection, sender: TransportSender) {
         let sub_token = self.cancel_token.child_token();
         let sender_clone = sender.clone();
@@ -371,7 +346,7 @@ mod tests {
     #[tokio::test]
     async fn test_lookup() -> Result<()> {
         let mut tl = super::TransportLayer::new(tokio_util::sync::CancellationToken::new());
-        let (sender, receiver) = unbounded_channel();
+        let (sender, _receiver) = unbounded_channel();
 
         let first_uri = "sip:bob@127.0.0.1:5060".try_into().expect("parse uri");
         assert!(tl.lookup(&first_uri, sender.clone()).await.is_err());
@@ -462,6 +437,31 @@ mod tests {
             assert_eq!(target.ip_addr.to_string(), item.1 .1);
             assert_eq!(target.port, item.1 .2.into());
         }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_serve_listens() -> Result<()> {
+        let tl = super::TransportLayer::new(tokio_util::sync::CancellationToken::new());
+        let (sender, _receiver) = unbounded_channel();
+
+        // Add a UDP connection first
+        let udp_conn = UdpConnection::create_connection("127.0.0.1:0".parse()?, None).await?;
+        let addr = udp_conn.get_addr().clone();
+        tl.add_transport(udp_conn.into());
+
+        // Start serving listeners
+        tl.serve_listens(sender).await?;
+
+        // Verify that the transport list is not empty
+        let addrs = tl.get_addrs();
+        assert_eq!(addrs.len(), 1);
+        assert_eq!(addrs[0], addr);
+
+        // Cancel to stop the spawned tasks
+        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+        drop(tl);
+
         Ok(())
     }
 }

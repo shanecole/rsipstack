@@ -376,7 +376,7 @@ impl StreamConnection for TlsConnection {
         let remote_addr = self.remote_addr.clone();
         let mut read_half_guard = self.read_half.lock().await;
         loop {
-            let mut len = 0;
+            let len;
             if let Some(read_half) = &mut *read_half_guard {
                 len = read_half.read(&mut buf).await?;
                 if len <= 0 {

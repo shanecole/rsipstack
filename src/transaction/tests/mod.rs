@@ -8,6 +8,7 @@ use tokio_util::sync::CancellationToken;
 mod test_client;
 mod test_endpoint;
 mod test_server;
+mod test_transaction_states;
 
 pub(super) async fn create_test_endpoint(addr: Option<&str>) -> Result<Endpoint> {
     let token = CancellationToken::new();
