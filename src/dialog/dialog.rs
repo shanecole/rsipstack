@@ -358,6 +358,10 @@ impl DialogInner {
                 Header::CallId(call_id) => {
                     resp_headers.push(Header::CallId(call_id.clone()));
                 }
+                Header::RecordRoute(rr) => {
+                    // Copy Record-Route headers from request to response (RFC 3261)
+                    resp_headers.push(Header::RecordRoute(rr.clone()));
+                }
                 _ => {}
             }
         }
