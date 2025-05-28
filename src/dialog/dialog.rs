@@ -210,14 +210,16 @@ impl DialogInner {
         };
 
         let mut route_set = vec![];
-        initial_request.headers.retain(|h| {
+        for h in initial_request.headers.iter() {
             if let Header::RecordRoute(rr) = h {
                 route_set.push(Route::from(rr.value()));
-                false
-            } else {
-                true
             }
-        });
+        }
+        
+        // For UAS (server), route set must be reversed (RFC 3261 section 12.1.1)
+        if role == TransactionRole::Server {
+            route_set.reverse();
+        }
         Ok(Self {
             role,
             cancel_token: CancellationToken::new(),
