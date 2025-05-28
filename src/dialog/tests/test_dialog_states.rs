@@ -365,10 +365,6 @@ async fn test_dialog_sequence_numbers() -> crate::Result<()> {
     assert_eq!(next_seq, 2);
     assert_eq!(dialog_inner.get_local_seq(), 2);
 
-    // Test remote sequence
-    let remote_seq = dialog_inner.increment_remove_seq();
-    assert_eq!(remote_seq, 2);
-
     Ok(())
 }
 

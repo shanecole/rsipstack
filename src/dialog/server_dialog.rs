@@ -421,18 +421,22 @@ impl ServerInviteDialog {
         );
 
         let cseq = tx.original.cseq_header()?.seq()?;
-        if cseq < self.inner.remote_seq.load(Ordering::Relaxed) {
+        let remote_seq = self.inner.remote_seq.load(Ordering::Relaxed);
+        if remote_seq > 0 && cseq < remote_seq {
             info!(
                 "received old request {} remote_seq: {} > {}",
                 tx.original.method(),
-                self.inner.remote_seq.load(Ordering::Relaxed),
+                remote_seq,
                 cseq
             );
             // discard old request
             return Ok(());
         }
 
-        self.inner.remote_seq.store(cseq, Ordering::Relaxed);
+        self.inner
+            .remote_seq
+            .compare_exchange(remote_seq, cseq, Ordering::Relaxed, Ordering::Relaxed)
+            .ok();
 
         if self.inner.is_confirmed() {
             match tx.original.method {

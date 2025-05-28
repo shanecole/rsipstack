@@ -226,7 +226,7 @@ impl DialogInner {
             to: Mutex::new(to),
             local_seq: AtomicU32::new(cseq),
             remote_uri,
-            remote_seq: AtomicU32::new(cseq),
+            remote_seq: AtomicU32::new(0),
             credential,
             route_set,
             endpoint_inner,
@@ -249,11 +249,6 @@ impl DialogInner {
         self.local_seq.load(Ordering::Relaxed)
     }
 
-    pub fn increment_remove_seq(&self) -> u32 {
-        self.remote_seq.fetch_add(1, Ordering::Relaxed);
-        self.remote_seq.load(Ordering::Relaxed)
-    }
-
     pub fn update_remote_tag(&self, tag: &str) -> Result<()> {
         self.id.lock().unwrap().to_tag = tag.to_string();
         let to: rsip::headers::untyped::To = self.to.lock().unwrap().clone().into();
@@ -273,7 +268,7 @@ impl DialogInner {
     ) -> Result<rsip::Request> {
         let mut headers = headers.unwrap_or_default();
         let cseq_header = CSeq {
-            seq: cseq.unwrap_or_else(|| self.increment_remove_seq()),
+            seq: cseq.unwrap_or_else(|| self.increment_local_seq()),
             method,
         };
 
