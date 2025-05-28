@@ -13,7 +13,8 @@ use crate::{
     Error, Result,
 };
 use get_if_addrs::get_if_addrs;
-use rsip::{HostWithPort, Response, SipMessage, StatusCode};
+use rsip::{HostWithPort, Param, Response, SipMessage, StatusCode};
+use rsip::headers::ToTypedHeader;
 use rsip_dns::trust_dns_resolver::TokioAsyncResolver;
 use rsip_dns::ResolvableExt;
 use std::net::IpAddr;
@@ -441,5 +442,74 @@ impl Registration {
             "registration transaction is already terminated".to_string(),
             DialogId::try_from(&tx.original)?,
         ));
+    }
+
+    /// Create a NAT-aware Contact header with public address
+    ///
+    /// Creates a Contact header suitable for use in SIP dialogs that takes into
+    /// account the public address discovered during registration. This is essential
+    /// for proper NAT traversal in SIP communications.
+    ///
+    /// # Parameters
+    ///
+    /// * `username` - SIP username for the Contact URI
+    /// * `public_address` - Optional public address to use (IP and port)
+    /// * `local_address` - Fallback local address if no public address available
+    ///
+    /// # Returns
+    ///
+    /// A Contact header with appropriate address for NAT traversal
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// # use rsipstack::dialog::registration::Registration;
+    /// # use std::net::{IpAddr, Ipv4Addr};
+    /// # use rsipstack::transport::SipAddr;
+    /// # fn example() {
+    /// # let local_addr: SipAddr = todo!();
+    /// let contact = Registration::create_nat_aware_contact(
+    ///     "alice",
+    ///     Some((IpAddr::V4(Ipv4Addr::new(203, 0, 113, 1)), 5060)),
+    ///     &local_addr,
+    /// );
+    /// # }
+    /// ```
+    pub fn create_nat_aware_contact(
+        username: &str,
+        public_address: Option<(std::net::IpAddr, u16)>,
+        local_address: &SipAddr,
+    ) -> rsip::typed::Contact {
+        let contact_host_with_port = if let Some((public_ip, public_port)) = public_address {
+            HostWithPort {
+                host: public_ip.into(),
+                port: Some(public_port.into()),
+            }
+        } else {
+            local_address.clone().into()
+        };
+
+        let params = vec![];
+        
+        // Don't add 'ob' parameter as it may confuse some SIP proxies
+        // and prevent proper ACK routing
+        // if public_address.is_some() {
+        //     params.push(Param::Other("ob".into(), None));
+        // }
+
+        rsip::typed::Contact {
+            display_name: None,
+            uri: rsip::Uri {
+                scheme: Some(rsip::Scheme::Sip),
+                auth: Some(rsip::Auth {
+                    user: username.to_string(),
+                    password: None,
+                }),
+                host_with_port: contact_host_with_port,
+                params,
+                headers: vec![],
+            },
+            params: vec![],
+        }
     }
 }
