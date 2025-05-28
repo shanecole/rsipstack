@@ -485,7 +485,7 @@ impl Registration {
                                 for param in &typed_via.params {
                                     match param {
                                         Param::Received(received) => {
-                                            if let Ok(ip) = received.parse() {
+                                            if let Ok(ip) = received.value().parse() {
                                                 received_ip = Some(ip);
                                                 info!("Found received parameter: {}", ip);
                                             }
@@ -562,7 +562,7 @@ impl Registration {
                                 for param in &typed_via.params {
                                     match param {
                                         Param::Received(received) => {
-                                            if let Ok(ip) = received.parse() {
+                                            if let Ok(ip) = received.value().parse() {
                                                 received_ip = Some(ip);
                                                 info!("Found received parameter: {}", ip);
                                             }
