@@ -1,10 +1,10 @@
-use super::dialog::{Dialog, DialogInnerRef};
+use super::dialog::{Dialog, DialogInnerRef, DialogState, TerminatedReason};
 use super::DialogId;
-use crate::dialog::dialog::DialogState;
-use crate::transaction::transaction::{Transaction, TransactionEvent};
-use crate::Result;
-use rsip::prelude::HeadersExt;
-use rsip::{Header, Request, SipMessage, StatusCode};
+use crate::{
+    transaction::transaction::{Transaction, TransactionEvent},
+    Result,
+};
+use rsip::{prelude::HeadersExt, Header, Request, SipMessage, StatusCode};
 use std::sync::atomic::Ordering;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, trace, warn};
@@ -237,15 +237,15 @@ impl ServerInviteDialog {
         let request = self
             .inner
             .make_request(rsip::Method::Bye, None, None, None, None, None)?;
-        let status_code = match self.inner.do_request(request).await {
-            Ok(resp) => resp.map(|r| r.status_code),
+
+        match self.inner.do_request(request).await {
+            Ok(_) => {}
             Err(e) => {
                 info!("bye error: {}", e);
-                None
             }
         };
         self.inner
-            .transition(DialogState::Terminated(self.id(), status_code))?;
+            .transition(DialogState::Terminated(self.id(), TerminatedReason::UasBye))?;
         Ok(())
     }
 
@@ -481,7 +481,7 @@ impl ServerInviteDialog {
     async fn handle_bye(&mut self, mut tx: Transaction) -> Result<()> {
         info!("received bye {}", tx.original.uri);
         self.inner
-            .transition(DialogState::Terminated(self.id(), None))?;
+            .transition(DialogState::Terminated(self.id(), TerminatedReason::UacBye))?;
         tx.reply(rsip::StatusCode::OK).await?;
         Ok(())
     }
@@ -535,7 +535,7 @@ impl ServerInviteDialog {
                             tx.reply(rsip::StatusCode::RequestTerminated).await?;
                             self.inner.transition(DialogState::Terminated(
                                 self.id(),
-                                Some(StatusCode::RequestTerminated),
+                                TerminatedReason::UacCancel,
                             ))?;
                         }
                         _ => {}

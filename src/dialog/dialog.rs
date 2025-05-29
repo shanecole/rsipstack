@@ -75,7 +75,22 @@ pub enum DialogState {
     Notify(DialogId, rsip::Request),
     Info(DialogId, rsip::Request),
     Options(DialogId, rsip::Request),
-    Terminated(DialogId, Option<rsip::StatusCode>),
+    Terminated(DialogId, TerminatedReason),
+}
+
+#[derive(Debug, Clone)]
+pub enum TerminatedReason {
+    Timeout,
+    UacCancel,
+    UacBye,
+    UasBye,
+    UacBusy,
+    UasBusy,
+    UasDecline,
+    ProxyError(rsip::StatusCode),
+    ProxyAuthRequired,
+    UacOther(Option<rsip::StatusCode>),
+    UasOther(Option<rsip::StatusCode>),
 }
 
 /// SIP Dialog
@@ -412,7 +427,10 @@ impl DialogInner {
                         let id = self.id.lock().unwrap().clone();
                         if auth_sent {
                             info!("received {} response after auth sent", resp.status_code);
-                            self.transition(DialogState::Terminated(id, Some(resp.status_code)))?;
+                            self.transition(DialogState::Terminated(
+                                id,
+                                TerminatedReason::ProxyAuthRequired,
+                            ))?;
                             break;
                         }
                         auth_sent = true;
@@ -426,7 +444,10 @@ impl DialogInner {
                             continue;
                         } else {
                             info!("received 407 response without auth option");
-                            self.transition(DialogState::Terminated(id, Some(resp.status_code)))?;
+                            self.transition(DialogState::Terminated(
+                                id,
+                                TerminatedReason::ProxyAuthRequired,
+                            ))?;
                         }
                     }
                     _ => {
@@ -474,10 +495,7 @@ impl std::fmt::Display for DialogState {
             DialogState::Notify(id, _) => write!(f, "{}(Notify)", id),
             DialogState::Info(id, _) => write!(f, "{}(Info)", id),
             DialogState::Options(id, _) => write!(f, "{}(Options)", id),
-            DialogState::Terminated(id, code) => match code {
-                Some(status_code) => write!(f, "{}(Terminated {})", id, status_code.code()),
-                None => write!(f, "{}(Terminated)", id),
-            },
+            DialogState::Terminated(id, reason) => write!(f, "{}(Terminated {:?})", id, reason),
         }
     }
 }
