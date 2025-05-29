@@ -11,7 +11,7 @@ use rsip::prelude::HeadersExt;
 use rsip::{Response, SipMessage, StatusCode};
 use std::sync::atomic::Ordering;
 use tokio_util::sync::CancellationToken;
-use tracing::{info, trace};
+use tracing::{info, trace, warn};
 
 /// Client-side INVITE Dialog (UAC)
 ///
@@ -429,7 +429,7 @@ impl ClientInviteDialog {
         self.inner.transition(DialogState::Calling(self.id()))?;
         let mut auth_sent = false;
         tx.send().await?;
-        let dialog_id = self.id();
+        let mut dialog_id = self.id();
         let mut final_response = None;
         while let Some(msg) = tx.receive().await {
             match msg {
@@ -481,6 +481,43 @@ impl ClientInviteDialog {
                         Some(tag) => self.inner.update_remote_tag(tag.value())?,
                         None => {}
                     }
+
+                    let branch = match tx
+                        .original
+                        .via_header()?
+                        .params()?
+                        .iter()
+                        .find(|p| matches!(p, rsip::Param::Branch(_)))
+                    {
+                        Some(p) => p.clone(),
+                        None => {
+                            info!("no branch found in via header");
+                            return Err(crate::Error::DialogError(
+                                "no branch found in via header".to_string(),
+                                self.id(),
+                            ));
+                        }
+                    };
+
+                    let ack = self.inner.make_request(
+                        rsip::Method::Ack,
+                        resp.cseq_header()?.seq().ok(),
+                        None,
+                        Some(branch),
+                        None,
+                        None,
+                    )?;
+
+                    if let Ok(id) = DialogId::try_from(&ack) {
+                        dialog_id = id;
+                    }
+                    match tx.send_ack(ack).await {
+                        Ok(_) => {}
+                        Err(e) => {
+                            warn!("send ack error: {}", e);
+                        }
+                    }
+
                     match resp.status_code {
                         StatusCode::OK => {
                             self.inner
