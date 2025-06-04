@@ -196,12 +196,15 @@ impl ServerInviteDialog {
     /// # fn example() -> rsipstack::Result<()> {
     /// # let dialog: ServerInviteDialog = todo!();
     /// # let local_addr: SipAddr = todo!();
-    /// let public_addr = Some((IpAddr::V4(Ipv4Addr::new(203, 0, 113, 1)), 5060));
+    /// let public_addr = Some(rsip::HostWithPort {
+    ///     host: IpAddr::V4(Ipv4Addr::new(203, 0, 113, 1)).into(),
+    ///     port: Some(5060.into()),
+    /// });
     /// let answer_sdp = b"v=0\r\no=- 123 456 IN IP4 203.0.113.1\r\n...";
     /// let headers = vec![
     ///     rsip::Header::ContentType("application/sdp".into())
     /// ];
-    /// 
+    ///
     /// dialog.accept_with_public_contact(
     ///     "alice",
     ///     public_addr,
@@ -215,24 +218,21 @@ impl ServerInviteDialog {
     pub fn accept_with_public_contact(
         &self,
         username: &str,
-        public_address: Option<(std::net::IpAddr, u16)>,
+        public_address: Option<rsip::HostWithPort>,
         local_address: &crate::transport::SipAddr,
         headers: Option<Vec<Header>>,
         body: Option<Vec<u8>>,
     ) -> Result<()> {
         use super::registration::Registration;
-        
+
         // Create NAT-aware Contact header
-        let contact_header = Registration::create_nat_aware_contact(
-            username,
-            public_address,
-            local_address,
-        );
-        
+        let contact_header =
+            Registration::create_nat_aware_contact(username, public_address, local_address);
+
         // Combine provided headers with Contact header
         let mut final_headers = headers.unwrap_or_default();
         final_headers.push(contact_header.into());
-        
+
         // Use the regular accept method with the enhanced headers
         self.accept(Some(final_headers), body)
     }

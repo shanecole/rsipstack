@@ -203,7 +203,6 @@ impl DialogInner {
         credential: Option<Credential>,
         local_contact: Option<rsip::Uri>,
     ) -> Result<Self> {
-        let mut initial_request = initial_request;
         let cseq = initial_request.cseq_header()?.seq()?;
 
         let remote_uri = match role {
@@ -230,7 +229,7 @@ impl DialogInner {
                 route_set.push(Route::from(rr.value()));
             }
         }
-        
+
         // For UAS (server), route set must be reversed (RFC 3261 section 12.1.1)
         if role == TransactionRole::Server {
             route_set.reverse();
