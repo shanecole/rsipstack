@@ -86,9 +86,15 @@ async fn main() -> rsipstack::Result<()> {
 
     info!("Starting SIP client");
 
-    let sip_server = args
+    let mut sip_server = args
         .sip_server
         .unwrap_or(env::var("SIP_SERVER").unwrap_or_default());
+
+    if !sip_server.starts_with("sip:") && !sip_server.starts_with("sips:") {
+        sip_server = format!("sip:{}", sip_server);
+    }
+
+    let sip_server = rsip::Uri::try_from(sip_server).ok();
     let sip_username = args
         .user
         .unwrap_or(env::var("SIP_USERNAME").unwrap_or_default());
@@ -211,30 +217,27 @@ async fn main() -> rsipstack::Result<()> {
 
 async fn process_registration(
     endpoint: EndpointInnerRef,
-    sip_server: String,
+    sip_server: Option<rsip::Uri>,
     credential: Credential,
     cancel_token: CancellationToken,
 ) -> Result<()> {
-    if sip_server.is_empty() {
-        select! {
-            _ = cancel_token.cancelled() => {
-                info!("recv cancel token canceled in registration process");
-                return Err(Error::Error("sip_server is empty".to_owned()));
-            }
+    let sip_server = match sip_server {
+        Some(uri) => uri,
+        None => {
+            cancel_token.cancelled().await;
+            return Ok(());
         }
-    }
+    };
 
     let mut registration = Registration::new(endpoint, Some(credential));
     loop {
-        let resp = registration.register(&sip_server).await?;
+        let resp = registration.register(sip_server.clone(), None).await?;
         debug!("received response: {}", resp.to_string());
         if resp.status_code != rsip::StatusCode::OK {
             return Err(rsipstack::Error::Error("Failed to register".to_string()));
         }
         sleep(Duration::from_secs(registration.expires().max(50) as u64)).await;
     }
-    #[allow(unreachable_code)]
-    Ok::<_, Error>(())
 }
 
 async fn process_incoming_request(

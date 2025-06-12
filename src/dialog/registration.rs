@@ -11,13 +11,9 @@ use crate::{
         transaction::Transaction,
     },
     transport::{SipAddr},
-    Error, Result,
+    Result,
 };
-use get_if_addrs::get_if_addrs;
-use rsip::{HostWithPort,  Response, SipMessage, StatusCode};
-use rsip_dns::trust_dns_resolver::TokioAsyncResolver;
-use rsip_dns::ResolvableExt;
-use std::net::IpAddr;
+use rsip::{prelude::{HeadersExt, ToTypedHeader}, Response, SipMessage, StatusCode};
 use tracing::{debug, info};
 
 /// SIP Registration Client
@@ -60,7 +56,8 @@ use tracing::{debug, info};
 /// };
 ///
 /// let mut registration = Registration::new(endpoint.inner.clone(), Some(credential));
-/// let response = registration.register(&"sip.example.com".to_string()).await?;
+/// let server = rsip::Uri::try_from("sip:sip.example.com").unwrap();
+/// let response = registration.register(server.clone(), None).await?;
 ///
 /// if response.status_code == rsip::StatusCode::OK {
 ///     println!("Registration successful");
@@ -80,11 +77,11 @@ use tracing::{debug, info};
 /// # async fn example() -> rsipstack::Result<()> {
 /// # let endpoint: Endpoint = todo!();
 /// # let credential: Credential = todo!();
-/// # let server = "sip.example.com".to_string();
+/// # let server = rsip::Uri::try_from("sip:sip.example.com").unwrap();
 /// let mut registration = Registration::new(endpoint.inner.clone(), Some(credential));
 ///
 /// loop {
-///     match registration.register(&server).await {
+///     match registration.register(server.clone(), None).await {
 ///         Ok(response) if response.status_code == rsip::StatusCode::OK => {
 ///             let expires = registration.expires();
 ///             println!("Registered for {} seconds", expires);
@@ -234,27 +231,6 @@ impl Registration {
             .unwrap_or(50)
     }
 
-    /// Get the first non-loopback network interface
-    ///
-    /// Discovers the first available non-loopback IPv4 network interface
-    /// on the system. This is used to determine the local IP address
-    /// for the Contact header in registration requests.
-    ///
-    /// # Returns
-    ///
-    /// * `Ok(IpAddr)` - First non-loopback IPv4 address found
-    /// * `Err(Error)` - No suitable interface found
-    fn get_first_non_loopback_interface() -> Result<IpAddr> {
-        get_if_addrs()?
-            .iter()
-            .find(|i| !i.is_loopback())
-            .map(|i| match i.addr {
-                get_if_addrs::IfAddr::V4(ref addr) => Ok(std::net::IpAddr::V4(addr.ip)),
-                _ => Err(Error::Error("No IPv4 address found".to_string())),
-            })
-            .unwrap_or(Err(Error::Error("No interface found".to_string())))
-    }
-
     /// Perform SIP registration with the server
     ///
     /// Sends a REGISTER request to the specified SIP server to register
@@ -296,7 +272,8 @@ impl Registration {
     /// # use rsip::prelude::HeadersExt;
     /// # async fn example() -> rsipstack::Result<()> {
     /// # let mut registration: Registration = todo!();
-    /// let response = registration.register(&"sip.example.com".to_string()).await?;
+    /// let server = rsip::Uri::try_from("sip:sip.example.com").unwrap();
+    /// let response = registration.register(server, None).await?;
     ///
     /// match response.status_code {
     ///     rsip::StatusCode::OK => {
@@ -324,8 +301,8 @@ impl Registration {
     /// # use rsipstack::Error;
     /// # async fn example() {
     /// # let mut registration: Registration = todo!();
-    /// # let server = "sip.example.com".to_string();
-    /// match registration.register(&server).await {
+    /// # let server = rsip::Uri::try_from("sip:sip.example.com").unwrap();
+    /// match registration.register(server, None).await {
     ///     Ok(response) => {
     ///         // Handle response based on status code
     ///     },
@@ -353,21 +330,21 @@ impl Registration {
     /// 4. Resend REGISTER with Authorization header
     /// 5. Receive final response
     ///
-    /// # Network Discovery
+    /// # Contact Header
     ///
-    /// The method automatically:
-    /// * Discovers local network interface for Contact header
-    /// * Resolves server address using DNS SRV/A records
-    /// * Determines appropriate transport protocol (UDP/TCP/TLS)
-    /// * Sets up proper Via headers for response routing
-    pub async fn register(&mut self, server: &String) -> Result<Response> {
+    /// The method will automatically update the Contact header with the public
+    /// address discovered during the registration process. This is essential
+    /// for proper NAT traversal in SIP communications.
+    /// 
+    /// If you want to use a specific Contact header, you can set it manually
+    /// before calling this method.
+    /// 
+    pub async fn register(&mut self, server: rsip::Uri, expires: Option<u32>) -> Result<Response> {
         self.last_seq += 1;
-
-        let recipient = rsip::Uri::try_from(format!("sip:{}", server))?;
 
         let mut to = rsip::typed::To {
             display_name: None,
-            uri: recipient.clone(),
+            uri: server.clone(),
             params: vec![],
         };
 
@@ -385,41 +362,20 @@ impl Registration {
         }
         .with_tag(make_tag());
 
-        let first_addr = {
-            let mut addr =
-                SipAddr::from(HostWithPort::from(Self::get_first_non_loopback_interface()?));
-            let context = rsip_dns::Context::initialize_from(
-                recipient.clone(),
-                rsip_dns::AsyncTrustDnsClient::new(
-                    TokioAsyncResolver::tokio(Default::default(), Default::default()).unwrap(),
-                ),
-                rsip_dns::SupportedTransports::any(),
-            )?;
+        let via = self.endpoint.get_via(None, None)?;
 
-            let mut lookup = rsip_dns::Lookup::from(context);
-            match lookup.resolve_next().await {
-                Some(target) => {
-                    addr.r#type = Some(target.transport);
-                    addr
-                }
-                None => {
-                    Err(crate::Error::DnsResolutionError(format!(
-                        "DNS resolution error: {}",
-                        recipient
-                    )))
-                }?,
-            }
-        };
+        // Contact address selection priority:
+        // 1. Contact header from REGISTER response (highest priority)
+        //    - Most accurate as it reflects server's view of client address
+        // 2. Public address discovered during registration
+        //    - Address detected from Via received parameter
+        // 3. Local non-loopback address (lowest priority)
+        //    - Only used for initial registration attempt
+        //    - Will be replaced by server-discovered address after first response
         let contact = self.contact.clone().unwrap_or_else(|| {
-            // Use public address if available, otherwise use local address
             let contact_host_with_port = self.public_address.clone().unwrap_or_else(|| {
-                info!(
-                    "Using local address for initial Contact: {}",
-                    first_addr.addr
-                );
-                first_addr.clone().into()
+                via.uri.host_with_port.clone()
             });
-
             rsip::typed::Contact {
                 display_name: None,
                 uri: rsip::Uri {
@@ -432,10 +388,9 @@ impl Registration {
                 params: vec![],
             }
         });
-        let via = self.endpoint.get_via(Some(first_addr.clone()), None)?;
         let mut request = self.endpoint.make_request(
             rsip::Method::Register,
-            recipient,
+            server,
             via,
             form,
             to,
@@ -444,6 +399,9 @@ impl Registration {
 
         request.headers.unique_push(contact.into());
         request.headers.unique_push(self.allow.clone().into());
+        if let Some(expires) = expires {
+            request.headers.unique_push(rsip::headers::Expires::from(expires).into());
+        }
 
         let key = TransactionKey::from_request(&request, TransactionRole::Client)?;
         let mut tx = Transaction::new_client(key, request, self.endpoint.clone(), None);
@@ -491,15 +449,22 @@ impl Registration {
                     StatusCode::OK => {
                         // Check if server indicated our public IP in Via header
                         let received = resp.via_received();
+                        // Update contact header from response
+                        match resp.contact_header() {
+                            Ok(contact) => {
+                                self.contact = contact.typed().ok();
+                            },
+                            Err(_) => {
+                            }
+                        };
                         if self.public_address != received {
                             info!(
                                 "Discovered public IP, will use for future registrations and calls: {:?} -> {:?}",
                                 self.public_address, received
                             );
                             self.public_address = received;
-                            self.contact = None;
                         }
-                        info!("registration do_request done: {:?}", resp.status_code);
+                        info!("registration do_request done: {:?} {:?}", resp.status_code, self.contact.as_ref().map(|c| c.uri.to_string()));
                         return Ok(resp);
                     }
                     _ => {
