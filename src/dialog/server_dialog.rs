@@ -259,6 +259,9 @@ impl ServerInviteDialog {
     /// # }
     /// ```
     pub fn reject(&self) -> Result<()> {
+        if self.inner.is_terminated() || self.inner.is_confirmed() {
+            return Ok(());
+        }
         if let Some(sender) = self.inner.tu_sender.lock().unwrap().as_ref() {
             let resp = self.inner.make_response(
                 &self.inner.initial_request,
@@ -266,9 +269,11 @@ impl ServerInviteDialog {
                 None,
                 None,
             );
-            sender
-                .send(TransactionEvent::Respond(resp))
-                .map_err(Into::into)
+            sender.send(TransactionEvent::Respond(resp)).ok();
+            self.inner.transition(DialogState::Terminated(
+                self.id(),
+                TerminatedReason::UasDecline,
+            ))
         } else {
             Err(crate::Error::DialogError(
                 "transaction is already terminated".to_string(),

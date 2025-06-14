@@ -191,6 +191,9 @@ impl DialogState {
     pub fn is_confirmed(&self) -> bool {
         matches!(self, DialogState::Confirmed(_))
     }
+    pub fn is_terminated(&self) -> bool {
+        matches!(self, DialogState::Terminated(_, _))
+    }
 }
 
 impl DialogInner {
@@ -253,9 +256,11 @@ impl DialogInner {
             local_contact,
         })
     }
-
     pub fn is_confirmed(&self) -> bool {
         self.state.lock().unwrap().is_confirmed()
+    }
+    pub fn is_terminated(&self) -> bool {
+        self.state.lock().unwrap().is_terminated()
     }
     pub fn get_local_seq(&self) -> u32 {
         self.local_seq.load(Ordering::Relaxed)
