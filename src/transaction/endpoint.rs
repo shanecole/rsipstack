@@ -135,11 +135,11 @@ pub struct EndpointBuilder {
 ///     // Get incoming transactions
 ///     let mut incoming = endpoint.incoming_transactions();
 ///     
-///     // Start the endpoint (in production, you'd run this in a separate task)
-///     // let endpoint_inner = endpoint.inner.clone();
-///     // tokio::spawn(async move {
-///     //     endpoint_inner.serve().await.ok();
-///     // });
+///     // Start the endpoint
+///     let endpoint_inner = endpoint.inner.clone();
+///     tokio::spawn(async move {
+///          endpoint_inner.serve().await.ok();
+///     });
 ///     
 ///     // Process incoming transactions
 ///     while let Some(transaction) = incoming.recv().await {

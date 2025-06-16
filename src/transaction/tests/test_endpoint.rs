@@ -1,22 +1,43 @@
 use rsip::headers::*;
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 use tokio::{select, time::sleep};
+
+fn assert_send<T: Send>() {}
+
+#[test]
+fn test_send() {
+    assert_send::<crate::transaction::Endpoint>();
+}
 
 #[tokio::test]
 async fn test_endpoint_serve() {
-    let endpoint = super::create_test_endpoint(None)
-        .await
-        .expect("create_test_endpoint");
+    let endpoint = Arc::new(
+        super::create_test_endpoint(None)
+            .await
+            .expect("create_test_endpoint"),
+    );
+    let endpoint_ref = endpoint.clone();
+    tokio::spawn(async move {
+        endpoint_ref.serve().await;
+    });
+
+    let mut incoming = endpoint.incoming_transactions();
     select! {
         _ = async {
-            sleep(Duration::from_millis(10)).await;
+            sleep(Duration::from_millis(100)).await;
             endpoint.shutdown();
-            sleep(Duration::from_secs(1)).await;
+        } => {
+        }
+        _ = async {
+            while let Some(_) = incoming.recv().await {
+                // Handle transaction
+                break; // Exit for example
+            }
         } => {
             assert!(false, "must not reach here");
         }
-        _ = endpoint.serve()=> {}
     }
+    endpoint.shutdown();
 }
 
 #[tokio::test]

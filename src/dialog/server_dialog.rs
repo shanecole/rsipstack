@@ -4,6 +4,8 @@ use crate::{
     transaction::transaction::{Transaction, TransactionEvent},
     Result,
 };
+use rsip::prelude::HasHeaders;
+use rsip::typed::Contact;
 use rsip::{prelude::HeadersExt, Header, Request, SipMessage, StatusCode};
 use std::sync::atomic::Ordering;
 use tokio_util::sync::CancellationToken;
