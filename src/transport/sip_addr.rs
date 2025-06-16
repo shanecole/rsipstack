@@ -109,6 +109,23 @@ impl SipAddr {
         }
     }
 }
+
+impl From<&SipAddr> for rsip::Uri {
+    fn from(addr: &SipAddr) -> Self {
+        let scheme = match addr.r#type {
+            Some(rsip::transport::Transport::Wss) | Some(rsip::transport::Transport::Tls) => {
+                rsip::Scheme::Sips
+            }
+            _ => rsip::Scheme::Sip,
+        };
+        rsip::Uri {
+            scheme: Some(scheme),
+            host_with_port: addr.addr.clone(),
+            ..Default::default()
+        }
+    }
+}
+
 impl From<SocketAddr> for SipAddr {
     fn from(addr: SocketAddr) -> Self {
         let host_with_port = HostWithPort {
