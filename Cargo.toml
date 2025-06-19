@@ -1,6 +1,6 @@
 [package]
 name = "rsipstack"
-version = "0.2.13"
+version = "0.2.14"
 edition = "2021"
 description = "SIP Stack Rust library for building SIP applications"
 license = "MIT"
@@ -39,11 +39,11 @@ get_if_addrs = "0.5.3"
 rsip-dns = { version = "0.1.4", features = ["trust-dns"] }
 bytes = "1.10.1"
 futures-util = "0.3.30"
-tokio-tungstenite = { version = "0.26.2", optional = true }
+tokio-tungstenite = { version = "0.27.0", optional = true }
 tokio-rustls = { version = "0.26.2", optional = true }
 rustls-pemfile = { version = "2.2.0", optional = true }
 webpki-roots = { version = "1.0.0", optional = true }
-rustls = "0.23.23"
+rustls = "0.23.28"
 clap = { version = "4.5.37", features = ["derive"] }
 
 [features]
@@ -71,6 +71,10 @@ base64 = "0.22.1"
 serde = "1.0.217"
 serde_json = "1.0.140"
 dasp = { version = "0.11", features = ["all"] }
+axum = { version = "0.7", features = ["ws"] }
+tower = "0.4"
+tower-http = { version = "0.5", features = ["fs", "cors"] }
+hyper = "1.0"
 
 # Examples configuration
 [[example]]

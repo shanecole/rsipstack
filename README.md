@@ -148,6 +148,9 @@ while let Some(transaction) = incoming.recv().await {
 ```rust
 use rsipstack::dialog::{DialogLayer, registration::Registration};
 use rsipstack::dialog::authenticate::Credential;
+use rsipstack::dialog::invitation::InviteOption;
+use std::sync::Arc;
+use tokio::sync::mpsc::unbounded_channel;
 
 // Create dialog layer
 let dialog_layer = Arc::new(DialogLayer::new(endpoint.inner.clone()));
@@ -159,12 +162,8 @@ let credential = Credential {
     realm: None,
 };
 
-let registration = Registration::new(
-    endpoint.inner.clone(),
-    "sip:alice@example.com".parse()?,
-    "sip:registrar.example.com".parse()?,
-    credential,
-)?;
+let mut registration = Registration::new(endpoint.inner.clone(), Some(credential.clone()));
+let response = registration.register("sip:registrar.example.com".parse()?, None).await?;
 
 // Make outgoing call
 let invite_option = InviteOption {
@@ -177,13 +176,16 @@ let invite_option = InviteOption {
     headers: None,
 };
 
-let invite_dialog = dialog_layer.create_invite_dialog(invite_option).await?;
+let (state_sender, _state_receiver) = unbounded_channel();
+let (invite_dialog, response) = dialog_layer.do_invite(invite_option, state_sender).await?;
 ```
 
 ### 4. Implementing a Proxy
 
 ```rust
-use rsipstack::transaction::Transaction;
+use rsipstack::transaction::{Transaction, key::{TransactionKey, TransactionRole}};
+use rsipstack::rsip_ext::RsipHeadersExt;
+use rsip::prelude::HeadersExt;
 use std::collections::HashMap;
 
 // Handle incoming requests
@@ -196,11 +198,23 @@ while let Some(mut transaction) = incoming.recv().await {
             transaction.reply(rsip::StatusCode::OK).await?;
         }
         rsip::Method::Invite => {
-            // Route call to registered user
-            let callee = extract_callee(&transaction.original)?;
+            // Route call to registered user  
+            let callee = transaction.original.to_header()?.uri()?.auth
+                .map(|a| a.user)
+                .unwrap_or_default();
             if let Some(target) = users.get(&callee) {
-                // Forward request
-                let mut forwarded_tx = transaction.create_client_transaction()?;
+                // Create new client transaction for forwarding
+                let mut forwarded_req = transaction.original.clone();
+                let via = transaction.endpoint_inner.get_via(None, None)?;
+                forwarded_req.headers.push_front(via.into());
+                
+                let key = TransactionKey::from_request(&forwarded_req, TransactionRole::Client)?;
+                let mut forwarded_tx = Transaction::new_client(
+                    key, 
+                    forwarded_req, 
+                    transaction.endpoint_inner.clone(), 
+                    None
+                );
                 forwarded_tx.destination = Some(target.destination.clone());
                 forwarded_tx.send().await?;
             } else {

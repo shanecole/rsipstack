@@ -7,25 +7,20 @@ use crate::{
 };
 use bytes::{Buf, BytesMut};
 use rsip::SipMessage;
-use std::sync::Arc;
 use tokio::{
-    io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
+    io::{AsyncRead, AsyncWrite, AsyncWriteExt},
     sync::Mutex,
 };
 use tokio_util::codec::{Decoder, Encoder};
-use tracing::{debug, error, warn};
+use tracing::{error, info};
 
-const MAX_SIP_MESSAGE_SIZE: usize = 65535;
+pub(super) const MAX_SIP_MESSAGE_SIZE: usize = 65535;
 
-pub struct SipCodec {
-    max_size: usize,
-}
+pub struct SipCodec {}
 
 impl SipCodec {
     pub fn new() -> Self {
-        Self {
-            max_size: MAX_SIP_MESSAGE_SIZE,
-        }
+        Self {}
     }
 }
 
@@ -35,55 +30,62 @@ impl Default for SipCodec {
     }
 }
 
+#[derive(Debug, Clone)]
+pub enum SipCodecType {
+    Message(SipMessage),
+    KeepaliveRequest,
+    KeepaliveResponse,
+}
+
+impl std::fmt::Display for SipCodecType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SipCodecType::Message(msg) => write!(f, "{}", msg),
+            SipCodecType::KeepaliveRequest => write!(f, "Keepalive Request"),
+            SipCodecType::KeepaliveResponse => write!(f, "Keepalive Response"),
+        }
+    }
+}
+
 impl Decoder for SipCodec {
-    type Item = SipMessage;
+    type Item = SipCodecType;
     type Error = crate::Error;
 
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>> {
         if src.len() >= 4 && &src[0..4] == KEEPALIVE_REQUEST {
             src.advance(4);
-            return Err(crate::Error::Keepalive);
+            return Ok(Some(SipCodecType::KeepaliveRequest));
         }
 
         if src.len() >= 2 && &src[0..2] == KEEPALIVE_RESPONSE {
             src.advance(2);
-            return Err(crate::Error::Keepalive);
+            return Ok(Some(SipCodecType::KeepaliveResponse));
         }
 
-        let data = match std::str::from_utf8(&src[..]) {
-            Ok(s) => s,
-            Err(_) => {
-                if src.len() > self.max_size {
-                    return Err(crate::Error::Error("SIP message too large".to_string()));
+        if let Some(end_pos) = src
+            .windows(KEEPALIVE_REQUEST.len())
+            .position(|window| window == KEEPALIVE_REQUEST)
+        {
+            let msg_end = end_pos + KEEPALIVE_REQUEST.len();
+            let msg_data = &src[..msg_end];
+            match SipMessage::try_from(msg_data) {
+                Ok(msg) => {
+                    src.advance(msg_end);
+                    Ok(Some(SipCodecType::Message(msg)))
                 }
-                return Ok(None);
+                Err(e) => {
+                    src.advance(msg_end);
+                    Err(crate::Error::Error(format!(
+                        "Failed to parse SIP message: {}",
+                        e
+                    )))
+                }
             }
-        };
-
-        if !data.contains("\r\n\r\n") {
-            if src.len() > self.max_size {
+        } else {
+            if src.len() > MAX_SIP_MESSAGE_SIZE {
                 return Err(crate::Error::Error("SIP message too large".to_string()));
             }
-            return Ok(None);
-        }
-
-        match SipMessage::try_from(data) {
-            Ok(msg) => {
-                let msg_len = data.find("\r\n\r\n").unwrap() + 4;
-                src.advance(msg_len);
-                Ok(Some(msg))
-            }
-            Err(e) => {
-                if let Some(pos) = data[1..].find("\r\n\r\n") {
-                    src.advance(pos + 5);
-                } else {
-                    src.clear();
-                }
-                Err(crate::Error::Error(format!(
-                    "Failed to parse SIP message: {}",
-                    e
-                )))
-            }
+            Ok(None)
         }
     }
 }
@@ -98,97 +100,133 @@ impl Encoder<SipMessage> for SipCodec {
     }
 }
 
-#[async_trait::async_trait]
-pub trait StreamConnection: Send + Sync + 'static {
-    fn get_addr(&self) -> &SipAddr;
-
-    async fn send_message(&self, msg: SipMessage) -> Result<()>;
-
-    async fn send_raw(&self, data: &[u8]) -> Result<()>;
-
-    async fn serve_loop(&self, sender: TransportSender) -> Result<()>;
-
-    async fn close(&self) -> Result<()>;
+// 通用的流连接内部结构
+pub struct StreamConnectionInner<R, W>
+where
+    R: AsyncRead + Unpin + Send,
+    W: AsyncWrite + Unpin + Send,
+{
+    pub local_addr: SipAddr,
+    pub remote_addr: SipAddr,
+    pub read_half: Mutex<Option<R>>,
+    pub write_half: Mutex<W>,
 }
 
-pub async fn handle_stream<S>(
-    stream: S,
-    local_addr: SipAddr,
-    remote_addr: SipAddr,
-    connection: SipConnection,
-    sender: TransportSender,
-) -> Result<()>
+impl<R, W> StreamConnectionInner<R, W>
 where
-    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+    R: AsyncRead + Unpin + Send,
+    W: AsyncWrite + Unpin + Send,
 {
-    let (mut read_half, write_half) = tokio::io::split(stream);
-    let write_half = Arc::new(Mutex::new(write_half));
-
-    let mut codec = SipCodec::new();
-    let mut buffer = BytesMut::with_capacity(4096);
-
-    sender.send(TransportEvent::New(connection.clone()))?;
-
-    let mut read_buf = [0u8; 4096];
-
-    loop {
-        match read_half.read(&mut read_buf).await {
-            Ok(0) => {
-                debug!("Connection closed: {}", local_addr);
-                break;
-            }
-            Ok(n) => {
-                buffer.extend_from_slice(&read_buf[0..n]);
-
-                loop {
-                    match codec.decode(&mut buffer) {
-                        Ok(Some(msg)) => {
-                            debug!("Received message from {}: {:?}", remote_addr, msg);
-
-                            sender.send(TransportEvent::Incoming(
-                                msg,
-                                connection.clone(),
-                                remote_addr.clone(),
-                            ))?;
-                        }
-                        Ok(None) => {
-                            break;
-                        }
-                        Err(crate::Error::Keepalive) => {
-                            let mut lock = write_half.lock().await;
-                            lock.write_all(KEEPALIVE_RESPONSE).await?;
-                            lock.flush().await?;
-                        }
-                        Err(e) => {
-                            warn!("Error decoding message from {}: {:?}", remote_addr, e);
-                        }
-                    }
-                }
-            }
-            Err(e) => {
-                error!("Error reading from stream: {}", e);
-                break;
-            }
+    pub fn new(local_addr: SipAddr, remote_addr: SipAddr, read_half: R, write_half: W) -> Self {
+        Self {
+            local_addr,
+            remote_addr,
+            read_half: Mutex::new(Some(read_half)),
+            write_half: Mutex::new(write_half),
         }
     }
 
-    sender.send(TransportEvent::Closed(connection))?;
+    pub async fn send_message(&self, msg: SipMessage) -> Result<()> {
+        send_to_stream(&self.write_half, msg).await
+    }
 
-    Ok(())
+    pub async fn send_raw(&self, data: &[u8]) -> Result<()> {
+        send_raw_to_stream(&self.write_half, data).await
+    }
+
+    pub async fn serve_loop(
+        &self,
+        sender: TransportSender,
+        connection: SipConnection,
+    ) -> Result<()> {
+        let mut read_half = match self.read_half.lock().await.take() {
+            Some(read_half) => read_half,
+            None => {
+                error!("Connection closed");
+                return Ok(());
+            }
+        };
+
+        let remote_addr = self.remote_addr.clone();
+
+        let mut codec = SipCodec::new();
+        let mut buffer = BytesMut::with_capacity(MAX_SIP_MESSAGE_SIZE);
+        let mut read_buf = [0u8; MAX_SIP_MESSAGE_SIZE];
+
+        loop {
+            use tokio::io::AsyncReadExt;
+            match read_half.read(&mut read_buf).await {
+                Ok(0) => {
+                    info!("Connection closed: {}", self.local_addr);
+                    break;
+                }
+                Ok(n) => {
+                    buffer.extend_from_slice(&read_buf[0..n]);
+
+                    loop {
+                        match codec.decode(&mut buffer) {
+                            Ok(Some(msg)) => match msg {
+                                SipCodecType::Message(sip_msg) => {
+                                    info!("Received message from {}: {}", remote_addr, sip_msg);
+
+                                    if let Err(e) = sender.send(TransportEvent::Incoming(
+                                        sip_msg,
+                                        connection.clone(),
+                                        remote_addr.clone(),
+                                    )) {
+                                        error!("Error sending incoming message: {:?}", e);
+                                        return Err(e.into());
+                                    }
+                                }
+                                SipCodecType::KeepaliveRequest => {
+                                    self.send_raw(KEEPALIVE_RESPONSE).await?;
+                                }
+                                SipCodecType::KeepaliveResponse => {}
+                            },
+                            Ok(None) => {
+                                // Need more data
+                                break;
+                            }
+                            Err(e) => {
+                                error!("Error decoding message from {}: {:?}", remote_addr, e);
+                                // Continue processing despite decode errors
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    error!("Error reading from stream: {}", e);
+                    break;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub async fn close(&self) -> Result<()> {
+        let mut write_half = self.write_half.lock().await;
+        write_half.shutdown().await?;
+        Ok(())
+    }
 }
 
-pub async fn send_to_stream<W>(write_half: &Arc<Mutex<W>>, msg: SipMessage) -> Result<()>
+#[async_trait::async_trait]
+pub trait StreamConnection: Send + Sync + 'static {
+    fn get_addr(&self) -> &SipAddr;
+    async fn send_message(&self, msg: SipMessage) -> Result<()>;
+    async fn send_raw(&self, data: &[u8]) -> Result<()>;
+    async fn serve_loop(&self, sender: TransportSender) -> Result<()>;
+    async fn close(&self) -> Result<()>;
+}
+
+pub async fn send_to_stream<W>(write_half: &Mutex<W>, msg: SipMessage) -> Result<()>
 where
     W: AsyncWrite + Unpin + Send,
 {
-    let data = msg.to_string();
-    let mut lock = write_half.lock().await;
-    lock.write_all(data.as_bytes()).await?;
-    lock.flush().await?;
-    Ok(())
+    send_raw_to_stream(write_half, msg.to_string().as_bytes()).await
 }
 
-pub async fn send_raw_to_stream<W>(write_half: &Arc<Mutex<W>>, data: &[u8]) -> Result<()>
+pub async fn send_raw_to_stream<W>(write_half: &Mutex<W>, data: &[u8]) -> Result<()>
 where
     W: AsyncWrite + Unpin + Send,
 {

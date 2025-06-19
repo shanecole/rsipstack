@@ -1,23 +1,22 @@
 use super::{
-    connection::{TransportSender, KEEPALIVE_REQUEST, KEEPALIVE_RESPONSE},
+    connection::TransportSender,
     sip_addr::SipAddr,
-    stream::StreamConnection,
+    stream::{StreamConnection, StreamConnectionInner},
     SipConnection, TransportEvent,
 };
-use crate::{error::Error, Result};
+use crate::{error::Error, transport::transport_layer::TransportLayerInnerRef, Result};
 use rsip::SipMessage;
 use rustls::client::danger::ServerCertVerifier;
 use std::{fmt, net::SocketAddr, sync::Arc};
 use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
-    sync::Mutex,
+    select,
 };
 use tokio_rustls::{
     rustls::{pki_types, ClientConfig, RootCertStore, ServerConfig},
     TlsAcceptor, TlsConnector,
 };
-use tracing::{error, info};
+use tracing::{debug, error, info, warn};
 
 // TLS configuration
 #[derive(Clone, Debug)]
@@ -48,38 +47,42 @@ impl Default for TlsConfig {
 
 // Define a type alias for the TLS stream to make the code more readable
 type TlsClientStream = tokio_rustls::client::TlsStream<TcpStream>;
+type TlsServerStream = tokio_rustls::server::TlsStream<TcpStream>;
 
-// TLS connection
-#[derive(Debug, Clone)]
+// TLS connection - uses enum to handle both client and server streams
+#[derive(Clone)]
 pub struct TlsConnection {
-    remote_addr: SipAddr,
-    read_half: Arc<Mutex<Option<tokio::io::ReadHalf<TlsClientStream>>>>,
-    write_half: Arc<Mutex<Option<tokio::io::WriteHalf<TlsClientStream>>>>,
+    inner: TlsConnectionInner,
+}
+
+#[derive(Clone)]
+enum TlsConnectionInner {
+    Client(
+        Arc<
+            StreamConnectionInner<
+                tokio::io::ReadHalf<TlsClientStream>,
+                tokio::io::WriteHalf<TlsClientStream>,
+            >,
+        >,
+    ),
+    Server(
+        Arc<
+            StreamConnectionInner<
+                tokio::io::ReadHalf<TlsServerStream>,
+                tokio::io::WriteHalf<TlsServerStream>,
+            >,
+        >,
+    ),
 }
 
 impl TlsConnection {
-    // Create a new TLS connection with an acceptor
-    pub fn new_with_acceptor(_acceptor: TlsAcceptor, addr: SipAddr) -> Self {
-        let read_half = Arc::new(Mutex::new(None));
-        let write_half = Arc::new(Mutex::new(None));
-
-        Self {
-            remote_addr: addr,
-            read_half,
-            write_half,
-        }
-    }
-
     // Connect to a remote TLS server
     pub async fn connect(
         remote_addr: &SipAddr,
         custom_verifier: Option<Arc<dyn ServerCertVerifier>>,
     ) -> Result<Self> {
-        // Create TLS configuration
         let root_store = RootCertStore::empty();
 
-        // Use webpki-roots to add trusted root certificates
-        // Create client configuration
         let mut config = ClientConfig::builder()
             .with_root_certificates(root_store)
             .with_no_client_auth();
@@ -90,10 +93,8 @@ impl TlsConnection {
             }
             None => {}
         }
-        // Create TLS connector
         let connector = TlsConnector::from(Arc::new(config));
 
-        // Connect to remote server
         let socket_addr = match &remote_addr.addr.host {
             rsip::host_with_port::Host::Domain(domain) => {
                 let port = remote_addr.addr.port.as_ref().map_or(5061, |p| *p.value());
@@ -115,36 +116,93 @@ impl TlsConnection {
             .to_owned();
 
         let stream = TcpStream::connect(socket_addr).await?;
+        let local_addr = SipAddr {
+            r#type: Some(rsip::transport::Transport::Tls),
+            addr: stream.local_addr()?.into(),
+        };
 
-        // Perform TLS handshake
         let tls_stream = connector.connect(server_name, stream).await?;
-
-        // Split stream into read and write halves
         let (read_half, write_half) = tokio::io::split(tls_stream);
 
-        // Create TLS connection
         let connection = Self {
-            remote_addr: remote_addr.clone(),
-            read_half: Arc::new(Mutex::new(Some(read_half))),
-            write_half: Arc::new(Mutex::new(Some(write_half))),
+            inner: TlsConnectionInner::Client(Arc::new(StreamConnectionInner::new(
+                local_addr,
+                remote_addr.clone(),
+                read_half,
+                write_half,
+            ))),
         };
+
+        info!(
+            "Created TLS client connection: {} -> {}",
+            connection.get_addr(),
+            remote_addr
+        );
 
         Ok(connection)
     }
 
-    // Create TLS connection from existing TLS stream
-    pub async fn from_stream(stream: TlsClientStream, remote_addr: SipAddr) -> Result<Self> {
+    // Create TLS connection from existing client TLS stream
+    pub async fn from_client_stream(stream: TlsClientStream, remote_addr: SipAddr) -> Result<Self> {
+        let local_addr = SipAddr {
+            r#type: Some(rsip::transport::Transport::Tls),
+            addr: stream.get_ref().0.local_addr()?.into(),
+        };
+
         // Split stream into read and write halves
         let (read_half, write_half) = tokio::io::split(stream);
 
         // Create TLS connection
         let connection = Self {
-            remote_addr,
-            read_half: Arc::new(Mutex::new(Some(read_half))),
-            write_half: Arc::new(Mutex::new(Some(write_half))),
+            inner: TlsConnectionInner::Client(Arc::new(StreamConnectionInner::new(
+                local_addr,
+                remote_addr.clone(),
+                read_half,
+                write_half,
+            ))),
         };
 
+        info!(
+            "Created TLS client connection: {} <- {}",
+            connection.get_addr(),
+            remote_addr
+        );
+
         Ok(connection)
+    }
+
+    // Create TLS connection from existing server TLS stream
+    pub async fn from_server_stream(stream: TlsServerStream, remote_addr: SipAddr) -> Result<Self> {
+        let local_addr = SipAddr {
+            r#type: Some(rsip::transport::Transport::Tls),
+            addr: stream.get_ref().0.local_addr()?.into(),
+        };
+
+        // Split stream into read and write halves
+        let (read_half, write_half) = tokio::io::split(stream);
+
+        // Create TLS connection
+        let connection = Self {
+            inner: TlsConnectionInner::Server(Arc::new(StreamConnectionInner::new(
+                local_addr,
+                remote_addr.clone(),
+                read_half,
+                write_half,
+            ))),
+        };
+
+        info!(
+            "Created TLS server connection: {} <- {}",
+            connection.get_addr(),
+            remote_addr
+        );
+
+        Ok(connection)
+    }
+
+    // Backward compatibility: Create TLS connection from any TLS stream (defaults to client)
+    pub async fn from_stream(stream: TlsClientStream, remote_addr: SipAddr) -> Result<Self> {
+        Self::from_client_stream(stream, remote_addr).await
     }
 
     // Create TLS acceptor from configuration
@@ -212,119 +270,94 @@ impl TlsConnection {
         listener: TcpListener,
         config: &TlsConfig,
         sender: TransportSender,
+        transport_layer: TransportLayerInnerRef,
     ) -> Result<()> {
-        // Create TLS acceptor
         let acceptor = Self::create_acceptor(config).await?;
 
-        // Accept connections
+        info!("Starting TLS listener");
+
         loop {
-            // Accept TCP connection
-            let (stream, peer_addr) = match listener.accept().await {
-                Ok(conn) => conn,
-                Err(e) => {
-                    error!("Failed to accept connection: {}", e);
-                    continue;
-                }
-            };
+            match listener.accept().await {
+                Ok((stream, peer_addr)) => {
+                    debug!("New TLS connection from {}", peer_addr);
 
-            // Clone acceptor and sender for this connection
-            let acceptor = acceptor.clone();
-            let sender = sender.clone();
+                    let acceptor_clone = acceptor.clone();
+                    let sender_clone = sender.clone();
+                    let transport_layer_clone = transport_layer.clone();
+                    let cancel_token = transport_layer.cancel_token.child_token();
 
-            // Handle connection in a separate task
-            tokio::spawn(async move {
-                // Perform TLS handshake
-                let tls_stream = match acceptor.accept(stream).await {
-                    Ok(stream) => stream,
-                    Err(e) => {
-                        error!("TLS handshake failed: {}", e);
-                        return;
-                    }
-                };
+                    tokio::spawn(async move {
+                        // Perform TLS handshake
+                        let tls_stream = match acceptor_clone.accept(stream).await {
+                            Ok(stream) => stream,
+                            Err(e) => {
+                                error!("TLS handshake failed: {}", e);
+                                return;
+                            }
+                        };
 
-                // Create remote SIP address
-                let remote_sip_addr = SipAddr {
-                    r#type: Some(rsip::Transport::Tls),
-                    addr: peer_addr.into(),
-                };
+                        // Create remote SIP address
+                        let remote_sip_addr = SipAddr {
+                            r#type: Some(rsip::transport::Transport::Tls),
+                            addr: peer_addr.into(),
+                        };
 
-                let (server_io, _server_session) = tls_stream.into_inner();
-
-                let local_addr = match server_io.local_addr() {
-                    Ok(addr) => addr,
-                    Err(e) => {
-                        error!("Failed to get local address: {}", e);
-                        return;
-                    }
-                };
-
-                let root_store = RootCertStore::empty();
-
-                // Use webpki-roots to add trusted root certificates
-                //root_store.add_server_trust_anchors(&webpki_roots::TLS_SERVER_ROOTS);
-
-                let client_config = ClientConfig::builder()
-                    .with_root_certificates(root_store)
-                    .with_no_client_auth();
-
-                let domain_string = match &remote_sip_addr.addr.host {
-                    rsip::host_with_port::Host::Domain(domain) => domain.to_string(),
-                    rsip::host_with_port::Host::IpAddr(ip) => ip.to_string(),
-                };
-
-                let server_name = match pki_types::ServerName::try_from(domain_string.as_str()) {
-                    Ok(name) => name.to_owned(),
-                    Err(_) => {
-                        error!("Invalid DNS name: {}", domain_string);
-                        return;
-                    }
-                };
-
-                let client_stream = match TcpStream::connect(local_addr).await {
-                    Ok(stream) => stream,
-                    Err(e) => {
-                        error!("Failed to create TCP connection: {}", e);
-                        return;
-                    }
-                };
-
-                let connector = TlsConnector::from(Arc::new(client_config));
-                let client_tls_stream = match connector.connect(server_name, client_stream).await {
-                    Ok(stream) => stream,
-                    Err(e) => {
-                        error!("Failed to create client TLS stream: {}", e);
-                        return;
-                    }
-                };
-
-                // Create TLS connection
-                let connection =
-                    match TlsConnection::from_stream(client_tls_stream, remote_sip_addr.clone())
+                        // Create TLS connection
+                        let connection = match TlsConnection::from_server_stream(
+                            tls_stream,
+                            remote_sip_addr.clone(),
+                        )
                         .await
-                    {
-                        Ok(conn) => conn,
-                        Err(e) => {
-                            error!("Failed to create TLS connection: {}", e);
+                        {
+                            Ok(conn) => conn,
+                            Err(e) => {
+                                error!("Failed to create TLS connection: {}", e);
+                                return;
+                            }
+                        };
+
+                        // Convert to SIP connection
+                        let sip_connection = SipConnection::Tls(connection.clone());
+                        let connection_addr = connection.get_addr().clone();
+
+                        // Add connection to transport layer if provided
+                        transport_layer_clone.add_connection(sip_connection.clone());
+                        info!(
+                            "Added TLS connection to transport layer: {}",
+                            connection_addr
+                        );
+
+                        // Notify about new connection
+                        if let Err(e) =
+                            sender_clone.send(TransportEvent::New(sip_connection.clone()))
+                        {
+                            error!("Failed to send new connection event: {}", e);
                             return;
                         }
-                    };
+                        select! {
+                            _ = cancel_token.cancelled() => {
+                            }
+                            _ = connection.serve_loop(sender_clone.clone()) => {
+                                info!("TLS connection serve loop completed: {}", connection_addr);
+                            }
+                        }
+                        // Remove connection from transport layer when done
+                        transport_layer_clone.del_connection(&connection_addr);
+                        info!(
+                            "Removed TLS connection from transport layer: {}",
+                            connection_addr
+                        );
 
-                // Convert to SIP connection
-                let sip_connection = super::connection::SipConnection::from(connection);
-
-                // Notify about new connection
-                if let Err(e) = sender.send(super::connection::TransportEvent::New(
-                    sip_connection.clone(),
-                )) {
-                    error!("Failed to send new connection event: {}", e);
-                    return;
+                        // Send connection closed event
+                        if let Err(e) = sender_clone.send(TransportEvent::Closed(sip_connection)) {
+                            warn!("Error sending TLS connection closed event: {:?}", e);
+                        }
+                    });
                 }
-
-                // Serve connection
-                if let Err(e) = sip_connection.serve_loop(sender).await {
-                    error!("Error serving TLS connection: {}", e);
+                Err(e) => {
+                    error!("Error accepting TLS connection: {}", e);
                 }
-            });
+            }
         }
     }
 }
@@ -333,107 +366,57 @@ impl TlsConnection {
 #[async_trait::async_trait]
 impl StreamConnection for TlsConnection {
     fn get_addr(&self) -> &SipAddr {
-        &self.remote_addr
+        match &self.inner {
+            TlsConnectionInner::Client(inner) => &inner.local_addr,
+            TlsConnectionInner::Server(inner) => &inner.local_addr,
+        }
     }
 
     async fn send_message(&self, msg: SipMessage) -> Result<()> {
-        info!("TlsConnection send:{}", msg);
-        let mut write_half_guard = self.write_half.lock().await;
-        if let Some(write_half) = &mut *write_half_guard {
-            let mut buf = Vec::new();
-            buf.extend_from_slice(msg.to_string().as_bytes());
-            write_half.write_all(&buf).await?;
-
-            Ok(())
-        } else {
-            Err(Error::Error("TLS connection not established".to_string()))
+        match &self.inner {
+            TlsConnectionInner::Client(inner) => inner.send_message(msg).await,
+            TlsConnectionInner::Server(inner) => inner.send_message(msg).await,
         }
     }
 
     async fn send_raw(&self, data: &[u8]) -> Result<()> {
-        let mut write_half_guard = self.write_half.lock().await;
-        if let Some(write_half) = &mut *write_half_guard {
-            write_half.write_all(data).await?;
+        match &self.inner {
+            TlsConnectionInner::Client(inner) => inner.send_raw(data).await,
+            TlsConnectionInner::Server(inner) => inner.send_raw(data).await,
+        }
+    }
 
-            Ok(())
-        } else {
-            Err(Error::Error("TLS connection not established".to_string()))
+    async fn serve_loop(&self, sender: TransportSender) -> Result<()> {
+        let sip_connection = SipConnection::Tls(self.clone());
+        match &self.inner {
+            TlsConnectionInner::Client(inner) => inner.serve_loop(sender, sip_connection).await,
+            TlsConnectionInner::Server(inner) => inner.serve_loop(sender, sip_connection).await,
         }
     }
 
     async fn close(&self) -> Result<()> {
-        let mut write_half_guard = self.write_half.lock().await;
-        if let Some(write_half) = &mut *write_half_guard {
-            write_half.shutdown().await?;
-            *write_half_guard = None;
+        match &self.inner {
+            TlsConnectionInner::Client(inner) => inner.close().await,
+            TlsConnectionInner::Server(inner) => inner.close().await,
         }
-        Ok(())
-    }
-
-    async fn serve_loop(&self, sender: TransportSender) -> Result<()> {
-        let mut buf = vec![0u8; 2048];
-        let sip_connection = SipConnection::Tls(self.clone());
-        let remote_addr = self.remote_addr.clone();
-        let mut read_half_guard = self.read_half.lock().await;
-        loop {
-            let len;
-            if let Some(read_half) = &mut *read_half_guard {
-                len = read_half.read(&mut buf).await?;
-                if len <= 0 {
-                    continue;
-                }
-            } else {
-                continue;
-            }
-
-            match &buf[..len] {
-                KEEPALIVE_REQUEST => match self.send_raw(KEEPALIVE_RESPONSE).await {
-                    Ok(_) => continue,
-                    Err(e) => {
-                        error!("Failed to send keepalive response: {}", e);
-                        break;
-                    }
-                },
-                KEEPALIVE_RESPONSE => continue,
-                _ => {
-                    if buf.iter().all(|&b| b.is_ascii_whitespace()) {
-                        continue;
-                    }
-                }
-            }
-
-            let undecoded = match std::str::from_utf8(&buf[..len]) {
-                Ok(s) => s,
-                Err(e) => {
-                    info!("decoding text ferror: {} buf: {:?}", e, &buf[..len]);
-                    continue;
-                }
-            };
-
-            let sip_msg = match rsip::SipMessage::try_from(undecoded) {
-                Ok(msg) => msg,
-                Err(e) => {
-                    info!("error parsing SIP message error: {} buf: {}", e, undecoded);
-                    continue;
-                }
-            };
-
-            if let Err(e) = sender.send(TransportEvent::Incoming(
-                sip_msg,
-                sip_connection.clone(),
-                remote_addr.clone(),
-            )) {
-                error!("Error sending incoming message: {:?}", e);
-                break;
-            }
-        }
-        info!("TLS connection closed");
-        Ok(())
     }
 }
 
 impl fmt::Display for TlsConnection {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "TLS {}", self.remote_addr)
+        match &self.inner {
+            TlsConnectionInner::Client(inner) => {
+                write!(f, "TLS {} -> {}", inner.local_addr, inner.remote_addr)
+            }
+            TlsConnectionInner::Server(inner) => {
+                write!(f, "TLS {} -> {}", inner.local_addr, inner.remote_addr)
+            }
+        }
+    }
+}
+
+impl fmt::Debug for TlsConnection {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(self, f)
     }
 }

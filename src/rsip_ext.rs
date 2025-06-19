@@ -1,4 +1,7 @@
-use rsip::{message::HasHeaders, prelude::HeadersExt};
+use rsip::{
+    message::HasHeaders,
+    prelude::{HeadersExt, UntypedHeader},
+};
 
 use crate::transport::SipConnection;
 pub trait RsipResponseExt {
@@ -14,6 +17,9 @@ impl RsipResponseExt for rsip::Response {
                 if name.eq_ignore_ascii_case("reason") {
                     return Some(value);
                 }
+            }
+            if let rsip::Header::ErrorInfo(reason) = header {
+                return Some(&reason.value());
             }
         }
         None

@@ -1,6 +1,8 @@
-mod test_connection_management;
-mod test_sipaddr;
-mod test_stream_encoding;
-mod test_udp;
-mod test_via_received;
-mod transport_tests;
+pub mod test_connection_lifecycle;
+pub mod test_connection_management;
+pub mod test_server_integration;
+pub mod test_sipaddr;
+pub mod test_stream_encoding;
+pub mod test_udp;
+pub mod test_via_received;
+pub mod transport_tests;

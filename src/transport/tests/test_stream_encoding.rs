@@ -32,7 +32,7 @@ fn test_sip_codec_single_message() {
 
     let msg = result.unwrap();
     match msg {
-        SipMessage::Request(req) => {
+        crate::transport::stream::SipCodecType::Message(SipMessage::Request(req)) => {
             assert_eq!(req.method, rsip::Method::Register);
         }
         _ => panic!("Expected request message"),
@@ -84,7 +84,7 @@ fn test_sip_codec_fragmented_message() {
 
     let msg = result.unwrap();
     match msg {
-        SipMessage::Request(req) => {
+        crate::transport::stream::SipCodecType::Message(SipMessage::Request(req)) => {
             assert_eq!(req.method, rsip::Method::Register);
         }
         _ => panic!("Expected request message"),
@@ -129,7 +129,7 @@ fn test_sip_codec_multiple_messages() {
 
     let msg1 = result1.unwrap();
     match msg1 {
-        SipMessage::Request(req) => {
+        crate::transport::stream::SipCodecType::Message(SipMessage::Request(req)) => {
             assert_eq!(req.call_id_header().unwrap().value(), "test-call-id-1");
         }
         _ => panic!("Expected request message"),
@@ -143,7 +143,7 @@ fn test_sip_codec_multiple_messages() {
 
     let msg2 = result2.unwrap();
     match msg2 {
-        SipMessage::Request(req) => {
+        crate::transport::stream::SipCodecType::Message(SipMessage::Request(req)) => {
             assert_eq!(req.call_id_header().unwrap().value(), "test-call-id-2");
         }
         _ => panic!("Expected request message"),
@@ -165,20 +165,28 @@ fn test_sip_codec_keepalive() {
 
     // Test keepalive request
     buffer.extend_from_slice(KEEPALIVE_REQUEST);
-    let result = codec.decode(&mut buffer);
-    assert!(
-        matches!(result, Err(crate::Error::Keepalive)),
-        "Should handle keepalive request"
-    );
+    let result = codec.decode(&mut buffer).expect("decode should succeed");
+    assert!(result.is_some(), "Should decode keepalive request");
+
+    match result.unwrap() {
+        crate::transport::stream::SipCodecType::KeepaliveRequest => {
+            // Expected
+        }
+        _ => panic!("Expected keepalive request"),
+    }
     assert_eq!(buffer.len(), 0, "Keepalive should be consumed from buffer");
 
     // Test keepalive response
     buffer.extend_from_slice(KEEPALIVE_RESPONSE);
-    let result = codec.decode(&mut buffer);
-    assert!(
-        matches!(result, Err(crate::Error::Keepalive)),
-        "Should handle keepalive response"
-    );
+    let result = codec.decode(&mut buffer).expect("decode should succeed");
+    assert!(result.is_some(), "Should decode keepalive response");
+
+    match result.unwrap() {
+        crate::transport::stream::SipCodecType::KeepaliveResponse => {
+            // Expected
+        }
+        _ => panic!("Expected keepalive response"),
+    }
     assert_eq!(buffer.len(), 0, "Keepalive should be consumed from buffer");
 }
 

@@ -3,6 +3,7 @@ use crate::{
         connection::{TransportSender, KEEPALIVE_REQUEST, KEEPALIVE_RESPONSE},
         sip_addr::SipAddr,
         stream::StreamConnection,
+        transport_layer::TransportLayerInnerRef,
         SipConnection, TransportEvent,
     },
     Result,
@@ -10,10 +11,17 @@ use crate::{
 use futures_util::{SinkExt, StreamExt};
 use rsip::SipMessage;
 use std::{fmt, sync::Arc};
-use tokio::{net::TcpListener, sync::Mutex};
+use tokio::{net::TcpListener, select, sync::Mutex};
 use tokio_tungstenite::{
-    connect_async, tungstenite::protocol::Message, MaybeTlsStream, WebSocketStream,
+    connect_async,
+    tungstenite::{
+        client::IntoClientRequest,
+        handshake::server::{Request, Response},
+        protocol::Message,
+    },
+    MaybeTlsStream, WebSocketStream,
 };
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
 // Define a type alias for the WebSocket sink to make the code more readable
@@ -26,9 +34,9 @@ type WsRead =
 
 pub struct WebSocketInner {
     pub local_addr: SipAddr,
-    pub remote_addr: Option<SipAddr>,
-    pub ws_sink: Arc<Mutex<WsSink>>,
-    pub ws_read: Arc<Mutex<WsRead>>,
+    pub remote_addr: SipAddr,
+    pub ws_sink: Mutex<WsSink>,
+    pub ws_read: Mutex<Option<WsRead>>,
 }
 
 #[derive(Clone)]
@@ -49,10 +57,15 @@ impl WebSocketConnection {
         };
 
         let port = remote.addr.port.as_ref().map_or(5060, |p| *p.value());
-        let url = format!("{}://{}:{}/sip", scheme, host, port);
 
-        let (ws_stream, _) = connect_async(&url).await?;
-        let (ws_sink, _ws_stream) = ws_stream.split();
+        let url = format!("{}://{}:{}/", scheme, host, port);
+        let mut request = url.into_client_request()?;
+        request
+            .headers_mut()
+            .insert("sec-websocket-protocol", "sip".parse().unwrap());
+
+        let (ws_stream, _) = connect_async(request).await?;
+        let (ws_sink, ws_stream) = ws_stream.split();
 
         let local_addr = SipAddr {
             r#type: Some(if scheme == "wss" {
@@ -66,9 +79,9 @@ impl WebSocketConnection {
         let connection = WebSocketConnection {
             inner: Arc::new(WebSocketInner {
                 local_addr,
-                remote_addr: Some(remote.clone()),
-                ws_sink: Arc::new(Mutex::new(ws_sink)),
-                ws_read: Arc::new(Mutex::new(_ws_stream)),
+                remote_addr: remote.clone(),
+                ws_sink: Mutex::new(ws_sink),
+                ws_read: Mutex::new(Some(ws_stream)),
             }),
         };
 
@@ -81,11 +94,68 @@ impl WebSocketConnection {
         Ok(connection)
     }
 
+    pub async fn server_ws_conection(
+        cancel_token: CancellationToken,
+        ws_sink: WsSink,
+        ws_read: WsRead,
+        local_addr: SipAddr,
+        remote_addr: SipAddr,
+        sender: TransportSender,
+        transport_layer: TransportLayerInnerRef,
+    ) {
+        // Create a new WebSocket connection
+        let connection = WebSocketConnection {
+            inner: Arc::new(WebSocketInner {
+                local_addr,
+                remote_addr,
+                ws_sink: Mutex::new(ws_sink),
+                ws_read: Mutex::new(Some(ws_read)),
+            }),
+        };
+        let sip_connection = SipConnection::WebSocket(connection.clone());
+        let connection_addr = connection.get_addr().clone();
+
+        transport_layer.add_connection(sip_connection.clone());
+        info!(
+            "Added WebSocket connection to transport layer: {}",
+            connection_addr
+        );
+
+        if let Err(e) = sender.send(TransportEvent::New(sip_connection.clone())) {
+            error!("Error sending new connection event: {:?}", e);
+            return;
+        }
+
+        select! {
+            _ = cancel_token.cancelled() => {
+            }
+            _ = connection.serve_loop(sender.clone()) => {
+                info!(
+                    "WebSocket connection serve loop completed: {}",
+                    connection_addr
+                );
+            }
+        }
+
+        // Remove connection from transport layer when done
+        transport_layer.del_connection(&connection_addr);
+        info!(
+            "Removed WebSocket connection from transport layer: {}",
+            connection_addr
+        );
+
+        // Send connection closed event
+        if let Err(e) = sender.send(TransportEvent::Closed(sip_connection)) {
+            warn!("Error sending WebSocket connection closed event: {:?}", e);
+        }
+    }
+
     pub async fn serve_listener(
         tcp_listener: TcpListener,
         local_addr: SipAddr,
         sender: TransportSender,
         is_secure: bool,
+        transport_layer: TransportLayerInnerRef,
     ) -> Result<()> {
         let transport_type = if is_secure {
             rsip::transport::Transport::Wss
@@ -107,14 +177,33 @@ impl WebSocketConnection {
 
                     let local_addr_clone = local_addr.clone();
                     let sender_clone = sender.clone();
-
+                    let transport_layer_clone = transport_layer.clone();
+                    let cancel_token = transport_layer.cancel_token.child_token();
                     tokio::spawn(async move {
                         // Wrap the TCP stream in MaybeTlsStream
                         let maybe_tls_stream = MaybeTlsStream::Plain(stream);
 
-                        // Accept the WebSocket connection
+                        // Accept the WebSocket connection with custom header handling
+                        let callback = |req: &Request, mut response: Response| {
+                            // Check if client requested 'sip' subprotocol
+                            if let Some(protocols) = req.headers().get("sec-websocket-protocol") {
+                                if let Ok(protocols_str) = protocols.to_str() {
+                                    if protocols_str.contains("sip") {
+                                        // Add the 'sip' subprotocol to response
+                                        response.headers_mut().insert(
+                                            "sec-websocket-protocol",
+                                            "sip".parse().unwrap(),
+                                        );
+                                    }
+                                }
+                            }
+                            Ok(response)
+                        };
+
                         let ws_stream =
-                            match tokio_tungstenite::accept_async(maybe_tls_stream).await {
+                            match tokio_tungstenite::accept_hdr_async(maybe_tls_stream, callback)
+                                .await
+                            {
                                 Ok(ws) => ws,
                                 Err(e) => {
                                     error!("Error upgrading to WebSocket: {}", e);
@@ -122,32 +211,18 @@ impl WebSocketConnection {
                                 }
                             };
 
-                        // Split the WebSocket stream
-                        let (ws_sink, ws_stream) = ws_stream.split();
+                        let (ws_sink, ws_read) = ws_stream.split();
 
-                        // Create a new WebSocket connection
-                        let connection = WebSocketConnection {
-                            inner: Arc::new(WebSocketInner {
-                                local_addr: local_addr_clone.clone(),
-                                remote_addr: Some(remote_sip_addr.clone()),
-                                ws_sink: Arc::new(Mutex::new(ws_sink)),
-                                ws_read: Arc::new(Mutex::new(ws_stream)),
-                            }),
-                        };
-                        let sip_connection = SipConnection::WebSocket(connection.clone());
-
-                        if let Err(e) =
-                            sender_clone.send(TransportEvent::New(sip_connection.clone()))
-                        {
-                            error!("Error sending new connection event: {:?}", e);
-                            return;
-                        }
-                        match connection.serve_loop(sender_clone.clone()).await {
-                            Ok(_) => {}
-                            Err(e) => {
-                                error!("Error serving WebSocket connection: {:?}", e);
-                            }
-                        }
+                        Self::server_ws_conection(
+                            cancel_token,
+                            ws_sink,
+                            ws_read,
+                            local_addr_clone,
+                            remote_sip_addr,
+                            sender_clone,
+                            transport_layer_clone,
+                        )
+                        .await;
                     });
                 }
                 Err(e) => {
@@ -180,9 +255,17 @@ impl StreamConnection for WebSocketConnection {
 
     async fn serve_loop(&self, sender: TransportSender) -> Result<()> {
         let sip_connection = SipConnection::WebSocket(self.clone());
-        let remote_addr = self.inner.remote_addr.clone().unwrap().clone();
-        let mut ws_read = self.inner.ws_read.lock().await;
+
+        let remote_addr = self.inner.remote_addr.clone();
+        let mut ws_read = match self.inner.ws_read.lock().await.take() {
+            Some(ws_read) => ws_read,
+            None => {
+                error!("WebSocket connection closed");
+                return Ok(());
+            }
+        };
         while let Some(msg) = ws_read.next().await {
+            debug!(?remote_addr, "WebSocket message: {:?}", msg);
             match msg {
                 Ok(Message::Text(text)) => match SipMessage::try_from(text.as_str()) {
                     Ok(sip_msg) => {
@@ -206,25 +289,19 @@ impl StreamConnection for WebSocketConnection {
                         }
                         continue;
                     }
-
-                    match std::str::from_utf8(&bin) {
-                        Ok(text) => match SipMessage::try_from(text) {
-                            Ok(sip_msg) => {
-                                if let Err(e) = sender.send(TransportEvent::Incoming(
-                                    sip_msg,
-                                    sip_connection.clone(),
-                                    remote_addr.clone(),
-                                )) {
-                                    error!("Error sending incoming message: {:?}", e);
-                                    break;
-                                }
+                    match SipMessage::try_from(bin) {
+                        Ok(sip_msg) => {
+                            if let Err(e) = sender.send(TransportEvent::Incoming(
+                                sip_msg,
+                                sip_connection.clone(),
+                                remote_addr.clone(),
+                            )) {
+                                error!("Error sending incoming message: {:?}", e);
+                                break;
                             }
-                            Err(e) => {
-                                warn!("Error parsing SIP message: {}", e);
-                            }
-                        },
+                        }
                         Err(e) => {
-                            warn!("Error decoding binary message: {}", e);
+                            warn!("Error parsing SIP message: {}", e);
                         }
                     }
                 }
@@ -247,9 +324,9 @@ impl StreamConnection for WebSocketConnection {
             }
         }
 
-        if let Err(e) = sender.send(TransportEvent::Closed(sip_connection.clone())) {
-            error!("Error sending connection closed event: {:?}", e);
-        }
+        // Note: Connection closed event is now handled in serve_listener
+        // to avoid duplicate events
+        debug!("WebSocket serve_loop exiting: {}", remote_addr);
         Ok(())
     }
 

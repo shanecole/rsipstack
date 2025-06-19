@@ -10,7 +10,6 @@ pub enum Error {
     TransactionError(String, TransactionKey),
     EndpointError(String),
     DialogError(String, DialogId),
-    Keepalive,
     Error(String),
 }
 
@@ -25,7 +24,6 @@ impl std::fmt::Display for Error {
             Error::TransactionError(e, key) => write!(f, "Transaction error: {}: {}", e, key),
             Error::EndpointError(e) => write!(f, "Endpoint error: {}", e),
             Error::DialogError(e, id) => write!(f, "Dialog error: {}: {}", e, id),
-            Error::Keepalive => write!(f, "Keepalive message"),
             Error::Error(e) => write!(f, "Error: {}", e),
         }
     }
@@ -40,7 +38,6 @@ impl Into<JsValue> for Error {
             Error::TransactionError(e, key) => format!("{}: {}", e, key.to_string()).into(),
             Error::EndpointError(e) => e.into(),
             Error::DialogError(e, id) => format!("{}: {}", e, id.to_string()).into(),
-            Error::Keepalive => "Keepalive message".into(),
             Error::Error(e) => e.into(),
         }
     }

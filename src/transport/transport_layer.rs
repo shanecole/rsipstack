@@ -5,10 +5,8 @@ use crate::{transport::TransportEvent, Result};
 use rsip::HostWithPort;
 use rsip_dns::{trust_dns_resolver::TokioAsyncResolver, ResolvableExt};
 use std::net::SocketAddr;
-use std::{
-    collections::HashMap,
-    sync::{Arc, Mutex},
-};
+use std::sync::RwLock;
+use std::{collections::HashMap, sync::Arc};
 use tokio::select;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
@@ -24,23 +22,23 @@ pub struct TransportConfig {
 
 #[derive(Default)]
 pub struct TransportLayerInner {
-    cancel_token: CancellationToken,
-    listens: Arc<Mutex<HashMap<SipAddr, SipConnection>>>, // listening transports
-    config: Arc<Mutex<TransportConfig>>,
+    pub(crate) cancel_token: CancellationToken,
+    listens: Arc<RwLock<HashMap<SipAddr, SipConnection>>>, // listening transports
+    pub(crate) config: TransportConfig,
 }
-
+pub(crate) type TransportLayerInnerRef = Arc<TransportLayerInner>;
 #[derive(Default)]
 pub struct TransportLayer {
     pub outbound: Option<SipAddr>,
-    inner: Arc<TransportLayerInner>,
+    pub inner: TransportLayerInnerRef,
 }
 
 impl TransportLayer {
     pub fn new(cancel_token: CancellationToken) -> Self {
         let inner = TransportLayerInner {
             cancel_token,
-            listens: Arc::new(Mutex::new(HashMap::new())),
-            config: Arc::new(Mutex::new(TransportConfig::default())),
+            listens: Arc::new(RwLock::new(HashMap::new())),
+            config: TransportConfig::default(),
         };
         Self {
             outbound: None,
@@ -51,8 +49,8 @@ impl TransportLayer {
     pub fn with_config(cancel_token: CancellationToken, config: TransportConfig) -> Self {
         let inner = TransportLayerInner {
             cancel_token,
-            listens: Arc::new(Mutex::new(HashMap::new())),
-            config: Arc::new(Mutex::new(config)),
+            listens: Arc::new(RwLock::new(HashMap::new())),
+            config,
         };
         Self {
             outbound: None,
@@ -77,7 +75,15 @@ impl TransportLayer {
     }
 
     pub async fn serve_listens(&self, sender: TransportSender) -> Result<()> {
-        let listens = self.inner.listens.lock().unwrap().clone();
+        let listens = match self.inner.listens.read() {
+            Ok(listens) => listens.clone(),
+            Err(e) => {
+                return Err(crate::Error::Error(format!(
+                    "Failed to read listens: {:?}",
+                    e
+                )));
+            }
+        };
         for (_, transport) in listens {
             self.inner.start_serve(transport.clone(), sender.clone());
         }
@@ -85,7 +91,13 @@ impl TransportLayer {
     }
 
     pub fn get_addrs(&self) -> Vec<SipAddr> {
-        self.inner.listens.lock().unwrap().keys().cloned().collect()
+        match self.inner.listens.read() {
+            Ok(listens) => listens.keys().cloned().collect(),
+            Err(e) => {
+                warn!("Failed to read listens: {:?}", e);
+                return Vec::new();
+            }
+        }
     }
 
     /// Create and add UDP listener
@@ -109,13 +121,14 @@ impl TransportLayer {
         let cancel_token = self.inner.cancel_token.child_token();
         let addr_clone = addr.clone();
         let sender_clone = sender.clone();
+        let transport_layer = self.inner.clone();
 
         tokio::spawn(async move {
             select! {
                 _ = cancel_token.cancelled() => {
                     info!("TCP listener cancelled: {}", addr_clone);
                 }
-                result = TcpConnection::serve_listener(listener, addr_clone.clone(), sender_clone) => {
+                result = TcpConnection::serve_listener(listener, addr_clone.clone(), sender_clone, transport_layer) => {
                     if let Err(e) = result {
                         warn!("TCP listener error: {}: {:?}", addr_clone, e);
                     }
@@ -129,10 +142,9 @@ impl TransportLayer {
     pub async fn add_tls_listener(
         &self,
         local: SocketAddr,
-        _sender: TransportSender,
+        sender: TransportSender,
     ) -> Result<SipAddr> {
-        let config_guard = self.inner.config.lock().unwrap();
-        let config = match &config_guard.tls {
+        let config = match &self.inner.config.tls {
             Some(cfg) => cfg,
             None => {
                 return Err(crate::Error::Error(
@@ -140,12 +152,10 @@ impl TransportLayer {
                 ));
             }
         };
-
-        let acceptor = TlsConnection::create_acceptor(config).await?;
-        drop(config_guard);
+        let config_clone = config.clone();
 
         // Create TCP listener
-        let (_listener, addr) = tokio::net::TcpListener::bind(local).await.map(|l| {
+        let (listener, addr) = tokio::net::TcpListener::bind(local).await.map(|l| {
             let local_addr = l.local_addr().unwrap();
             let sip_addr = SipAddr {
                 r#type: Some(rsip::transport::Transport::Tls),
@@ -154,13 +164,24 @@ impl TransportLayer {
             (l, sip_addr)
         })?;
 
-        // Add listener to the list
-        let mut listeners = self.inner.listens.lock().unwrap();
+        let cancel_token = self.inner.cancel_token.child_token();
+        let addr_clone = addr.clone();
+        let sender_clone = sender.clone();
+        let transport_layer = self.inner.clone();
 
-        listeners.insert(
-            addr.clone(),
-            SipConnection::Tls(TlsConnection::new_with_acceptor(acceptor, addr.clone())),
-        );
+        tokio::spawn(async move {
+            select! {
+                _ = cancel_token.cancelled() => {
+                    info!("TLS listener cancelled: {}", addr_clone);
+                }
+                result = TlsConnection::serve_listener(listener, &config_clone, sender_clone, transport_layer) => {
+                    if let Err(e) = result {
+                        warn!("TLS listener error: {}: {:?}", addr_clone, e);
+                    }
+                }
+            }
+        });
+
         info!("Added TLS listener on {}", addr);
         Ok(addr)
     }
@@ -171,17 +192,15 @@ impl TransportLayer {
         sender: TransportSender,
         secure: bool,
     ) -> Result<SipAddr> {
-        let config = self.inner.config.lock().unwrap();
-        if secure && !config.enable_wss {
+        if secure && !self.inner.config.enable_wss {
             return Err(crate::Error::Error(
                 "WSS not enabled in configuration".to_string(),
             ));
-        } else if !secure && !config.enable_ws {
+        } else if !secure && !self.inner.config.enable_ws {
             return Err(crate::Error::Error(
                 "WS not enabled in configuration".to_string(),
             ));
         }
-        drop(config);
 
         let listener = tokio::net::TcpListener::bind(local).await?;
         let local_addr = listener.local_addr()?;
@@ -200,13 +219,14 @@ impl TransportLayer {
         let cancel_token = self.inner.cancel_token.child_token();
         let addr_clone = addr.clone();
         let sender_clone = sender.clone();
+        let transport_layer = self.inner.clone();
 
         tokio::spawn(async move {
             select! {
                 _ = cancel_token.cancelled() => {
                     info!("WebSocket listener cancelled: {}", addr_clone);
                 }
-                result = WebSocketConnection::serve_listener(listener, addr_clone.clone(), sender_clone, secure) => {
+                result = WebSocketConnection::serve_listener(listener, addr_clone.clone(), sender_clone, secure, transport_layer) => {
                     if let Err(e) = result {
                         warn!("WebSocket listener error: {}: {:?}", addr_clone, e);
                     }
@@ -220,14 +240,25 @@ impl TransportLayer {
 
 impl TransportLayerInner {
     pub fn add_connection(&self, connection: SipConnection) {
-        self.listens
-            .lock()
-            .unwrap()
-            .insert(connection.get_addr().to_owned(), connection);
+        match self.listens.write() {
+            Ok(mut listens) => {
+                listens.insert(connection.get_addr().to_owned(), connection);
+            }
+            Err(e) => {
+                warn!("Failed to write listens: {:?}", e);
+            }
+        }
     }
 
     pub fn del_connection(&self, addr: &SipAddr) {
-        self.listens.lock().unwrap().remove(addr);
+        match self.listens.write() {
+            Ok(mut listens) => {
+                listens.remove(addr);
+            }
+            Err(e) => {
+                warn!("Failed to write listens: {:?}", e);
+            }
+        }
     }
 
     async fn lookup<'a>(
@@ -277,13 +308,34 @@ impl TransportLayerInner {
 
         info!("lookup target: {} -> {}", uri, target);
 
-        if let Some(transport) = self.listens.lock().unwrap().get(&target) {
-            return Ok((transport.clone(), target.clone()));
+        match self.listens.read() {
+            Ok(listens) => match listens.get(&target) {
+                Some(transport) => {
+                    return Ok((transport.clone(), target.clone()));
+                }
+                None => {}
+            },
+            Err(e) => {
+                warn!("Failed to read listens: {:?}", e);
+                return Err(crate::Error::Error(format!(
+                    "Failed to read listens: {:?}",
+                    e
+                )));
+            }
         }
 
         match target.r#type {
             Some(rsip::transport::Transport::Udp) => {
-                let listens = self.listens.lock().unwrap();
+                let listens = match self.listens.read() {
+                    Ok(listens) => listens,
+                    Err(e) => {
+                        warn!("Failed to read listens: {:?}", e);
+                        return Err(crate::Error::Error(format!(
+                            "Failed to read listens: {:?}",
+                            e
+                        )));
+                    }
+                };
                 for (_, transport) in listens.iter() {
                     if transport.get_addr().r#type == Some(rsip::transport::Transport::Udp) {
                         return Ok((transport.clone(), target.clone()));
@@ -328,7 +380,14 @@ impl TransportLayerInner {
                 _ = transport.serve_loop(sender_clone.clone()) => {
                 }
             }
-            listens_ref.lock().unwrap().remove(transport.get_addr());
+            match listens_ref.write() {
+                Ok(mut listens) => {
+                    listens.remove(transport.get_addr());
+                }
+                Err(e) => {
+                    warn!("Failed to write listens: {:?}", e);
+                }
+            }
             warn!("transport serve_loop exited: {}", transport.get_addr());
             sender_clone.send(TransportEvent::Closed(transport)).ok();
         });
