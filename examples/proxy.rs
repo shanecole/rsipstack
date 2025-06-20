@@ -1,22 +1,21 @@
 use axum::response::Html;
 use clap::Parser;
-use futures::StreamExt;
+
 use get_if_addrs::get_if_addrs;
 use rsip::headers::UntypedHeader;
 use rsip::prelude::{HeadersExt, ToTypedHeader};
 use rsipstack::dialog::DialogId;
 use rsipstack::rsip_ext::{extract_uri_from_contact, RsipHeadersExt};
-use rsipstack::transaction::endpoint::EndpointInnerRef;
 use rsipstack::transaction::key::{TransactionKey, TransactionRole};
 use rsipstack::transaction::transaction::Transaction;
 use rsipstack::transaction::TransactionReceiver;
+use rsipstack::transport::tcp_listener::TcpListenerConnection;
 use rsipstack::transport::udp::UdpConnection;
+#[cfg(feature = "websocket")]
+use rsipstack::transport::websocket::WebSocketListenerConnection;
 use rsipstack::transport::SipAddr;
 use rsipstack::{header_pop, Error, Result};
-use rsipstack::{
-    transport::{transport_layer::TransportConfig, TransportLayer},
-    EndpointBuilder,
-};
+use rsipstack::{transport::TransportLayer, EndpointBuilder};
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::{env, vec};
@@ -88,12 +87,7 @@ async fn main() -> Result<()> {
     let args = Args::parse();
 
     let token = CancellationToken::new();
-    let transport_config = TransportConfig {
-        tls: None,
-        enable_ws: true,
-        enable_wss: true,
-    };
-    let transport_layer = TransportLayer::with_config(token.clone(), transport_config);
+    let transport_layer = TransportLayer::new(token.clone());
 
     let external_ip = args
         .external_ip
@@ -116,8 +110,6 @@ async fn main() -> Result<()> {
             .unwrap_or(Err(Error::Error("No interface found".to_string())))?,
     };
 
-    // Create a transport sender for adding listeners
-    let (transport_tx, _transport_rx) = tokio::sync::mpsc::unbounded_channel();
     let connection = UdpConnection::create_connection(
         format!("{}:{}", addr, args.port).parse()?,
         external.clone(),
@@ -127,13 +119,20 @@ async fn main() -> Result<()> {
     info!("Added UDP transport on {}:{}", addr, args.port);
 
     if let Some(tcp_port) = args.tcp_port {
-        let tcp_addr = transport_layer
-            .add_tcp_listener(
-                format!("{}:{}", addr, tcp_port).parse()?,
-                transport_tx.clone(),
-            )
-            .await?;
-        info!("Added TCP transport on {}", tcp_addr);
+        let local_addr = SipAddr {
+            addr: format!("{}:{}", addr, tcp_port)
+                .parse::<std::net::SocketAddr>()?
+                .into(),
+            r#type: Some(rsip::transport::Transport::Tcp),
+        };
+        let external_addr = if !external_ip.is_empty() {
+            Some(format!("{}:{}", external_ip, tcp_port).parse::<std::net::SocketAddr>()?)
+        } else {
+            None
+        };
+        let tcp_listener = TcpListenerConnection::new(local_addr.clone(), external_addr).await?;
+        transport_layer.add_transport(tcp_listener.into());
+        info!("Added TCP transport on {}", local_addr.addr);
     }
 
     let mut ws_port = args.ws_port;
@@ -161,14 +160,28 @@ async fn main() -> Result<()> {
     };
 
     if let Some(ws_port) = ws_port {
-        let ws_addr = transport_layer
-            .add_ws_listener(
-                format!("{}:{}", addr, ws_port).parse()?,
-                transport_tx.clone(),
-                false,
-            )
-            .await?;
-        info!("Added WebSocket transport on {}", ws_addr);
+        #[cfg(feature = "websocket")]
+        {
+            let local_addr = SipAddr {
+                addr: format!("{}:{}", addr, ws_port)
+                    .parse::<std::net::SocketAddr>()?
+                    .into(),
+                r#type: Some(rsip::transport::Transport::Ws),
+            };
+            let external_addr = if !external_ip.is_empty() {
+                Some(format!("{}:{}", external_ip, ws_port).parse::<std::net::SocketAddr>()?)
+            } else {
+                None
+            };
+            let ws_listener =
+                WebSocketListenerConnection::new(local_addr.clone(), external_addr, false).await?;
+            transport_layer.add_transport(ws_listener.into());
+            info!("Added WebSocket transport on {}", local_addr.addr);
+        }
+        #[cfg(not(feature = "websocket"))]
+        {
+            error!("WebSocket feature not enabled");
+        }
     }
 
     let endpoint = EndpointBuilder::new()
@@ -533,82 +546,193 @@ async fn websocket_handler(
 }
 
 async fn handle_websocket(socket: WebSocket, _state: Arc<AppState>) {
-    let (mut ws_sink, mut ws_read) = socket.split();
-    // let endpoint = _state.endpoint.clone();
-    // let cancel_token = CancellationToken::new();
-    // let (mut ws_sink, mut ws_read) = socket.split();
-    // let transport_layer = _state.endpoint.transport_layer.inner.clone();
-    // let sender = _state.sender.clone();
-    // let local_addr = SipAddr {
-    //     r#type: Some(rsip::transport::Transport::Ws),
-    //     addr: rsip::HostWithPort {
-    //         host: rsip::Host::Domain("localhost".to_string().into()),
-    //         port: Some(8080.into()),
-    //     },
-    // };
-    // let remote_addr = SipAddr {
-    //     r#type: Some(rsip::transport::Transport::Ws),
-    //     addr: rsip::HostWithPort {
-    //         host: rsip::Host::Domain("localhost".to_string().into()),
-    //         port: Some(8080.into()),
-    //     },
-    // };
-    // // Create a new WebSocket connection
-    // let connection = WebSocketConnection {
-    //     inner: Arc::new(WebSocketInner {
-    //         local_addr,
-    //         remote_addr,
-    //         ws_sink: Mutex::new(ws_sink.into()),
-    //         ws_read: Mutex::new(Some(ws_read)),
-    //     }),
-    // };
-    // let sip_connection = SipConnection::WebSocket(connection.clone());
-    // let connection_addr = connection.get_addr().clone();
+    use axum::extract::ws::Message;
+    use futures::{SinkExt, StreamExt};
+    use rsip::SipMessage;
+    use rsipstack::transport::channel::ChannelConnection;
+    use rsipstack::transport::SipAddr;
+    use rsipstack::transport::{SipConnection, TransportEvent};
+    use std::sync::Arc as StdArc;
+    use tokio::sync::mpsc;
+    use tokio::sync::Mutex;
+    use tracing::{error, info, warn};
 
-    // transport_layer.add_connection(sip_connection.clone());
-    // info!(
-    //     "Added WebSocket connection to transport layer: {}",
-    //     connection_addr
-    // );
+    let (ws_sink, mut ws_read) = socket.split();
+    let ws_sink = StdArc::new(Mutex::new(ws_sink));
 
-    // if let Err(e) = sender.send(TransportEvent::New(sip_connection.clone())) {
-    //     error!("Error sending new connection event: {:?}", e);
-    //     return;
-    // }
+    // Create a channel pair for bidirectional communication
+    let (to_transport_tx, to_transport_rx) = mpsc::unbounded_channel();
+    let (from_transport_tx, mut from_transport_rx) = mpsc::unbounded_channel();
 
-    // select! {
-    //     _ = cancel_token.cancelled() => {
-    //     }
-    //     _ = connection.serve_loop(sender.clone()) => {
-    //         info!(
-    //             "WebSocket connection serve loop completed: {}",
-    //             connection_addr
-    //         );
-    //     }
-    // }
+    // Create a unique SIP address for this WebSocket connection
+    let local_addr = SipAddr {
+        r#type: Some(rsip::transport::Transport::Ws),
+        addr: rsip::HostWithPort {
+            host: rsip::Host::Domain("websocket-proxy".to_string().into()),
+            port: Some(8080.into()),
+        },
+    };
 
-    // // Remove connection from transport layer when done
-    // transport_layer.del_connection(&connection_addr);
-    // info!(
-    //     "Removed WebSocket connection from transport layer: {}",
-    //     connection_addr
-    // );
+    // Create the ChannelConnection
+    let connection = match ChannelConnection::create_connection(
+        to_transport_rx,
+        from_transport_tx.clone(),
+        local_addr.clone(),
+    )
+    .await
+    {
+        Ok(conn) => conn,
+        Err(e) => {
+            error!("Failed to create channel connection: {:?}", e);
+            return;
+        }
+    };
 
-    // // Send connection closed event
-    // if let Err(e) = sender.send(TransportEvent::Closed(sip_connection)) {
-    //     warn!("Error sending WebSocket connection closed event: {:?}", e);
-    // }
+    let sip_connection = SipConnection::Channel(connection.clone());
+    info!("Created WebSocket channel connection: {}", local_addr);
+
+    // Spawn task to handle WebSocket -> Transport messages
+    let to_transport_task = {
+        let to_transport_tx = to_transport_tx.clone();
+        let sip_connection = sip_connection.clone();
+        let local_addr = local_addr.clone();
+        let ws_sink = ws_sink.clone();
+
+        tokio::spawn(async move {
+            while let Some(message) = ws_read.next().await {
+                match message {
+                    Ok(Message::Text(text)) => match SipMessage::try_from(text.as_str()) {
+                        Ok(sip_msg) => {
+                            info!(
+                                "WebSocket received SIP message: {}",
+                                sip_msg.to_string().lines().next().unwrap_or("")
+                            );
+                            if let Err(e) = to_transport_tx.send(TransportEvent::Incoming(
+                                sip_msg,
+                                sip_connection.clone(),
+                                local_addr.clone(),
+                            )) {
+                                error!("Error forwarding message to transport: {:?}", e);
+                                break;
+                            }
+                        }
+                        Err(e) => {
+                            warn!("Error parsing SIP message from WebSocket: {}", e);
+                        }
+                    },
+                    Ok(Message::Binary(bin)) => match SipMessage::try_from(bin) {
+                        Ok(sip_msg) => {
+                            info!(
+                                "WebSocket received binary SIP message: {}",
+                                sip_msg.to_string().lines().next().unwrap_or("")
+                            );
+                            if let Err(e) = to_transport_tx.send(TransportEvent::Incoming(
+                                sip_msg,
+                                sip_connection.clone(),
+                                local_addr.clone(),
+                            )) {
+                                error!("Error forwarding binary message to transport: {:?}", e);
+                                break;
+                            }
+                        }
+                        Err(e) => {
+                            warn!("Error parsing binary SIP message from WebSocket: {}", e);
+                        }
+                    },
+                    Ok(Message::Close(_)) => {
+                        info!("WebSocket connection closed by client");
+                        break;
+                    }
+                    Ok(Message::Ping(data)) => {
+                        let mut sink = ws_sink.lock().await;
+                        if let Err(e) = sink.send(Message::Pong(data)).await {
+                            error!("Error sending pong response: {}", e);
+                            break;
+                        }
+                    }
+                    Ok(Message::Pong(_)) => {
+                        // Just acknowledge the pong
+                    }
+                    Err(e) => {
+                        error!("WebSocket error: {}", e);
+                        break;
+                    }
+                }
+            }
+            info!("WebSocket -> Transport task exiting");
+        })
+    };
+
+    // Spawn task to handle Transport -> WebSocket messages
+    let from_transport_task = {
+        let ws_sink = ws_sink.clone();
+        tokio::spawn(async move {
+            while let Some(event) = from_transport_rx.recv().await {
+                match event {
+                    TransportEvent::Incoming(sip_msg, _, _) => {
+                        let message_text = sip_msg.to_string();
+                        info!(
+                            "Forwarding message to WebSocket: {}",
+                            message_text.lines().next().unwrap_or("")
+                        );
+                        let mut sink = ws_sink.lock().await;
+                        if let Err(e) = sink.send(Message::Text(message_text.into())).await {
+                            error!("Error sending message to WebSocket: {}", e);
+                            break;
+                        }
+                    }
+                    TransportEvent::New(_) => {
+                        // Handle new connection events if needed
+                    }
+                    TransportEvent::Closed(_) => {
+                        info!("Transport connection closed");
+                        break;
+                    }
+                }
+            }
+            info!("Transport -> WebSocket task exiting");
+        })
+    };
+
+    // Start the connection serve loop in a separate task
+    let serve_task = {
+        let connection = connection.clone();
+        let from_transport_tx = from_transport_tx.clone();
+        tokio::spawn(async move {
+            if let Err(e) = connection.serve_loop(from_transport_tx).await {
+                error!("Error in connection serve loop: {:?}", e);
+            }
+        })
+    };
+
+    // Wait for any task to complete
+    tokio::select! {
+        _ = to_transport_task => {
+            info!("WebSocket to transport task completed");
+        }
+        _ = from_transport_task => {
+            info!("Transport to WebSocket task completed");
+        }
+        _ = serve_task => {
+            info!("Connection serve loop completed");
+        }
+    }
+
+    // Clean up: signal connection closure
+    if let Err(e) = from_transport_tx.send(TransportEvent::Closed(sip_connection)) {
+        warn!("Error sending connection closed event: {:?}", e);
+    }
+
+    info!("WebSocket connection handler exiting");
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use rsipstack::transport::udp::UdpConnection;
-    use rsipstack::{
-        transport::{transport_layer::TransportConfig, TransportLayer},
-        EndpointBuilder,
-    };
+    use rsipstack::{transport::TransportLayer, EndpointBuilder};
     use std::sync::Arc;
+    use std::time::Duration;
     use tokio_util::sync::CancellationToken;
 
     #[tokio::test]
@@ -617,12 +741,7 @@ mod tests {
 
         // Create test proxy
         let token = CancellationToken::new();
-        let transport_config = TransportConfig {
-            tls: None,
-            enable_ws: true,
-            enable_wss: true,
-        };
-        let transport_layer = TransportLayer::with_config(token.clone(), transport_config);
+        let transport_layer = TransportLayer::new(token.clone());
 
         let udp_conn = UdpConnection::create_connection("127.0.0.1:0".parse().unwrap(), None)
             .await
@@ -643,7 +762,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_proxy_state_management() {
-        let endpoint = EndpointBuilder::new()
+        let _endpoint = EndpointBuilder::new()
             .with_user_agent("MyApp/1.0")
             .with_timer_interval(Duration::from_millis(10))
             .with_allows(vec![rsip::Method::Invite, rsip::Method::Bye])
@@ -680,7 +799,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_dialog_session_management() {
-        let endpoint = EndpointBuilder::new()
+        let _endpoint = EndpointBuilder::new()
             .with_user_agent("MyApp/1.0")
             .with_timer_interval(Duration::from_millis(10))
             .with_allows(vec![rsip::Method::Invite, rsip::Method::Bye])
@@ -737,26 +856,122 @@ mod tests {
         let _ = tracing_subscriber::fmt::try_init();
 
         let token = CancellationToken::new();
-        let transport_config = TransportConfig {
-            tls: None,
-            enable_ws: true,
-            enable_wss: true,
-        };
-        let transport_layer = TransportLayer::with_config(token.clone(), transport_config);
+        let transport_layer = TransportLayer::new(token.clone());
 
-        let (transport_tx, _transport_rx) = tokio::sync::mpsc::unbounded_channel();
+        // Test that we can add UDP transport
+        let udp_conn = UdpConnection::create_connection("127.0.0.1:0".parse().unwrap(), None)
+            .await
+            .unwrap();
+        transport_layer.add_transport(udp_conn.into());
 
-        // Test that we can add different transport listeners
-        let tcp_result = transport_layer
-            .add_tcp_listener("127.0.0.1:0".parse().unwrap(), transport_tx.clone())
-            .await;
-        assert!(tcp_result.is_ok());
-
-        let ws_result = transport_layer
-            .add_ws_listener("127.0.0.1:0".parse().unwrap(), transport_tx.clone(), false)
-            .await;
-        assert!(ws_result.is_ok());
+        // Verify we can get addresses
+        let addrs = transport_layer.get_addrs();
+        assert!(!addrs.is_empty());
 
         token.cancel();
+    }
+
+    #[tokio::test]
+    async fn test_channel_connection_creation() {
+        use rsipstack::transport::channel::ChannelConnection;
+        use rsipstack::transport::SipAddr;
+        use rsipstack::transport::{SipConnection, TransportEvent};
+        use tokio::sync::mpsc;
+
+        let _ = tracing_subscriber::fmt::try_init();
+
+        // Create channel pair like in handle_websocket
+        let (to_transport_tx, to_transport_rx) = mpsc::unbounded_channel();
+        let (from_transport_tx, mut from_transport_rx) = mpsc::unbounded_channel();
+
+        // Create SIP address
+        let local_addr = SipAddr {
+            r#type: Some(rsip::transport::Transport::Ws),
+            addr: rsip::HostWithPort {
+                host: rsip::Host::Domain("test-websocket".to_string().into()),
+                port: Some(8080.into()),
+            },
+        };
+
+        // Create ChannelConnection
+        let connection = ChannelConnection::create_connection(
+            to_transport_rx,
+            from_transport_tx.clone(),
+            local_addr.clone(),
+        )
+        .await
+        .expect("Should create channel connection");
+
+        let sip_connection = SipConnection::Channel(connection.clone());
+
+        // Verify connection properties
+        assert_eq!(connection.get_addr(), &local_addr);
+        assert!(sip_connection.is_reliable());
+
+        // Test sending a simple message through the channel
+        let test_register_req = rsip::Request {
+            method: rsip::Method::Register,
+            uri: rsip::uri::Uri {
+                scheme: Some(rsip::Scheme::Sip),
+                auth: Some(rsip::Auth {
+                    user: "test".to_string(),
+                    password: None,
+                }),
+                host_with_port: rsip::HostWithPort {
+                    host: rsip::Host::Domain("example.com".to_string().into()),
+                    port: None,
+                },
+                ..Default::default()
+            },
+            version: rsip::Version::V2,
+            headers: rsip::Headers::default(),
+            body: Vec::new(),
+        };
+
+        let test_message = rsip::SipMessage::Request(test_register_req);
+
+        // Send test message to transport
+        to_transport_tx
+            .send(TransportEvent::Incoming(
+                test_message,
+                sip_connection.clone(),
+                local_addr.clone(),
+            ))
+            .expect("Should send message");
+
+        // Start serve loop in background
+        let serve_handle = tokio::spawn({
+            let connection = connection.clone();
+            let from_transport_tx = from_transport_tx.clone();
+            async move { connection.serve_loop(from_transport_tx).await }
+        });
+
+        // Verify we can receive the message
+        if let Some(event) = tokio::time::timeout(
+            std::time::Duration::from_millis(100),
+            from_transport_rx.recv(),
+        )
+        .await
+        .ok()
+        .flatten()
+        {
+            match event {
+                TransportEvent::Incoming(msg, _conn, addr) => {
+                    assert_eq!(addr, local_addr);
+                    if let rsip::SipMessage::Request(req) = msg {
+                        assert_eq!(req.method, rsip::Method::Register);
+                    } else {
+                        panic!("Expected request message");
+                    }
+                }
+                _ => panic!("Expected incoming message event"),
+            }
+        } else {
+            panic!("Should receive message within timeout");
+        }
+
+        // Clean up
+        drop(to_transport_tx);
+        let _ = tokio::time::timeout(std::time::Duration::from_millis(100), serve_handle).await;
     }
 }

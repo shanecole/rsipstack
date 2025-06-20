@@ -3,18 +3,14 @@ use crate::{
         connection::TransportSender,
         sip_addr::SipAddr,
         stream::{StreamConnection, StreamConnectionInner},
-        transport_layer::TransportLayerInnerRef,
-        SipConnection, TransportEvent,
+        SipConnection,
     },
     Result,
 };
 use rsip::SipMessage;
 use std::{fmt, sync::Arc};
-use tokio::{
-    net::{TcpListener, TcpStream},
-    select,
-};
-use tracing::{debug, error, info, warn};
+use tokio::net::TcpStream;
+use tracing::info;
 
 type TcpInner =
     StreamConnectionInner<tokio::io::ReadHalf<TcpStream>, tokio::io::WriteHalf<TcpStream>>;
@@ -54,7 +50,7 @@ impl TcpConnection {
         Ok(connection)
     }
 
-    pub async fn from_stream(stream: TcpStream, local_addr: SipAddr) -> Result<Self> {
+    pub fn from_stream(stream: TcpStream, local_addr: SipAddr) -> Result<Self> {
         let remote_addr = stream.peer_addr()?;
         let remote_sip_addr = SipAddr {
             r#type: Some(rsip::transport::Transport::Tcp),
@@ -81,82 +77,82 @@ impl TcpConnection {
         Ok(connection)
     }
 
-    pub async fn create_listener(local: std::net::SocketAddr) -> Result<(TcpListener, SipAddr)> {
-        let listener = TcpListener::bind(local).await?;
-        let local_addr = listener.local_addr()?;
+    // pub async fn create_listener(local: std::net::SocketAddr) -> Result<(TcpListener, SipAddr)> {
+    //     let listener = TcpListener::bind(local).await?;
+    //     let local_addr = listener.local_addr()?;
 
-        let sip_addr = SipAddr {
-            r#type: Some(rsip::transport::Transport::Tcp),
-            addr: local_addr.into(),
-        };
+    //     let sip_addr = SipAddr {
+    //         r#type: Some(rsip::transport::Transport::Tcp),
+    //         addr: local_addr.into(),
+    //     };
 
-        info!("Created TCP listener on {}", local_addr);
+    //     info!("Created TCP listener on {}", local_addr);
 
-        Ok((listener, sip_addr))
-    }
+    //     Ok((listener, sip_addr))
+    // }
 
-    pub async fn serve_listener(
-        listener: TcpListener,
-        local_addr: SipAddr,
-        sender: TransportSender,
-        transport_layer: TransportLayerInnerRef,
-    ) -> Result<()> {
-        info!("Starting TCP listener on {}", local_addr);
+    // pub async fn serve_listener(
+    //     listener: TcpListener,
+    //     local_addr: SipAddr,
+    //     sender: TransportSender,
+    //     transport_layer: TransportLayerInnerRef,
+    // ) -> Result<()> {
+    //     info!("Starting TCP listener on {}", local_addr);
 
-        loop {
-            match listener.accept().await {
-                Ok((stream, remote_addr)) => {
-                    debug!("New TCP connection from {}", remote_addr);
+    //     loop {
+    //         match listener.accept().await {
+    //             Ok((stream, remote_addr)) => {
+    //                 debug!("New TCP connection from {}", remote_addr);
 
-                    let tcp_connection =
-                        TcpConnection::from_stream(stream, local_addr.clone()).await?;
-                    let sip_connection = SipConnection::Tcp(tcp_connection.clone());
+    //                 let tcp_connection =
+    //                     TcpConnection::from_stream(stream, local_addr.clone()).await?;
+    //                 let sip_connection = SipConnection::Tcp(tcp_connection.clone());
 
-                    // Add connection to transport layer if provided
-                    transport_layer.add_connection(sip_connection.clone());
-                    info!(
-                        "Added TCP connection to transport layer: {}",
-                        tcp_connection.get_addr()
-                    );
+    //                 // Add connection to transport layer if provided
+    //                 transport_layer.add_connection(sip_connection.clone());
+    //                 info!(
+    //                     "Added TCP connection to transport layer: {}",
+    //                     tcp_connection.get_addr()
+    //                 );
 
-                    let sender_clone = sender.clone();
-                    let transport_layer_clone = transport_layer.clone();
-                    let connection_addr = tcp_connection.get_addr().clone();
-                    let cancel_token = transport_layer.cancel_token.child_token();
+    //                 let sender_clone = sender.clone();
+    //                 let transport_layer_clone = transport_layer.clone();
+    //                 let connection_addr = tcp_connection.get_addr().clone();
+    //                 let cancel_token = transport_layer.cancel_token.child_token();
 
-                    tokio::spawn(async move {
-                        // Send new connection event
-                        if let Err(e) =
-                            sender_clone.send(TransportEvent::New(sip_connection.clone()))
-                        {
-                            error!("Error sending new connection event: {:?}", e);
-                            return;
-                        }
-                        select! {
-                            _ = cancel_token.cancelled() => {}
-                            _ = tcp_connection.serve_loop(sender_clone.clone()) => {
-                                info!("TCP connection serve loop completed: {}", connection_addr);
-                            }
-                        }
-                        // Remove connection from transport layer when done
-                        transport_layer_clone.del_connection(&connection_addr);
-                        info!(
-                            "Removed TCP connection from transport layer: {}",
-                            connection_addr
-                        );
+    //                 tokio::spawn(async move {
+    //                     // Send new connection event
+    //                     if let Err(e) =
+    //                         sender_clone.send(TransportEvent::New(sip_connection.clone()))
+    //                     {
+    //                         error!("Error sending new connection event: {:?}", e);
+    //                         return;
+    //                     }
+    //                     select! {
+    //                         _ = cancel_token.cancelled() => {}
+    //                         _ = tcp_connection.serve_loop(sender_clone.clone()) => {
+    //                             info!("TCP connection serve loop completed: {}", connection_addr);
+    //                         }
+    //                     }
+    //                     // Remove connection from transport layer when done
+    //                     transport_layer_clone.del_connection(&connection_addr);
+    //                     info!(
+    //                         "Removed TCP connection from transport layer: {}",
+    //                         connection_addr
+    //                     );
 
-                        // Send connection closed event
-                        if let Err(e) = sender_clone.send(TransportEvent::Closed(sip_connection)) {
-                            warn!("Error sending connection closed event: {:?}", e);
-                        }
-                    });
-                }
-                Err(e) => {
-                    error!("Error accepting TCP connection: {}", e);
-                }
-            }
-        }
-    }
+    //                     // Send connection closed event
+    //                     if let Err(e) = sender_clone.send(TransportEvent::Closed(sip_connection)) {
+    //                         warn!("Error sending connection closed event: {:?}", e);
+    //                     }
+    //                 });
+    //             }
+    //             Err(e) => {
+    //                 error!("Error accepting TCP connection: {}", e);
+    //             }
+    //         }
+    //     }
+    // }
 }
 
 #[async_trait::async_trait]

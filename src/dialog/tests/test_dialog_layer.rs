@@ -8,7 +8,7 @@ use crate::transaction::{
     key::{TransactionKey, TransactionRole},
     transaction::Transaction,
 };
-use crate::transport::{channel::ChannelConnection, SipAddr, TransportLayer};
+use crate::transport::{udp::UdpConnection, TransportLayer};
 use rsip::{headers::*, Request};
 use tokio::sync::mpsc::unbounded_channel;
 use tokio_util::sync::CancellationToken;
@@ -50,17 +50,9 @@ fn create_invite_request(from_tag: &str, to_tag: &str, call_id: &str, branch: &s
 
 /// Test helper to create mock connection
 async fn create_mock_connection() -> crate::Result<crate::transport::SipConnection> {
-    let socket_addr: std::net::SocketAddr = "127.0.0.1:5060".parse().unwrap();
-    let addr = SipAddr::from(socket_addr);
-
-    let (_incoming_tx, incoming_rx) = unbounded_channel();
-    let (outgoing_tx, _outgoing_rx) = unbounded_channel();
-
-    let mock_conn = ChannelConnection::create_connection(incoming_rx, outgoing_tx, addr)
-        .await?
-        .into();
-
-    Ok(mock_conn)
+    // 使用随机端口创建UDP连接
+    let udp_conn = UdpConnection::create_connection("127.0.0.1:0".parse()?, None).await?;
+    Ok(udp_conn.into())
 }
 
 #[tokio::test]

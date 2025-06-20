@@ -46,16 +46,20 @@ impl ChannelConnection {
     }
 
     pub async fn serve_loop(&self, sender: TransportSender) -> Result<()> {
-        let incoming = self.inner.clone().incoming.lock().unwrap().take();
-        if incoming.is_none() {
-            return Err(crate::Error::Error(
-                "ChannelTransport::serve_loop called twice".to_string(),
-            ));
-        }
-        let mut incoming = incoming.unwrap();
+        let mut incoming = match self.inner.clone().incoming.lock().unwrap().take() {
+            Some(incoming) => incoming,
+            None => {
+                return Err(crate::Error::Error(
+                    "ChannelTransport::serve_loop called twice".to_string(),
+                ));
+            }
+        };
         while let Some(event) = incoming.recv().await {
             sender.send(event)?;
         }
+        Ok(())
+    }
+    pub async fn close(&self) -> Result<()> {
         Ok(())
     }
 }

@@ -68,18 +68,13 @@ rtp-rs = "0.6.0"
 stun-rs = "0.1.11"
 openai-api-rs = "6.0.3"
 base64 = "0.22.1"
-serde = "1.0.217"
+serde = "1.0.219"
 serde_json = "1.0.140"
 dasp = { version = "0.11", features = ["all"] }
-axum = { version = "0.7", features = ["ws"] }
-tower = "0.4"
-tower-http = { version = "0.5", features = ["fs", "cors"] }
-hyper = "1.0"
-
-# Examples configuration
-[[example]]
-name = "simple_connection"
-path = "examples/simple_connection/main.rs"
+axum = { version = "0.8.4", features = ["ws"] }
+tower = "0.5.2"
+tower-http = { version = "0.6.6", features = ["fs", "cors"] }
+hyper = "1.6.0"
 
 [[example]]
 name = "client"

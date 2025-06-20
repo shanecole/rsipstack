@@ -6,10 +6,7 @@ use super::{
     SipConnection, TransactionReceiver, TransactionSender, TransactionTimer,
 };
 use crate::{
-    transport::{
-        connection::{TransportReceiver, TransportSender},
-        SipAddr, TransportEvent, TransportLayer,
-    },
+    transport::{SipAddr, TransportEvent, TransportLayer},
     Error, Result, USER_AGENT,
 };
 use rsip::SipMessage;
@@ -51,8 +48,6 @@ use tracing::{debug, info, trace, warn};
 /// * `incoming_sender` - Channel for incoming transaction notifications
 /// * `cancel_token` - Cancellation token for graceful shutdown
 /// * `timer_interval` - Interval for timer processing
-/// * `transport_tx` - Transport event sender
-/// * `transport_rx` - Transport event receiver
 /// * `t1`, `t4`, `t1x64` - SIP timer values as per RFC 3261
 ///
 /// # Timer Values
@@ -70,9 +65,6 @@ pub struct EndpointInner {
     incoming_sender: Mutex<Option<TransactionSender>>,
     cancel_token: CancellationToken,
     timer_interval: Duration,
-
-    pub(crate) transport_tx: TransportSender,
-    pub(crate) transport_rx: Mutex<Option<TransportReceiver>>,
 
     pub t1: Duration,
     pub t4: Duration,
@@ -169,7 +161,6 @@ impl EndpointInner {
         timer_interval: Option<Duration>,
         allows: Vec<rsip::Method>,
     ) -> Arc<Self> {
-        let (transport_tx, transport_rx) = unbounded_channel();
         Arc::new(EndpointInner {
             allows,
             user_agent,
@@ -178,8 +169,6 @@ impl EndpointInner {
             transactions: Mutex::new(HashMap::new()),
             finished_transactions: Mutex::new(HashMap::new()),
             timer_interval: timer_interval.unwrap_or(Duration::from_millis(20)),
-            transport_tx,
-            transport_rx: Mutex::new(Some(transport_rx)),
             cancel_token,
             incoming_sender: Mutex::new(None),
             t1: Duration::from_millis(500),
@@ -204,10 +193,16 @@ impl EndpointInner {
 
     // process transport layer, receive message from transport layer
     async fn process_transport_layer(self: Arc<Self>) -> Result<()> {
-        let transport_tx = self.transport_tx.clone();
-        self.transport_layer.serve_listens(transport_tx).await.ok();
+        self.transport_layer.serve_listens().await.ok();
 
-        let mut transport_rx = match self.transport_rx.lock().unwrap().take() {
+        let mut transport_rx = match self
+            .transport_layer
+            .inner
+            .transport_rx
+            .lock()
+            .unwrap()
+            .take()
+        {
             Some(rx) => rx,
             None => {
                 return Err(Error::EndpointError("transport_rx not set".to_string()));
@@ -225,10 +220,10 @@ impl EndpointInner {
                     }
                 }
                 TransportEvent::New(t) => {
-                    trace!("new connection {} ", t);
+                    self.transport_layer.add_connection(t);
                 }
                 TransportEvent::Closed(t) => {
-                    trace!("connection closed {} ", t);
+                    self.transport_layer.del_connection(t.get_addr());
                 }
             }
         }

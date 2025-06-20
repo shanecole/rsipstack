@@ -1,9 +1,10 @@
-use super::{
-    channel::ChannelConnection, sip_addr::SipAddr, stream::StreamConnection, tcp::TcpConnection,
-    udp::UdpConnection,
+use super::{sip_addr::SipAddr, stream::StreamConnection, tcp::TcpConnection, udp::UdpConnection};
+use crate::transport::channel::ChannelConnection;
+use crate::transport::websocket::{WebSocketConnection, WebSocketListenerConnection};
+use crate::transport::{
+    tcp_listener::TcpListenerConnection,
+    tls::{TlsConnection, TlsListenerConnection},
 };
-use crate::transport::tls::TlsConnection;
-use crate::transport::websocket::WebSocketConnection;
 use crate::Result;
 use rsip::{
     prelude::{HeadersExt, ToTypedHeader},
@@ -142,13 +143,18 @@ pub const KEEPALIVE_RESPONSE: &[u8] = b"\r\n";
 /// messages, adding 'received' and 'rport' parameters as needed per RFC 3261.
 #[derive(Clone, Debug)]
 pub enum SipConnection {
-    Udp(UdpConnection),
     Channel(ChannelConnection),
+    Udp(UdpConnection),
     Tcp(TcpConnection),
+    TcpListener(TcpListenerConnection),
     #[cfg(feature = "rustls")]
     Tls(TlsConnection),
+    #[cfg(feature = "rustls")]
+    TlsListener(TlsListenerConnection),
     #[cfg(feature = "websocket")]
     WebSocket(WebSocketConnection),
+    #[cfg(feature = "websocket")]
+    WebSocketListener(WebSocketListenerConnection),
 }
 
 impl SipConnection {
@@ -160,64 +166,85 @@ impl SipConnection {
     }
     pub fn get_addr(&self) -> &SipAddr {
         match self {
-            SipConnection::Udp(transport) => transport.get_addr(),
             SipConnection::Channel(transport) => transport.get_addr(),
+            SipConnection::Udp(transport) => transport.get_addr(),
             SipConnection::Tcp(transport) => transport.get_addr(),
+            SipConnection::TcpListener(transport) => transport.get_addr(),
             #[cfg(feature = "rustls")]
             SipConnection::Tls(transport) => transport.get_addr(),
+            #[cfg(feature = "rustls")]
+            SipConnection::TlsListener(transport) => transport.get_addr(),
             #[cfg(feature = "websocket")]
             SipConnection::WebSocket(transport) => transport.get_addr(),
+            #[cfg(feature = "websocket")]
+            SipConnection::WebSocketListener(transport) => transport.get_addr(),
         }
     }
     pub async fn send(&self, msg: rsip::SipMessage, destination: Option<&SipAddr>) -> Result<()> {
         match self {
-            SipConnection::Udp(transport) => transport.send(msg, destination).await,
             SipConnection::Channel(transport) => transport.send(msg).await,
-            SipConnection::Tcp(transport) => {
-                if destination.is_some() {
-                    debug!("TCP connection ignoring destination, using established connection");
-                }
-                transport.send_message(msg).await
+            SipConnection::Udp(transport) => transport.send(msg, destination).await,
+            SipConnection::Tcp(transport) => transport.send_message(msg).await,
+            SipConnection::TcpListener(_) => {
+                debug!("SipConnection::send: TcpListener cannot send messages");
+                Ok(())
             }
             #[cfg(feature = "rustls")]
-            SipConnection::Tls(transport) => {
-                if destination.is_some() {
-                    debug!("TLS connection ignoring destination, using established connection");
-                }
-                transport.send_message(msg).await
+            SipConnection::Tls(transport) => transport.send_message(msg).await,
+            #[cfg(feature = "rustls")]
+            SipConnection::TlsListener(_) => {
+                debug!("SipConnection::send: TlsListener cannot send messages");
+                Ok(())
             }
             #[cfg(feature = "websocket")]
-            SipConnection::WebSocket(transport) => {
-                if destination.is_some() {
-                    debug!(
-                        "WebSocket connection ignoring destination, using established connection"
-                    );
-                }
-                transport.send_message(msg).await
+            SipConnection::WebSocket(transport) => transport.send_message(msg).await,
+            #[cfg(feature = "websocket")]
+            SipConnection::WebSocketListener(_) => {
+                debug!("SipConnection::send: WebSocketListener cannot send messages");
+                Ok(())
             }
         }
     }
     pub async fn serve_loop(&self, sender: TransportSender) -> Result<()> {
         match self {
-            SipConnection::Udp(transport) => transport.serve_loop(sender).await,
             SipConnection::Channel(transport) => transport.serve_loop(sender).await,
+            SipConnection::Udp(transport) => transport.serve_loop(sender).await,
             SipConnection::Tcp(transport) => transport.serve_loop(sender).await,
+            SipConnection::TcpListener(_) => {
+                debug!("SipConnection::serve_loop: TcpListener does not have serve_loop");
+                Ok(())
+            }
             #[cfg(feature = "rustls")]
             SipConnection::Tls(transport) => transport.serve_loop(sender).await,
+            #[cfg(feature = "rustls")]
+            SipConnection::TlsListener(_) => {
+                debug!("SipConnection::serve_loop: TlsListener does not have serve_loop");
+                Ok(())
+            }
             #[cfg(feature = "websocket")]
             SipConnection::WebSocket(transport) => transport.serve_loop(sender).await,
+            #[cfg(feature = "websocket")]
+            SipConnection::WebSocketListener(_) => {
+                debug!("SipConnection::serve_loop: WebSocketListener does not have serve_loop");
+                Ok(())
+            }
         }
     }
 
     pub async fn close(&self) -> Result<()> {
         match self {
-            SipConnection::Udp(_) => Ok(()),     // UDP has no connection state
-            SipConnection::Channel(_) => Ok(()), // Channel doesn't need to be closed
+            SipConnection::Channel(transport) => transport.close().await,
+            SipConnection::Udp(_) => Ok(()), // UDP has no connection state
             SipConnection::Tcp(transport) => transport.close().await,
+            SipConnection::TcpListener(transport) => transport.close().await,
             #[cfg(feature = "rustls")]
             SipConnection::Tls(transport) => transport.close().await,
+            #[cfg(feature = "rustls")]
+            SipConnection::TlsListener(transport) => transport.close().await,
             #[cfg(feature = "websocket")]
             SipConnection::WebSocket(transport) => transport.close().await,
+            #[cfg(feature = "websocket")]
+            SipConnection::WebSocketListener(transport) => transport.close().await,
         }
     }
 }
@@ -319,13 +346,18 @@ impl SipConnection {
 impl fmt::Display for SipConnection {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            SipConnection::Channel(t) => write!(f, "{}", t),
             SipConnection::Udp(t) => write!(f, "UDP {}", t),
-            SipConnection::Channel(t) => write!(f, "CHANNEL {}", t),
             SipConnection::Tcp(t) => write!(f, "TCP {}", t),
+            SipConnection::TcpListener(t) => write!(f, "TCP LISTEN {}", t),
             #[cfg(feature = "rustls")]
             SipConnection::Tls(t) => write!(f, "{}", t),
+            #[cfg(feature = "rustls")]
+            SipConnection::TlsListener(t) => write!(f, "TLS LISTEN {}", t),
             #[cfg(feature = "websocket")]
             SipConnection::WebSocket(t) => write!(f, "{}", t),
+            #[cfg(feature = "websocket")]
+            SipConnection::WebSocketListener(t) => write!(f, "WS LISTEN {}", t),
         }
     }
 }
@@ -336,15 +368,15 @@ impl From<UdpConnection> for SipConnection {
     }
 }
 
-impl From<ChannelConnection> for SipConnection {
-    fn from(connection: ChannelConnection) -> Self {
-        SipConnection::Channel(connection)
-    }
-}
-
 impl From<TcpConnection> for SipConnection {
     fn from(connection: TcpConnection) -> Self {
         SipConnection::Tcp(connection)
+    }
+}
+
+impl From<TcpListenerConnection> for SipConnection {
+    fn from(connection: TcpListenerConnection) -> Self {
+        SipConnection::TcpListener(connection)
     }
 }
 
@@ -354,9 +386,23 @@ impl From<TlsConnection> for SipConnection {
     }
 }
 
+#[cfg(feature = "rustls")]
+impl From<TlsListenerConnection> for SipConnection {
+    fn from(connection: TlsListenerConnection) -> Self {
+        SipConnection::TlsListener(connection)
+    }
+}
+
 impl From<WebSocketConnection> for SipConnection {
     fn from(connection: WebSocketConnection) -> Self {
         SipConnection::WebSocket(connection)
+    }
+}
+
+#[cfg(feature = "websocket")]
+impl From<WebSocketListenerConnection> for SipConnection {
+    fn from(connection: WebSocketListenerConnection) -> Self {
+        SipConnection::WebSocketListener(connection)
     }
 }
 

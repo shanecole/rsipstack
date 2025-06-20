@@ -37,29 +37,7 @@ We are a group of developers who are passionate about SIP and Rust. We believe t
 
 ## Quick Start Examples
 
-### 1. Simple SIP Connection
-
-The most basic way to use rsipstack is through direct SIP connections, supporting both UDP and TCP transports:
-
-```bash
-# Run as UDP server (default)
-cargo run --example simple_connection
-
-# Run as UDP client sending messages to a server
-cargo run --example simple_connection -- --mode client --target 127.0.0.1:5060  --port 5061
-
-# Run as TCP server
-cargo run --example simple_connection -- --transport tcp --mode server --port 5060
-
-```
-
-This example demonstrates:
-- Creating UDP/TCP connections and listeners
-- Sending raw SIP messages (OPTIONS, MESSAGE, REGISTER)
-- Handling incoming SIP requests and responses
-- Basic SIP message parsing and creation
-
-### 2. SIP Proxy Server
+### SIP Proxy Server
 
 A stateful SIP proxy that routes calls between registered users:
 
@@ -78,7 +56,7 @@ This example demonstrates:
 - Session management for active calls
 - Handling INVITE, BYE, REGISTER, and ACK methods
 
-### 3. SIP User Agent Client
+### SIP User Agent Client
 
 A complete SIP client with registration, calling, and media support:
 
@@ -113,7 +91,59 @@ let sip_message = "OPTIONS sip:test@example.com SIP/2.0\r\n...";
 connection.send_raw(sip_message.as_bytes(), &target_addr).await?;
 ```
 
-### 2. Using Endpoint and Transactions
+### 2. Using New Listener APIs
+
+```rust
+use rsipstack::transport::{
+    TcpListenerConnection, WebSocketListenerConnection, TlsListenerConnection,
+    TlsConfig, SipAddr
+};
+use tokio_util::sync::CancellationToken;
+use tokio::sync::mpsc::unbounded_channel;
+
+// Create TCP listener
+let socket_addr: std::net::SocketAddr = "127.0.0.1:5060".parse()?;
+let local_addr = SipAddr::new(rsip::transport::Transport::Tcp, socket_addr.into());
+let tcp_listener = TcpListenerConnection::new(local_addr, None).await?;
+
+let cancel_token = CancellationToken::new();
+let (sender, mut receiver) = unbounded_channel();
+
+// Start TCP listener
+tcp_listener.serve_listener(cancel_token.clone(), sender.clone()).await?;
+
+// Create WebSocket listener
+let ws_local_addr = SipAddr::new(rsip::transport::Transport::Ws, socket_addr.into());
+let ws_listener = WebSocketListenerConnection::new(ws_local_addr, None, false).await?;
+ws_listener.serve_listener(cancel_token.clone(), sender.clone()).await?;
+
+// Create TLS listener with configuration
+let tls_config = TlsConfig {
+    cert: Some(cert_pem_bytes),
+    key: Some(key_pem_bytes),
+    ..Default::default()
+};
+let tls_local_addr = SipAddr::new(rsip::transport::Transport::Tls, socket_addr.into());
+let tls_listener = TlsListenerConnection::new(tls_local_addr, None, tls_config).await?;
+tls_listener.serve_listener(cancel_token.clone(), sender.clone()).await?;
+
+// Handle incoming connections
+while let Some(event) = receiver.recv().await {
+    match event {
+        TransportEvent::New(connection) => {
+            println!("New connection: {}", connection);
+        }
+        TransportEvent::Incoming(msg, connection, source) => {
+            println!("Received message from {}: {}", source, msg);
+        }
+        TransportEvent::Closed(connection) => {
+            println!("Connection closed: {}", connection);
+        }
+    }
+}
+```
+
+### 3. Using Endpoint and Transactions
 
 ```rust
 use rsipstack::{EndpointBuilder, transport::TransportLayer};
@@ -143,7 +173,7 @@ while let Some(transaction) = incoming.recv().await {
 }
 ```
 
-### 3. Creating a User Agent Client
+### 4. Creating a User Agent Client
 
 ```rust
 use rsipstack::dialog::{DialogLayer, registration::Registration};
@@ -180,7 +210,7 @@ let (state_sender, _state_receiver) = unbounded_channel();
 let (invite_dialog, response) = dialog_layer.do_invite(invite_option, state_sender).await?;
 ```
 
-### 4. Implementing a Proxy
+### 5. Implementing a Proxy
 
 ```rust
 use rsipstack::transaction::{Transaction, key::{TransactionKey, TransactionRole}};

@@ -4,7 +4,7 @@ use super::{
     stream::{StreamConnection, StreamConnectionInner},
     SipConnection, TransportEvent,
 };
-use crate::{error::Error, transport::transport_layer::TransportLayerInnerRef, Result};
+use crate::{error::Error, Result};
 use rsip::SipMessage;
 use rustls::client::danger::ServerCertVerifier;
 use std::{fmt, net::SocketAddr, sync::Arc};
@@ -16,6 +16,7 @@ use tokio_rustls::{
     rustls::{pki_types, ClientConfig, RootCertStore, ServerConfig},
     TlsAcceptor, TlsConnector,
 };
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
 // TLS configuration
@@ -42,6 +43,207 @@ impl Default for TlsConfig {
             client_key: None,
             ca_certs: None,
         }
+    }
+}
+
+// TLS Listener Connection Structure
+pub struct TlsListenerConnectionInner {
+    pub local_addr: SipAddr,
+    pub external: Option<SipAddr>,
+    pub config: TlsConfig,
+}
+
+#[derive(Clone)]
+pub struct TlsListenerConnection {
+    pub inner: Arc<TlsListenerConnectionInner>,
+}
+
+impl TlsListenerConnection {
+    pub async fn new(
+        local_addr: SipAddr,
+        external: Option<SocketAddr>,
+        config: TlsConfig,
+    ) -> Result<Self> {
+        let inner = TlsListenerConnectionInner {
+            local_addr,
+            external: external.map(|addr| SipAddr {
+                r#type: Some(rsip::transport::Transport::Tls),
+                addr: addr.into(),
+            }),
+            config,
+        };
+        Ok(TlsListenerConnection {
+            inner: Arc::new(inner),
+        })
+    }
+
+    pub async fn serve_listener(
+        &self,
+        cancel_token: CancellationToken,
+        sender: TransportSender,
+    ) -> Result<()> {
+        let listener = TcpListener::bind(self.inner.local_addr.get_socketaddr()?).await?;
+        let acceptor = Self::create_acceptor(&self.inner.config).await?;
+        let sender = sender.clone();
+        let cancel_token = cancel_token.clone();
+
+        tokio::spawn(async move {
+            loop {
+                let (stream, remote_addr) = match listener.accept().await {
+                    Ok((stream, remote_addr)) => (stream, remote_addr),
+                    Err(e) => {
+                        warn!("Failed to accept TLS connection: {:?}", e);
+                        continue;
+                    }
+                };
+
+                let acceptor_clone = acceptor.clone();
+                let sender_clone = sender.clone();
+                let cancel_token = cancel_token.child_token();
+
+                tokio::spawn(async move {
+                    // Perform TLS handshake
+                    let tls_stream = match acceptor_clone.accept(stream).await {
+                        Ok(stream) => stream,
+                        Err(e) => {
+                            error!("TLS handshake failed: {}", e);
+                            return;
+                        }
+                    };
+
+                    // Create remote SIP address
+                    let remote_sip_addr = SipAddr {
+                        r#type: Some(rsip::transport::Transport::Tls),
+                        addr: remote_addr.into(),
+                    };
+
+                    // Create TLS connection
+                    let tls_connection = match TlsConnection::from_server_stream(
+                        tls_stream,
+                        remote_sip_addr.clone(),
+                    )
+                    .await
+                    {
+                        Ok(conn) => conn,
+                        Err(e) => {
+                            error!("Failed to create TLS connection: {:?}", e);
+                            return;
+                        }
+                    };
+
+                    let sip_connection = SipConnection::Tls(tls_connection.clone());
+                    let sender_clone = sender_clone.clone();
+                    let cancel_token = cancel_token.clone();
+
+                    tokio::spawn(async move {
+                        match sender_clone.send(TransportEvent::New(sip_connection.clone())) {
+                            Ok(()) => {}
+                            Err(e) => {
+                                error!(
+                                    ?remote_sip_addr,
+                                    "Error sending new connection event: {:?}", e
+                                );
+                                return;
+                            }
+                        }
+                        select! {
+                            _ = cancel_token.cancelled() => {}
+                            _ = tls_connection.serve_loop(sender_clone.clone()) => {
+                                info!(?remote_sip_addr, "TLS connection serve loop completed");
+                            }
+                        }
+                        match sender_clone.send(TransportEvent::Closed(sip_connection)) {
+                            Ok(()) => {}
+                            Err(e) => {
+                                warn!(
+                                    ?remote_sip_addr,
+                                    "Error sending TLS connection closed event: {:?}", e
+                                );
+                            }
+                        }
+                    });
+                });
+            }
+        });
+        Ok(())
+    }
+
+    pub fn get_addr(&self) -> &SipAddr {
+        if let Some(external) = &self.inner.external {
+            external
+        } else {
+            &self.inner.local_addr
+        }
+    }
+
+    pub async fn close(&self) -> Result<()> {
+        Ok(())
+    }
+
+    async fn create_acceptor(config: &TlsConfig) -> Result<TlsAcceptor> {
+        // Load certificate chain
+        let certs = match &config.cert {
+            Some(cert_data) => {
+                let mut reader = std::io::BufReader::new(cert_data.as_slice());
+                rustls_pemfile::certs(&mut reader)
+                    .collect::<std::result::Result<Vec<_>, std::io::Error>>()
+                    .map_err(|e| Error::Error(format!("Failed to parse certificate: {}", e)))?
+            }
+            None => return Err(Error::Error("No certificate provided".to_string())),
+        };
+
+        // Load private key
+        let key = match &config.key {
+            Some(key_data) => {
+                let mut reader = std::io::BufReader::new(key_data.as_slice());
+                // Try PKCS8 format first
+                let keys = rustls_pemfile::pkcs8_private_keys(&mut reader)
+                    .collect::<std::result::Result<Vec<_>, std::io::Error>>()
+                    .map_err(|e| Error::Error(format!("Failed to parse PKCS8 key: {}", e)))?;
+
+                if !keys.is_empty() {
+                    let key_der = pki_types::PrivatePkcs8KeyDer::from(keys[0].clone_key());
+                    pki_types::PrivateKeyDer::Pkcs8(key_der)
+                } else {
+                    // Try PKCS1 format
+                    let mut reader = std::io::BufReader::new(key_data.as_slice());
+                    let keys = rustls_pemfile::rsa_private_keys(&mut reader)
+                        .collect::<std::result::Result<Vec<_>, std::io::Error>>()
+                        .map_err(|e| Error::Error(format!("Failed to parse RSA key: {}", e)))?;
+
+                    if !keys.is_empty() {
+                        let key_der = pki_types::PrivatePkcs1KeyDer::from(keys[0].clone_key());
+                        pki_types::PrivateKeyDer::Pkcs1(key_der)
+                    } else {
+                        return Err(Error::Error("No valid private key found".to_string()));
+                    }
+                }
+            }
+            None => return Err(Error::Error("No private key provided".to_string())),
+        };
+
+        // Create server configuration
+        let server_config = ServerConfig::builder()
+            .with_no_client_auth()
+            .with_single_cert(certs, key)
+            .map_err(|e| Error::Error(format!("TLS configuration error: {}", e)))?;
+
+        // Create TLS acceptor
+        let acceptor = TlsAcceptor::from(Arc::new(server_config));
+
+        Ok(acceptor)
+    }
+}
+
+impl fmt::Display for TlsListenerConnection {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "TLS Listener {}", self.get_addr())
+    }
+}
+
+impl fmt::Debug for TlsListenerConnection {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(self, f)
     }
 }
 
@@ -200,79 +402,28 @@ impl TlsConnection {
         Ok(connection)
     }
 
-    // Backward compatibility: Create TLS connection from any TLS stream (defaults to client)
+    // Deprecated: use from_client_stream instead
+    #[deprecated(note = "Use from_client_stream instead")]
     pub async fn from_stream(stream: TlsClientStream, remote_addr: SipAddr) -> Result<Self> {
         Self::from_client_stream(stream, remote_addr).await
     }
 
-    // Create TLS acceptor from configuration
+    // Deprecated: use TlsListenerConnection::create_acceptor instead
+    #[deprecated(note = "Use TlsListenerConnection::create_acceptor instead")]
     pub async fn create_acceptor(config: &TlsConfig) -> Result<TlsAcceptor> {
-        // Load certificates
-        let certs = match &config.cert {
-            Some(cert_data) => {
-                let mut reader = std::io::BufReader::new(cert_data.as_slice());
-                // Use rustls-pemfile to parse certificates
-                let certs = rustls_pemfile::certs(&mut reader)
-                    .collect::<std::result::Result<Vec<_>, std::io::Error>>()
-                    .map_err(|e| Error::Error(format!("Failed to parse certificate: {}", e)))?;
-                certs
-                    .into_iter()
-                    .map(pki_types::CertificateDer::from)
-                    .collect()
-            }
-            None => return Err(Error::Error("No certificate provided".to_string())),
-        };
-
-        // Load private key
-        let key = match &config.key {
-            Some(key_data) => {
-                let mut reader = std::io::BufReader::new(key_data.as_slice());
-                // Try PKCS8 format first
-                let keys = rustls_pemfile::pkcs8_private_keys(&mut reader)
-                    .collect::<std::result::Result<Vec<_>, std::io::Error>>()
-                    .map_err(|e| Error::Error(format!("Failed to parse PKCS8 key: {}", e)))?;
-
-                if !keys.is_empty() {
-                    let key_der = pki_types::PrivatePkcs8KeyDer::from(keys[0].clone_key());
-                    pki_types::PrivateKeyDer::Pkcs8(key_der)
-                } else {
-                    // Try PKCS1 format
-                    let mut reader = std::io::BufReader::new(key_data.as_slice());
-                    let keys = rustls_pemfile::rsa_private_keys(&mut reader)
-                        .collect::<std::result::Result<Vec<_>, std::io::Error>>()
-                        .map_err(|e| Error::Error(format!("Failed to parse RSA key: {}", e)))?;
-
-                    if !keys.is_empty() {
-                        let key_der = pki_types::PrivatePkcs1KeyDer::from(keys[0].clone_key());
-                        pki_types::PrivateKeyDer::Pkcs1(key_der)
-                    } else {
-                        return Err(Error::Error("No valid private key found".to_string()));
-                    }
-                }
-            }
-            None => return Err(Error::Error("No private key provided".to_string())),
-        };
-
-        // Create server configuration
-        let server_config = ServerConfig::builder()
-            .with_no_client_auth()
-            .with_single_cert(certs, key)
-            .map_err(|e| Error::Error(format!("TLS configuration error: {}", e)))?;
-
-        // Create TLS acceptor
-        let acceptor = TlsAcceptor::from(Arc::new(server_config));
-
-        Ok(acceptor)
+        TlsListenerConnection::create_acceptor(config).await
     }
 
-    // Serve TLS listener
+    // Deprecated: use TlsListenerConnection::serve_listener instead
+    #[deprecated(note = "Use TlsListenerConnection::serve_listener instead")]
     pub async fn serve_listener(
         listener: TcpListener,
         config: &TlsConfig,
         sender: TransportSender,
-        transport_layer: TransportLayerInnerRef,
+        transport_layer: crate::transport::transport_layer::TransportLayerInnerRef,
     ) -> Result<()> {
-        let acceptor = Self::create_acceptor(config).await?;
+        // Keep old functionality for backward compatibility but mark as deprecated
+        let acceptor = TlsListenerConnection::create_acceptor(config).await?;
 
         info!("Starting TLS listener");
 

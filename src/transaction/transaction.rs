@@ -246,7 +246,7 @@ impl Transaction {
             let (connection, resolved_addr) = self
                 .endpoint_inner
                 .transport_layer
-                .lookup(target_uri, self.endpoint_inner.transport_tx.clone())
+                .lookup(target_uri)
                 .await?;
             // For UDP, we need to store the resolved destination address
             if !connection.is_reliable() {
