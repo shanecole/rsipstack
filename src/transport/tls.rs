@@ -2,22 +2,18 @@ use super::{
     connection::TransportSender,
     sip_addr::SipAddr,
     stream::{StreamConnection, StreamConnectionInner},
-    SipConnection, TransportEvent,
+    SipConnection,
 };
-use crate::{error::Error, Result};
+use crate::{error::Error, transport::transport_layer::TransportLayerInnerRef, Result};
 use rsip::SipMessage;
 use rustls::client::danger::ServerCertVerifier;
 use std::{fmt, net::SocketAddr, sync::Arc};
-use tokio::{
-    net::{TcpListener, TcpStream},
-    select,
-};
+use tokio::net::{TcpListener, TcpStream};
 use tokio_rustls::{
     rustls::{pki_types, ClientConfig, RootCertStore, ServerConfig},
     TlsAcceptor, TlsConnector,
 };
-use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, info, warn};
+use tracing::{error, info, warn};
 
 // TLS configuration
 #[derive(Clone, Debug)]
@@ -79,13 +75,10 @@ impl TlsListenerConnection {
 
     pub async fn serve_listener(
         &self,
-        cancel_token: CancellationToken,
-        sender: TransportSender,
+        transport_layer_inner: TransportLayerInnerRef,
     ) -> Result<()> {
         let listener = TcpListener::bind(self.inner.local_addr.get_socketaddr()?).await?;
         let acceptor = Self::create_acceptor(&self.inner.config).await?;
-        let sender = sender.clone();
-        let cancel_token = cancel_token.clone();
 
         tokio::spawn(async move {
             loop {
@@ -98,8 +91,7 @@ impl TlsListenerConnection {
                 };
 
                 let acceptor_clone = acceptor.clone();
-                let sender_clone = sender.clone();
-                let cancel_token = cancel_token.child_token();
+                let transport_layer_inner_ref = transport_layer_inner.clone();
 
                 tokio::spawn(async move {
                     // Perform TLS handshake
@@ -132,36 +124,8 @@ impl TlsListenerConnection {
                     };
 
                     let sip_connection = SipConnection::Tls(tls_connection.clone());
-                    let sender_clone = sender_clone.clone();
-                    let cancel_token = cancel_token.clone();
-
-                    tokio::spawn(async move {
-                        match sender_clone.send(TransportEvent::New(sip_connection.clone())) {
-                            Ok(()) => {}
-                            Err(e) => {
-                                error!(
-                                    ?remote_sip_addr,
-                                    "Error sending new connection event: {:?}", e
-                                );
-                                return;
-                            }
-                        }
-                        select! {
-                            _ = cancel_token.cancelled() => {}
-                            _ = tls_connection.serve_loop(sender_clone.clone()) => {
-                                info!(?remote_sip_addr, "TLS connection serve loop completed");
-                            }
-                        }
-                        match sender_clone.send(TransportEvent::Closed(sip_connection)) {
-                            Ok(()) => {}
-                            Err(e) => {
-                                warn!(
-                                    ?remote_sip_addr,
-                                    "Error sending TLS connection closed event: {:?}", e
-                                );
-                            }
-                        }
-                    });
+                    transport_layer_inner_ref.add_connection(sip_connection.clone());
+                    info!(?remote_sip_addr, "new tls connection");
                 });
             }
         });
@@ -400,116 +364,6 @@ impl TlsConnection {
         );
 
         Ok(connection)
-    }
-
-    // Deprecated: use from_client_stream instead
-    #[deprecated(note = "Use from_client_stream instead")]
-    pub async fn from_stream(stream: TlsClientStream, remote_addr: SipAddr) -> Result<Self> {
-        Self::from_client_stream(stream, remote_addr).await
-    }
-
-    // Deprecated: use TlsListenerConnection::create_acceptor instead
-    #[deprecated(note = "Use TlsListenerConnection::create_acceptor instead")]
-    pub async fn create_acceptor(config: &TlsConfig) -> Result<TlsAcceptor> {
-        TlsListenerConnection::create_acceptor(config).await
-    }
-
-    // Deprecated: use TlsListenerConnection::serve_listener instead
-    #[deprecated(note = "Use TlsListenerConnection::serve_listener instead")]
-    pub async fn serve_listener(
-        listener: TcpListener,
-        config: &TlsConfig,
-        sender: TransportSender,
-        transport_layer: crate::transport::transport_layer::TransportLayerInnerRef,
-    ) -> Result<()> {
-        // Keep old functionality for backward compatibility but mark as deprecated
-        let acceptor = TlsListenerConnection::create_acceptor(config).await?;
-
-        info!("Starting TLS listener");
-
-        loop {
-            match listener.accept().await {
-                Ok((stream, peer_addr)) => {
-                    debug!("New TLS connection from {}", peer_addr);
-
-                    let acceptor_clone = acceptor.clone();
-                    let sender_clone = sender.clone();
-                    let transport_layer_clone = transport_layer.clone();
-                    let cancel_token = transport_layer.cancel_token.child_token();
-
-                    tokio::spawn(async move {
-                        // Perform TLS handshake
-                        let tls_stream = match acceptor_clone.accept(stream).await {
-                            Ok(stream) => stream,
-                            Err(e) => {
-                                error!("TLS handshake failed: {}", e);
-                                return;
-                            }
-                        };
-
-                        // Create remote SIP address
-                        let remote_sip_addr = SipAddr {
-                            r#type: Some(rsip::transport::Transport::Tls),
-                            addr: peer_addr.into(),
-                        };
-
-                        // Create TLS connection
-                        let connection = match TlsConnection::from_server_stream(
-                            tls_stream,
-                            remote_sip_addr.clone(),
-                        )
-                        .await
-                        {
-                            Ok(conn) => conn,
-                            Err(e) => {
-                                error!("Failed to create TLS connection: {}", e);
-                                return;
-                            }
-                        };
-
-                        // Convert to SIP connection
-                        let sip_connection = SipConnection::Tls(connection.clone());
-                        let connection_addr = connection.get_addr().clone();
-
-                        // Add connection to transport layer if provided
-                        transport_layer_clone.add_connection(sip_connection.clone());
-                        info!(
-                            "Added TLS connection to transport layer: {}",
-                            connection_addr
-                        );
-
-                        // Notify about new connection
-                        if let Err(e) =
-                            sender_clone.send(TransportEvent::New(sip_connection.clone()))
-                        {
-                            error!("Failed to send new connection event: {}", e);
-                            return;
-                        }
-                        select! {
-                            _ = cancel_token.cancelled() => {
-                            }
-                            _ = connection.serve_loop(sender_clone.clone()) => {
-                                info!("TLS connection serve loop completed: {}", connection_addr);
-                            }
-                        }
-                        // Remove connection from transport layer when done
-                        transport_layer_clone.del_connection(&connection_addr);
-                        info!(
-                            "Removed TLS connection from transport layer: {}",
-                            connection_addr
-                        );
-
-                        // Send connection closed event
-                        if let Err(e) = sender_clone.send(TransportEvent::Closed(sip_connection)) {
-                            warn!("Error sending TLS connection closed event: {:?}", e);
-                        }
-                    });
-                }
-                Err(e) => {
-                    error!("Error accepting TLS connection: {}", e);
-                }
-            }
-        }
     }
 }
 

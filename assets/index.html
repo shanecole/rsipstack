@@ -137,7 +137,7 @@
             <h3>Registration</h3>
             <div class="form-group">
                 <label for="server">SIP Server (WebSocket URL):</label>
-                <input type="text" id="server" value="ws://localhost:8081" placeholder="ws://localhost:8081/">
+                <input type="text" id="server" value="ws://localhost:8080/ws" placeholder="ws://localhost:8080/ws">
             </div>
             <div class="form-group">
                 <label for="username">Username:</label>
@@ -195,6 +195,7 @@
     <script src="./sip-0.17.1.js"></script>
     <script>
         let userAgent = null;
+        let registerer = null;
         let currentSession = null;
         let isMuted = false;
         let isOnHold = false;
@@ -249,22 +250,46 @@
         }
 
         function setupMediaElements(session) {
-            const remoteStream = new MediaStream();
-            session.sessionDescriptionHandler.peerConnection.getReceivers().forEach(receiver => {
-                if (receiver.track) {
-                    remoteStream.addTrack(receiver.track);
+            try {
+                if (!session.sessionDescriptionHandler || !session.sessionDescriptionHandler.peerConnection) {
+                    log('Session description handler not available yet');
+                    return;
                 }
-            });
-            remoteAudio.srcObject = remoteStream;
 
-            if (session.sessionDescriptionHandler.peerConnection.getSenders().length > 0) {
-                const localStream = new MediaStream();
-                session.sessionDescriptionHandler.peerConnection.getSenders().forEach(sender => {
-                    if (sender.track) {
-                        localStream.addTrack(sender.track);
+                const peerConnection = session.sessionDescriptionHandler.peerConnection;
+
+                const remoteStream = new MediaStream();
+                peerConnection.getReceivers().forEach(receiver => {
+                    if (receiver.track && receiver.track.kind === 'audio') {
+                        remoteStream.addTrack(receiver.track);
+                        log('Added remote audio track');
                     }
                 });
-                localAudio.srcObject = localStream;
+
+                if (remoteStream.getTracks().length > 0) {
+                    remoteAudio.srcObject = remoteStream;
+                    log('Remote audio stream set');
+                } else {
+                    log('No remote audio tracks found');
+                }
+
+                const senders = peerConnection.getSenders();
+                if (senders.length > 0) {
+                    const localStream = new MediaStream();
+                    senders.forEach(sender => {
+                        if (sender.track && sender.track.kind === 'audio') {
+                            localStream.addTrack(sender.track);
+                            log('Added local audio track');
+                        }
+                    });
+
+                    if (localStream.getTracks().length > 0) {
+                        localAudio.srcObject = localStream;
+                        log('Local audio stream set');
+                    }
+                }
+            } catch (error) {
+                log(`Error setting up media elements: ${error.message}`);
             }
         }
 
@@ -308,15 +333,33 @@
             };
 
             userAgent = new SIP.UserAgent(userAgentOptions);
-            const registererOptions = {}
-            const registerer = new SIP.Registerer(userAgent, registererOptions);
+            const registererOptions = {};
+            registerer = new SIP.Registerer(userAgent, registererOptions);
+
+            registerer.stateChange.addListener((newState) => {
+                log(`Registration state: ${newState}`);
+                switch (newState) {
+                    case SIP.RegistererState.Registered:
+                        showStatus('Registered', 'success');
+                        registerBtn.disabled = true;
+                        unregisterBtn.disabled = false;
+                        callBtn.disabled = false;
+                        break;
+                    case SIP.RegistererState.Unregistered:
+                        showStatus('Unregistered', 'info');
+                        break;
+                    case SIP.RegistererState.Terminated:
+                        showStatus('Registration terminated', 'error');
+                        resetUI();
+                        break;
+                }
+            });
+
             userAgent.start().then(() => {
-                log('Registration successful');
-                registerer.register();
-                showStatus('Registered', 'success');
-                registerBtn.disabled = true;
-                unregisterBtn.disabled = false;
-                callBtn.disabled = false;
+                log('UserAgent started, attempting registration...');
+                return registerer.register();
+            }).then(() => {
+                log('Registration request sent');
             }).catch((error) => {
                 log(`Registration failed: ${error.message}`);
                 showStatus('Registration failed', 'error');
@@ -327,12 +370,17 @@
         function unregister() {
             if (userAgent) {
                 log('Unregistering...');
+                if (currentSession) {
+                    hangup();
+                }
+
                 userAgent.stop().then(() => {
-                    log('Unregistered successfully');
+                    log('UserAgent stopped successfully');
                     showStatus('Unregistered', 'info');
                     resetUI();
                 }).catch((error) => {
                     log(`Unregister failed: ${error.message}`);
+                    resetUI();
                 });
             }
         }
@@ -344,6 +392,7 @@
             callControls.classList.remove('active');
             incomingCallDiv.classList.remove('active');
             currentSession = null;
+            registerer = null;
             userAgent = null;
         }
 
@@ -353,8 +402,6 @@
                 log('Please enter a call target and ensure you are registered');
                 return;
             }
-
-            log(`Making call to ${target}...`);
 
             const targetURI = SIP.UserAgent.makeURI(`sip:${target}@${serverInput.value.replace('ws://', '').replace('wss://', '').split('/')[0]}`);
 
@@ -367,34 +414,50 @@
                 }
             };
 
-            currentSession = userAgent.invite(targetURI, inviteOptions);
+            const inviter = new SIP.Inviter(userAgent, targetURI, inviteOptions);
+            log(`Making call to ${targetURI}...`);
 
-            currentSession.delegate = {
+            inviter.delegate = {
                 onBye: (bye) => {
                     log('Call ended by remote party');
                     endCall();
                 },
                 onSessionDescriptionHandler: () => {
-                    setupMediaElements(currentSession);
+                    setupMediaElements(inviter);
                 }
             };
 
-            currentSession.stateChange.addListener((newState) => {
+            inviter.stateChange.addListener((newState) => {
                 log(`Call state: ${newState}`);
 
                 switch (newState) {
+                    case SIP.SessionState.Initial:
+                        log('Call initializing...');
+                        break;
                     case SIP.SessionState.Establishing:
                         callInfo.textContent = `Calling ${target}...`;
                         callControls.classList.add('active');
                         break;
                     case SIP.SessionState.Established:
                         callInfo.textContent = `Connected to ${target}`;
-                        setupMediaElements(currentSession);
+                        setupMediaElements(inviter);
+                        break;
+                    case SIP.SessionState.Terminating:
+                        log('Call terminating...');
                         break;
                     case SIP.SessionState.Terminated:
+                        log('Call terminated');
                         endCall();
                         break;
                 }
+            });
+
+            inviter.invite().then(() => {
+                currentSession = inviter;
+                log('Invite sent successfully');
+            }).catch((error) => {
+                log(`Failed to send invite: ${error.message}`);
+                endCall();
             });
         }
 
@@ -458,10 +521,26 @@
         function hangup() {
             if (currentSession) {
                 log('Hanging up...');
-                if (currentSession.state === SIP.SessionState.Established) {
-                    currentSession.bye();
-                } else {
-                    currentSession.cancel();
+                try {
+                    switch (currentSession.state) {
+                        case SIP.SessionState.Initial:
+                        case SIP.SessionState.Establishing:
+                            if (currentSession instanceof SIP.Inviter) {
+                                currentSession.cancel();
+                            } else {
+                                currentSession.reject();
+                            }
+                            break;
+                        case SIP.SessionState.Established:
+                            currentSession.bye();
+                            break;
+                        default:
+                            log(`Cannot hangup call in state: ${currentSession.state}`);
+                            break;
+                    }
+                } catch (error) {
+                    log(`Error hanging up: ${error.message}`);
+                    endCall();
                 }
             }
         }
@@ -488,15 +567,21 @@
 
         function toggleMute() {
             if (currentSession && currentSession.sessionDescriptionHandler) {
-                const senders = currentSession.sessionDescriptionHandler.peerConnection.getSenders();
-                senders.forEach(sender => {
-                    if (sender.track && sender.track.kind === 'audio') {
-                        sender.track.enabled = isMuted;
-                    }
-                });
-                isMuted = !isMuted;
-                muteBtn.textContent = isMuted ? 'Unmute' : 'Mute';
-                log(isMuted ? 'Muted' : 'Unmuted');
+                try {
+                    const senders = currentSession.sessionDescriptionHandler.peerConnection.getSenders();
+                    senders.forEach(sender => {
+                        if (sender.track && sender.track.kind === 'audio') {
+                            sender.track.enabled = isMuted;
+                        }
+                    });
+                    isMuted = !isMuted;
+                    muteBtn.textContent = isMuted ? 'Unmute' : 'Mute';
+                    log(isMuted ? 'Audio muted' : 'Audio unmuted');
+                } catch (error) {
+                    log(`Error toggling mute: ${error.message}`);
+                }
+            } else {
+                log('No active session for mute operation');
             }
         }
 

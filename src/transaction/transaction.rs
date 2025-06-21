@@ -240,8 +240,8 @@ impl Transaction {
 
         if self.connection.is_none() {
             let target_uri = match &self.destination {
-                Some(addr) => &addr.into(),
-                None => &self.original.uri,
+                Some(addr) => addr,
+                None => &SipAddr::try_from(&self.original.uri)?,
             };
             let (connection, resolved_addr) = self
                 .endpoint_inner

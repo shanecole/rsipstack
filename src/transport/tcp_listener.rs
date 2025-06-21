@@ -1,13 +1,11 @@
-use crate::transport::stream::StreamConnection;
 use crate::transport::tcp::TcpConnection;
-use crate::transport::{connection::TransportSender, SipAddr};
-use crate::transport::{SipConnection, TransportEvent};
+use crate::transport::transport_layer::TransportLayerInnerRef;
+use crate::transport::SipAddr;
+use crate::transport::SipConnection;
 use crate::Result;
 use std::fmt;
 use std::{net::SocketAddr, sync::Arc};
 use tokio::net::TcpListener;
-use tokio::select;
-use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 pub struct TcpListenerConnectionInner {
     pub local_addr: SipAddr,
@@ -35,13 +33,9 @@ impl TcpListenerConnection {
 
     pub async fn serve_listener(
         &self,
-        cancel_token: CancellationToken,
-        sender: TransportSender,
+        transport_layer_inner: TransportLayerInnerRef,
     ) -> Result<()> {
         let listener = TcpListener::bind(self.inner.local_addr.get_socketaddr()?).await?;
-        let sender = sender.clone();
-        let cancel_token = cancel_token.clone();
-
         tokio::spawn(async move {
             loop {
                 let (stream, remote_addr) = match listener.accept().await {
@@ -62,34 +56,9 @@ impl TcpListenerConnection {
                         continue;
                     }
                 };
-
                 let sip_connection = SipConnection::Tcp(tcp_connection.clone());
-                let sender_clone = sender.clone();
-                let cancel_token = cancel_token.child_token();
-                tokio::spawn(async move {
-                    match sender_clone.send(TransportEvent::New(sip_connection.clone())) {
-                        Ok(()) => {}
-                        Err(e) => {
-                            error!(?local_addr, "Error sending new connection event: {:?}", e);
-                            return;
-                        }
-                    }
-                    select! {
-                        _ = cancel_token.cancelled() => {}
-                        _ = tcp_connection.serve_loop(sender_clone.clone()) => {
-                            info!(?local_addr, "TCP connection serve loop completed");
-                        }
-                    }
-                    match sender_clone.send(TransportEvent::Closed(sip_connection)) {
-                        Ok(()) => {}
-                        Err(e) => {
-                            warn!(
-                                ?local_addr,
-                                "Error sending connection closed event: {:?}", e
-                            );
-                        }
-                    }
-                });
+                transport_layer_inner.add_connection(sip_connection.clone());
+                info!(?local_addr, "new tcp connection");
             }
         });
         Ok(())

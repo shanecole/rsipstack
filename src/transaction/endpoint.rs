@@ -220,10 +220,10 @@ impl EndpointInner {
                     }
                 }
                 TransportEvent::New(t) => {
-                    self.transport_layer.add_connection(t);
+                    info!(addr=?t.get_addr(), "new connection");
                 }
                 TransportEvent::Closed(t) => {
-                    self.transport_layer.del_connection(t.get_addr());
+                    info!(addr=?t.get_addr(), "closed connection");
                 }
             }
         }

@@ -362,6 +362,12 @@ impl fmt::Display for SipConnection {
     }
 }
 
+impl From<ChannelConnection> for SipConnection {
+    fn from(connection: ChannelConnection) -> Self {
+        SipConnection::Channel(connection)
+    }
+}
+
 impl From<UdpConnection> for SipConnection {
     fn from(connection: UdpConnection) -> Self {
         SipConnection::Udp(connection)

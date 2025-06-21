@@ -45,6 +45,7 @@ rustls-pemfile = { version = "2.2.0", optional = true }
 webpki-roots = { version = "1.0.0", optional = true }
 rustls = "0.23.28"
 clap = { version = "4.5.37", features = ["derive"] }
+http = "1.3.1"
 
 [features]
 default = ["console_error_panic_hook", "rustls", "websocket"]

@@ -3,8 +3,8 @@ use super::websocket::WebSocketConnection;
 use super::{connection::TransportSender, sip_addr::SipAddr, tcp::TcpConnection, SipConnection};
 use crate::transport::connection::TransportReceiver;
 use crate::{transport::TransportEvent, Result};
-use rsip::HostWithPort;
-use rsip_dns::{trust_dns_resolver::TokioAsyncResolver, ResolvableExt};
+use rsip_dns::trust_dns_resolver::TokioAsyncResolver;
+use rsip_dns::ResolvableExt;
 use std::net::SocketAddr;
 use std::sync::{Mutex, RwLock};
 use std::{collections::HashMap, sync::Arc};
@@ -51,15 +51,16 @@ impl TransportLayer {
         self.inner.del_listener(addr)
     }
 
-    pub(crate) fn add_connection(&self, connection: SipConnection) {
-        self.inner.add_connection(connection)
+    pub fn add_connection(&self, connection: SipConnection) {
+        self.inner.add_connection(connection);
     }
-    pub(crate) fn del_connection(&self, addr: &SipAddr) {
+
+    pub fn del_connection(&self, addr: &SipAddr) {
         self.inner.del_connection(addr)
     }
 
-    pub async fn lookup(&self, uri: &rsip::uri::Uri) -> Result<(SipConnection, SipAddr)> {
-        self.inner.lookup(uri, self.outbound.as_ref()).await
+    pub async fn lookup(&self, target: &SipAddr) -> Result<(SipConnection, SipAddr)> {
+        self.inner.lookup(target, self.outbound.as_ref()).await
     }
 
     pub async fn serve_listens(&self) -> Result<()> {
@@ -73,13 +74,11 @@ impl TransportLayer {
             }
         };
         for transport in listens {
-            match self.inner.serve_listener(transport.clone()).await {
+            let addr = transport.get_addr().clone();
+            match TransportLayerInner::serve_listener(self.inner.clone(), transport).await {
                 Ok(()) => {}
                 Err(e) => {
-                    warn!(
-                        addr = ?transport.get_addr(),
-                        "Failed to serve listener: {:?}", e
-                    );
+                    warn!(?addr, "Failed to serve listener: {:?}", e);
                 }
             }
         }
@@ -123,7 +122,8 @@ impl TransportLayerInner {
     pub(super) fn add_connection(&self, connection: SipConnection) {
         match self.connections.write() {
             Ok(mut connections) => {
-                connections.insert(connection.get_addr().to_owned(), connection);
+                connections.insert(connection.get_addr().to_owned(), connection.clone());
+                self.serve_connection(connection);
             }
             Err(e) => {
                 warn!("Failed to write connections: {:?}", e);
@@ -142,16 +142,20 @@ impl TransportLayerInner {
         }
     }
 
-    async fn lookup<'a>(
-        &'a self,
-        uri: &rsip::uri::Uri,
-        outbound: Option<&'a SipAddr>,
+    async fn lookup(
+        &self,
+        destination: &SipAddr,
+        outbound: Option<&SipAddr>,
     ) -> Result<(SipConnection, SipAddr)> {
-        let target = if let Some(addr) = outbound {
-            addr
-        } else {
+        let target = outbound.unwrap_or(destination);
+        let target = if matches!(target.addr.host, rsip::Host::Domain(_)) {
+            let target = rsip::uri::Uri {
+                scheme: Some(rsip::Scheme::Sip),
+                host_with_port: target.addr.clone().into(),
+                ..Default::default()
+            };
             let context = rsip_dns::Context::initialize_from(
-                uri.clone(),
+                target,
                 rsip_dns::AsyncTrustDnsClient::new(
                     TokioAsyncResolver::tokio(Default::default(), Default::default()).unwrap(),
                 ),
@@ -160,33 +164,25 @@ impl TransportLayerInner {
 
             let mut lookup = rsip_dns::Lookup::from(context);
             match lookup.resolve_next().await {
-                Some(mut target) => {
-                    match uri.host_with_port.host {
-                        rsip::Host::IpAddr(_) => {
-                            if let Some(port) = uri.host_with_port.port {
-                                target.port = port;
-                            }
-                        }
-                        _ => {}
-                    }
-                    &SipAddr {
-                        r#type: Some(target.transport),
-                        addr: HostWithPort::from(SocketAddr::new(
-                            target.ip_addr,
-                            u16::from(target.port),
-                        )),
-                    }
-                }
+                Some(result) => &SipAddr {
+                    r#type: Some(result.transport),
+                    addr: rsip::HostWithPort::from(SocketAddr::new(
+                        result.ip_addr,
+                        u16::from(result.port),
+                    )),
+                },
                 None => {
                     return Err(crate::Error::DnsResolutionError(format!(
                         "DNS resolution error: {}",
-                        uri
-                    )))
+                        destination
+                    )));
                 }
             }
+        } else {
+            target
         };
 
-        info!("lookup target: {} -> {}", uri, target);
+        info!("lookup target: {} -> {}", destination, target);
         match self.connections.read() {
             Ok(connections) => match connections.get(&target) {
                 Some(transport) => {
@@ -229,7 +225,7 @@ impl TransportLayerInner {
                         ));
                     }
                 };
-                self.serve_connection(sip_connection.clone());
+                self.add_connection(sip_connection.clone());
                 return Ok((sip_connection, target.clone()));
             }
             _ => {}
@@ -265,29 +261,19 @@ impl TransportLayerInner {
         ));
     }
 
-    pub async fn serve_listener(&self, transport: SipConnection) -> Result<()> {
+    pub(super) async fn serve_listener(self: Arc<Self>, transport: SipConnection) -> Result<()> {
         let sender = self.transport_tx.clone();
         match transport {
             SipConnection::Udp(transport) => {
                 tokio::spawn(async move { transport.serve_loop(sender).await });
                 Ok(())
             }
-            SipConnection::TcpListener(connection) => {
-                connection
-                    .serve_listener(self.cancel_token.child_token(), sender)
-                    .await
-            }
+            SipConnection::TcpListener(connection) => connection.serve_listener(self.clone()).await,
             #[cfg(feature = "rustls")]
-            SipConnection::TlsListener(connection) => {
-                connection
-                    .serve_listener(self.cancel_token.child_token(), sender)
-                    .await
-            }
+            SipConnection::TlsListener(connection) => connection.serve_listener(self.clone()).await,
             #[cfg(feature = "websocket")]
             SipConnection::WebSocketListener(connection) => {
-                connection
-                    .serve_listener(self.cancel_token.child_token(), sender)
-                    .await
+                connection.serve_listener(self.clone()).await
             }
 
             _ => {
@@ -328,7 +314,10 @@ impl Drop for TransportLayer {
 }
 #[cfg(test)]
 mod tests {
-    use crate::{transport::udp::UdpConnection, Result};
+    use crate::{
+        transport::{udp::UdpConnection, SipAddr},
+        Result,
+    };
     use rsip::{Host, Transport};
     use rsip_dns::{trust_dns_resolver::TokioAsyncResolver, ResolvableExt};
 
@@ -336,7 +325,13 @@ mod tests {
     async fn test_lookup() -> Result<()> {
         let mut tl = super::TransportLayer::new(tokio_util::sync::CancellationToken::new());
 
-        let first_uri = "sip:bob@127.0.0.1:5060".try_into().expect("parse uri");
+        let first_uri = SipAddr {
+            r#type: Some(rsip::transport::Transport::Udp),
+            addr: rsip::HostWithPort {
+                host: rsip::Host::IpAddr("127.0.0.1".parse()?),
+                port: Some(5060.into()),
+            },
+        };
         assert!(tl.lookup(&first_uri).await.is_err());
         let udp_peer = UdpConnection::create_connection("127.0.0.1:0".parse()?, None).await?;
         let udp_peer_addr = udp_peer.get_addr().to_owned();

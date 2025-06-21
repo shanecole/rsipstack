@@ -12,7 +12,7 @@ use tokio::{
     sync::Mutex,
 };
 use tokio_util::codec::{Decoder, Encoder};
-use tracing::{error, info};
+use tracing::{debug, error, info};
 
 pub(super) const MAX_SIP_MESSAGE_SIZE: usize = 65535;
 
@@ -100,7 +100,6 @@ impl Encoder<SipMessage> for SipCodec {
     }
 }
 
-// 通用的流连接内部结构
 pub struct StreamConnectionInner<R, W>
 where
     R: AsyncRead + Unpin + Send,
@@ -167,7 +166,13 @@ where
                         match codec.decode(&mut buffer) {
                             Ok(Some(msg)) => match msg {
                                 SipCodecType::Message(sip_msg) => {
-                                    info!("Received message from {}: {}", remote_addr, sip_msg);
+                                    debug!("Received message from {}: {}", remote_addr, sip_msg);
+                                    let remote_socket_addr = remote_addr.get_socketaddr()?;
+                                    let sip_msg = SipConnection::update_msg_received(
+                                        sip_msg,
+                                        remote_socket_addr,
+                                        remote_addr.r#type.unwrap_or_default(),
+                                    )?;
 
                                     if let Err(e) = sender.send(TransportEvent::Incoming(
                                         sip_msg,

@@ -3,6 +3,7 @@ use crate::{
         connection::{TransportSender, KEEPALIVE_REQUEST, KEEPALIVE_RESPONSE},
         sip_addr::SipAddr,
         stream::StreamConnection,
+        transport_layer::TransportLayerInnerRef,
         SipConnection, TransportEvent,
     },
     Result,
@@ -10,7 +11,7 @@ use crate::{
 use futures_util::{SinkExt, StreamExt};
 use rsip::SipMessage;
 use std::{fmt, net::SocketAddr, sync::Arc};
-use tokio::{net::TcpListener, select, sync::Mutex};
+use tokio::{net::TcpListener, sync::Mutex};
 use tokio_tungstenite::{
     connect_async,
     tungstenite::{
@@ -20,7 +21,6 @@ use tokio_tungstenite::{
     },
     MaybeTlsStream, WebSocketStream,
 };
-use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
 // Define a type alias for the WebSocket sink to make the code more readable
@@ -70,8 +70,7 @@ impl WebSocketListenerConnection {
 
     pub async fn serve_listener(
         &self,
-        cancel_token: CancellationToken,
-        sender: TransportSender,
+        transport_layer_inner: TransportLayerInnerRef,
     ) -> Result<()> {
         let listener = TcpListener::bind(self.inner.local_addr.get_socketaddr()?).await?;
         let transport_type = if self.inner.is_secure {
@@ -79,11 +78,8 @@ impl WebSocketListenerConnection {
         } else {
             rsip::transport::Transport::Ws
         };
-        let sender = sender.clone();
-        let cancel_token = cancel_token.clone();
 
         info!("Starting WebSocket listener on {}", self.inner.local_addr);
-
         tokio::spawn(async move {
             loop {
                 let (stream, remote_addr) = match listener.accept().await {
@@ -96,14 +92,11 @@ impl WebSocketListenerConnection {
 
                 debug!("New WebSocket connection from {}", remote_addr);
 
-                let remote_sip_addr = SipAddr {
+                let remote_addr = SipAddr {
                     r#type: Some(transport_type.clone()),
                     addr: remote_addr.into(),
                 };
-
-                let sender_clone = sender.clone();
-                let cancel_token = cancel_token.child_token();
-
+                let transport_layer_inner_ref = transport_layer_inner.clone();
                 tokio::spawn(async move {
                     // Wrap the TCP stream in MaybeTlsStream
                     let maybe_tls_stream = MaybeTlsStream::Plain(stream);
@@ -135,20 +128,17 @@ impl WebSocketListenerConnection {
                         };
 
                     let (ws_sink, ws_read) = ws_stream.split();
-                    let local_addr = SipAddr {
-                        r#type: Some(transport_type.clone()),
-                        addr: remote_addr.into(),
+                    let connection = WebSocketConnection {
+                        inner: Arc::new(WebSocketInner {
+                            remote_addr,
+                            ws_sink: Mutex::new(ws_sink),
+                            ws_read: Mutex::new(Some(ws_read)),
+                        }),
                     };
-
-                    Self::serve_ws_connection(
-                        cancel_token,
-                        ws_sink,
-                        ws_read,
-                        local_addr,
-                        remote_sip_addr,
-                        sender_clone,
-                    )
-                    .await;
+                    let sip_connection = SipConnection::WebSocket(connection.clone());
+                    let connection_addr = connection.get_addr().clone();
+                    transport_layer_inner_ref.add_connection(sip_connection.clone());
+                    info!(?connection_addr, "new websocket connection");
                 });
             }
         });
@@ -166,50 +156,6 @@ impl WebSocketListenerConnection {
     pub async fn close(&self) -> Result<()> {
         Ok(())
     }
-
-    async fn serve_ws_connection(
-        cancel_token: CancellationToken,
-        ws_sink: WsSink,
-        ws_read: WsRead,
-        local_addr: SipAddr,
-        remote_addr: SipAddr,
-        sender: TransportSender,
-    ) {
-        // Create a new WebSocket connection
-        let connection = WebSocketConnection {
-            inner: Arc::new(WebSocketInner {
-                local_addr,
-                remote_addr,
-                ws_sink: Mutex::new(ws_sink),
-                ws_read: Mutex::new(Some(ws_read)),
-            }),
-        };
-        let sip_connection = SipConnection::WebSocket(connection.clone());
-        let connection_addr = connection.get_addr().clone();
-
-        info!("Added WebSocket connection: {}", connection_addr);
-
-        if let Err(e) = sender.send(TransportEvent::New(sip_connection.clone())) {
-            error!("Error sending new connection event: {:?}", e);
-            return;
-        }
-
-        select! {
-            _ = cancel_token.cancelled() => {
-            }
-            _ = connection.serve_loop(sender.clone()) => {
-                info!(
-                    "WebSocket connection serve loop completed: {}",
-                    connection_addr
-                );
-            }
-        }
-
-        info!("Removed WebSocket connection: {}", connection_addr);
-        if let Err(e) = sender.send(TransportEvent::Closed(sip_connection)) {
-            warn!("Error sending WebSocket connection closed event: {:?}", e);
-        }
-    }
 }
 
 impl fmt::Display for WebSocketListenerConnection {
@@ -226,7 +172,6 @@ impl fmt::Debug for WebSocketListenerConnection {
 }
 
 pub struct WebSocketInner {
-    pub local_addr: SipAddr,
     pub remote_addr: SipAddr,
     pub ws_sink: Mutex<WsSink>,
     pub ws_read: Mutex<Option<WsRead>>,
@@ -260,18 +205,8 @@ impl WebSocketConnection {
         let (ws_stream, _) = connect_async(request).await?;
         let (ws_sink, ws_stream) = ws_stream.split();
 
-        let local_addr = SipAddr {
-            r#type: Some(if scheme == "wss" {
-                rsip::transport::Transport::Wss
-            } else {
-                rsip::transport::Transport::Ws
-            }),
-            addr: remote.addr.clone(),
-        };
-
         let connection = WebSocketConnection {
             inner: Arc::new(WebSocketInner {
-                local_addr,
                 remote_addr: remote.clone(),
                 ws_sink: Mutex::new(ws_sink),
                 ws_read: Mutex::new(Some(ws_stream)),
@@ -291,7 +226,7 @@ impl WebSocketConnection {
 #[async_trait::async_trait]
 impl StreamConnection for WebSocketConnection {
     fn get_addr(&self) -> &SipAddr {
-        &self.inner.local_addr
+        &self.inner.remote_addr
     }
 
     async fn send_message(&self, msg: SipMessage) -> Result<()> {
@@ -324,6 +259,13 @@ impl StreamConnection for WebSocketConnection {
             match msg {
                 Ok(Message::Text(text)) => match SipMessage::try_from(text.as_str()) {
                     Ok(sip_msg) => {
+                        let remote_socket_addr = remote_addr.get_socketaddr()?;
+                        let sip_msg = SipConnection::update_msg_received(
+                            sip_msg,
+                            remote_socket_addr,
+                            remote_addr.r#type.unwrap_or_default(),
+                        )?;
+
                         if let Err(e) = sender.send(TransportEvent::Incoming(
                             sip_msg,
                             sip_connection.clone(),
@@ -379,8 +321,6 @@ impl StreamConnection for WebSocketConnection {
             }
         }
 
-        // Note: Connection closed event is now handled in serve_listener
-        // to avoid duplicate events
         debug!("WebSocket serve_loop exiting: {}", remote_addr);
         Ok(())
     }
@@ -394,11 +334,11 @@ impl StreamConnection for WebSocketConnection {
 
 impl fmt::Display for WebSocketConnection {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let transport = match self.inner.local_addr.r#type {
+        let transport = match self.inner.remote_addr.r#type {
             Some(rsip::transport::Transport::Wss) => "WSS",
             _ => "WS",
         };
-        write!(f, "{} {}", transport, self.inner.local_addr)
+        write!(f, "{} {}", transport, self.inner.remote_addr)
     }
 }
 

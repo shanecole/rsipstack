@@ -1,38 +1,49 @@
-use axum::response::Html;
-use clap::Parser;
-
-use get_if_addrs::get_if_addrs;
-use rsip::headers::UntypedHeader;
-use rsip::prelude::{HeadersExt, ToTypedHeader};
-use rsipstack::dialog::DialogId;
-use rsipstack::rsip_ext::{extract_uri_from_contact, RsipHeadersExt};
-use rsipstack::transaction::key::{TransactionKey, TransactionRole};
-use rsipstack::transaction::transaction::Transaction;
-use rsipstack::transaction::TransactionReceiver;
-use rsipstack::transport::tcp_listener::TcpListenerConnection;
-use rsipstack::transport::udp::UdpConnection;
-#[cfg(feature = "websocket")]
-use rsipstack::transport::websocket::WebSocketListenerConnection;
-use rsipstack::transport::SipAddr;
-use rsipstack::{header_pop, Error, Result};
-use rsipstack::{transport::TransportLayer, EndpointBuilder};
-use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, Mutex};
-use std::{env, vec};
-use tokio::select;
-use tokio_util::sync::CancellationToken;
-use tracing::{error, info};
-
+use axum::extract::ws::Message;
 use axum::extract::ws::WebSocket;
+use axum::extract::ConnectInfo;
+use axum::extract::FromRequestParts;
+use axum::response::Html;
 use axum::{
     extract::{ws::WebSocketUpgrade, State},
     response::IntoResponse,
     routing::get,
     Router,
 };
+use clap::Parser;
+use futures::{SinkExt, StreamExt};
+use get_if_addrs::get_if_addrs;
+use rsip::headers::UntypedHeader;
+use rsip::prelude::{HeadersExt, ToTypedHeader};
+use rsip::SipMessage;
+use rsipstack::dialog::DialogId;
+use rsipstack::rsip_ext::{extract_uri_from_contact, RsipHeadersExt};
+use rsipstack::transaction::endpoint::EndpointInnerRef;
+use rsipstack::transaction::key::{TransactionKey, TransactionRole};
+use rsipstack::transaction::transaction::Transaction;
+use rsipstack::transaction::TransactionReceiver;
+use rsipstack::transport::channel::ChannelConnection;
+use rsipstack::transport::tcp_listener::TcpListenerConnection;
+use rsipstack::transport::udp::UdpConnection;
+#[cfg(feature = "websocket")]
+use rsipstack::transport::websocket::WebSocketListenerConnection;
+use rsipstack::transport::SipAddr;
+use rsipstack::transport::{SipConnection, TransportEvent};
+use rsipstack::{header_pop, Error, Result};
+use rsipstack::{transport::TransportLayer, EndpointBuilder};
+use std::collections::{HashMap, HashSet};
+use std::fmt;
+use std::fmt::Formatter;
+use std::net::IpAddr;
 use std::net::SocketAddr;
+use std::sync::Arc;
+use std::{env, vec};
+use tokio::select;
+use tokio::sync::mpsc;
+use tokio::sync::Mutex;
+use tokio_util::sync::CancellationToken;
 use tower::ServiceBuilder;
 use tower_http::cors::CorsLayer;
+use tracing::{error, info, warn};
 
 /// A SIP proxy server that supports UDP, TCP and WebSocket clients
 #[derive(Parser, Debug)]
@@ -67,10 +78,14 @@ struct User {
     username: String,
     destination: SipAddr,
 }
-
-struct AppState {
+struct AppStateInner {
     users: Mutex<HashMap<String, User>>,
     sessions: Mutex<HashSet<DialogId>>,
+    endpoint_ref: EndpointInnerRef,
+}
+#[derive(Clone)]
+struct AppState {
+    inner: Arc<AppStateInner>,
 }
 
 #[tokio::main]
@@ -135,31 +150,37 @@ async fn main() -> Result<()> {
         info!("Added TCP transport on {}", local_addr.addr);
     }
 
-    let mut ws_port = args.ws_port;
-    // Start HTTP server if http_port is specified
-    let http_server_handle = if let Some(http_port) = args.http_port {
-        let app_state = Arc::new(AppState {
+    let endpoint = EndpointBuilder::new()
+        .with_cancel_token(token.clone())
+        .with_transport_layer(transport_layer)
+        .build();
+
+    let app_state = AppState {
+        inner: Arc::new(AppStateInner {
             users: Mutex::new(HashMap::new()),
             sessions: Mutex::new(HashSet::new()),
-        });
-
+            endpoint_ref: endpoint.inner.clone(),
+        }),
+    };
+    // Start HTTP server if http_port is specified
+    let http_server_handle = if let Some(http_port) = args.http_port {
         let app = create_http_app(app_state.clone());
         let http_addr = format!("0.0.0.0:{}", http_port).parse::<SocketAddr>()?;
-        ws_port = Some(http_port + 1);
-
-        info!(
-            "Starting HTTP server on {}, websocket port: {:?}",
-            http_addr, ws_port
-        );
+        info!("Starting HTTP server on {}", http_addr);
         let listener = tokio::net::TcpListener::bind(http_addr).await?;
         Some(tokio::spawn(async move {
-            axum::serve(listener, app).await.unwrap();
+            axum::serve(
+                listener,
+                app.into_make_service_with_connect_info::<SocketAddr>(),
+            )
+            .await
+            .unwrap();
         }))
     } else {
         None
     };
 
-    if let Some(ws_port) = ws_port {
+    if let Some(ws_port) = args.ws_port {
         #[cfg(feature = "websocket")]
         {
             let local_addr = SipAddr {
@@ -175,7 +196,12 @@ async fn main() -> Result<()> {
             };
             let ws_listener =
                 WebSocketListenerConnection::new(local_addr.clone(), external_addr, false).await?;
-            transport_layer.add_transport(ws_listener.into());
+            app_state
+                .inner
+                .endpoint_ref
+                .transport_layer
+                .add_transport(ws_listener.into());
+
             info!("Added WebSocket transport on {}", local_addr.addr);
         }
         #[cfg(not(feature = "websocket"))]
@@ -184,17 +210,12 @@ async fn main() -> Result<()> {
         }
     }
 
-    let endpoint = EndpointBuilder::new()
-        .with_cancel_token(token.clone())
-        .with_transport_layer(transport_layer)
-        .build();
-
     let incoming = endpoint.incoming_transactions();
     select! {
         _ = endpoint.serve() => {
             info!("proxy endpoint finished");
         }
-        r = process_incoming_request(incoming) => {
+        r = process_incoming_request(app_state, incoming) => {
             info!("serve loop finished {:?}", r);
         }
         _ = async {
@@ -210,35 +231,33 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn process_incoming_request(mut incoming: TransactionReceiver) -> Result<()> {
-    let state = Arc::new(AppState {
-        users: Mutex::new(HashMap::new()),
-        sessions: Mutex::new(HashSet::new()),
-    });
-
+async fn process_incoming_request(
+    state: AppState,
+    mut incoming: TransactionReceiver,
+) -> Result<()> {
     while let Some(mut tx) = incoming.recv().await {
         info!("Received transaction: {:?}", tx.key);
-        let state = state.clone();
+        let state_ref = state.clone();
         match tx.original.method {
             rsip::Method::Invite => {
                 tokio::spawn(async move {
-                    handle_invite(state, tx).await?;
+                    handle_invite(state_ref, tx).await?;
                     Ok::<_, Error>(())
                 });
             }
             rsip::Method::Bye => {
                 tokio::spawn(async move {
-                    handle_bye(state, tx).await?;
+                    handle_bye(state_ref, tx).await?;
                     Ok::<_, Error>(())
                 });
             }
             rsip::Method::Register => {
-                handle_register(state, tx).await?;
+                handle_register(state_ref, tx).await?;
             }
             rsip::Method::Ack => {
                 info!("received out of transaction ack: {:?}", tx.original.method);
                 let dialog_id = DialogId::try_from(&tx.original)?;
-                if !state.sessions.lock().unwrap().contains(&dialog_id) {
+                if !state_ref.inner.sessions.lock().await.contains(&dialog_id) {
                     tx.reply(rsip::StatusCode::NotAcceptable).await?;
                     continue;
                 }
@@ -250,7 +269,7 @@ async fn process_incoming_request(mut incoming: TransactionReceiver) -> Result<(
                     .auth
                     .map(|a| a.user)
                     .unwrap_or_default();
-                let target = state.users.lock().unwrap().get(&callee).cloned();
+                let target = state_ref.inner.users.lock().await.get(&callee).cloned();
                 let target = match target {
                     Some(u) => u,
                     None => {
@@ -284,8 +303,15 @@ impl TryFrom<&rsip::Request> for User {
         let contact = extract_uri_from_contact(req.contact_header()?.value())?;
         let via = req.via_header()?.typed()?;
 
+        let username = req
+            .from_header()?
+            .uri()?
+            .user()
+            .unwrap_or_default()
+            .to_string();
+
         let mut destination = SipAddr {
-            r#type: via.uri.transport().cloned(),
+            r#type: Some(via.transport),
             addr: contact.host_with_port,
         };
 
@@ -308,13 +334,6 @@ impl TryFrom<&rsip::Request> for User {
             _ => {}
         });
 
-        let username = req
-            .from_header()?
-            .uri()?
-            .user()
-            .unwrap_or_default()
-            .to_string();
-
         Ok(User {
             username,
             destination,
@@ -322,7 +341,7 @@ impl TryFrom<&rsip::Request> for User {
     }
 }
 
-async fn handle_register(state: Arc<AppState>, mut tx: Transaction) -> Result<()> {
+async fn handle_register(state: AppState, mut tx: Transaction) -> Result<()> {
     let user = match User::try_from(&tx.original) {
         Ok(u) => u,
         Err(e) => {
@@ -331,18 +350,11 @@ async fn handle_register(state: Arc<AppState>, mut tx: Transaction) -> Result<()
         }
     };
 
+    let orig_contact_uri = extract_uri_from_contact(tx.original.contact_header()?.value())?;
     let contact = rsip::typed::Contact {
         display_name: None,
-        uri: rsip::Uri {
-            scheme: Some(rsip::Scheme::Sip),
-            auth: Some(rsip::Auth {
-                user: user.username.clone(),
-                password: None,
-            }),
-            host_with_port: user.destination.addr.clone(),
-            ..Default::default()
-        },
-        params: vec![],
+        uri: orig_contact_uri,
+        params: vec![rsip::Param::Expires("60".into())],
     };
     match tx.original.expires_header() {
         Some(expires) => match expires.value().parse::<u32>() {
@@ -350,7 +362,7 @@ async fn handle_register(state: Arc<AppState>, mut tx: Transaction) -> Result<()
                 if v == 0 {
                     // remove user
                     info!("unregistered user: {} -> {}", user.username, contact);
-                    state.users.lock().unwrap().remove(&user.username);
+                    state.inner.users.lock().await.remove(&user.username);
                     return tx.reply(rsip::StatusCode::OK).await;
                 }
             }
@@ -359,18 +371,19 @@ async fn handle_register(state: Arc<AppState>, mut tx: Transaction) -> Result<()
         None => {}
     }
 
-    info!("Registered user: {} -> {}", user.username, contact);
+    info!("Registered user: {} -> {}", user.username, user.destination);
     state
+        .inner
         .users
         .lock()
-        .unwrap()
+        .await
         .insert(user.username.clone(), user);
 
     let headers = vec![contact.into(), rsip::Header::Expires(60.into())];
     tx.reply_with(rsip::StatusCode::OK, headers, None).await
 }
 
-async fn handle_invite(state: Arc<AppState>, mut tx: Transaction) -> Result<()> {
+async fn handle_invite(state: AppState, mut tx: Transaction) -> Result<()> {
     let caller = tx.original.from_header()?.uri()?.to_string();
     let callee = tx
         .original
@@ -379,7 +392,7 @@ async fn handle_invite(state: Arc<AppState>, mut tx: Transaction) -> Result<()> 
         .auth
         .map(|a| a.user)
         .unwrap_or_default();
-    let target = state.users.lock().unwrap().get(&callee).cloned();
+    let target = state.inner.users.lock().await.get(&callee).cloned();
 
     let record_route = tx.endpoint_inner.get_record_route()?;
 
@@ -438,7 +451,7 @@ async fn handle_invite(state: Arc<AppState>, mut tx: Transaction) -> Result<()> 
                             if resp.status_code.kind() == rsip::StatusCodeKind::Successful {
                                 let dialog_id = DialogId::try_from(&resp)?;
                                 info!("add session: {}", dialog_id);
-                                state.sessions.lock().unwrap().insert(dialog_id);
+                                state.inner.sessions.lock().await.insert(dialog_id);
                             }
                             tx.respond(resp).await?;
                         }
@@ -468,7 +481,7 @@ async fn handle_invite(state: Arc<AppState>, mut tx: Transaction) -> Result<()> 
     Ok(())
 }
 
-async fn handle_bye(state: Arc<AppState>, mut tx: Transaction) -> Result<()> {
+async fn handle_bye(state: AppState, mut tx: Transaction) -> Result<()> {
     let caller = tx.original.from_header()?.uri()?.to_string();
     let callee = tx
         .original
@@ -477,7 +490,7 @@ async fn handle_bye(state: Arc<AppState>, mut tx: Transaction) -> Result<()> {
         .auth
         .map(|a| a.user)
         .unwrap_or_default();
-    let target = state.users.lock().unwrap().get(&callee).cloned();
+    let target = state.inner.users.lock().await.get(&callee).cloned();
     let peer = match target {
         Some(u) => u,
         None => {
@@ -501,7 +514,7 @@ async fn handle_bye(state: Arc<AppState>, mut tx: Transaction) -> Result<()> {
     bye_tx.send().await?;
 
     let dialog_id = DialogId::try_from(&bye_tx.original)?;
-    if state.sessions.lock().unwrap().remove(&dialog_id) {
+    if state.inner.sessions.lock().await.remove(&dialog_id) {
         info!("removed session: {}", dialog_id);
     }
 
@@ -522,13 +535,61 @@ async fn handle_bye(state: Arc<AppState>, mut tx: Transaction) -> Result<()> {
     Ok(())
 }
 
+pub struct ClientAddr(SocketAddr);
+impl ClientAddr {
+    pub fn new(addr: SocketAddr) -> Self {
+        ClientAddr(addr)
+    }
+}
+
+impl<S> FromRequestParts<S> for ClientAddr
+where
+    S: Send + Sync,
+{
+    type Rejection = http::StatusCode;
+
+    async fn from_request_parts(
+        parts: &mut http::request::Parts,
+        _state: &S,
+    ) -> std::result::Result<Self, Self::Rejection> {
+        let mut remote_addr = match parts.extensions.get::<ConnectInfo<SocketAddr>>() {
+            Some(ConnectInfo(addr)) => addr.clone(),
+            None => return Err(http::StatusCode::BAD_REQUEST),
+        };
+
+        for header in [
+            "x-client-ip",
+            "x-forwarded-for",
+            "x-real-ip",
+            "cf-connecting-ip",
+        ] {
+            if let Some(value) = parts.headers.get(header) {
+                if let Ok(ip) = value.to_str() {
+                    // Handle comma-separated IPs (e.g. X-Forwarded-For can have multiple)
+                    let first_ip = ip.split(',').next().unwrap_or(ip).trim();
+                    remote_addr.set_ip(IpAddr::V4(first_ip.parse().unwrap()));
+                    break;
+                }
+            }
+        }
+        Ok(ClientAddr(remote_addr))
+    }
+}
+
+impl fmt::Display for ClientAddr {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
 async fn serve_index() -> impl IntoResponse {
     Html(include_str!("../assets/index.html"))
 }
 async fn serve_sip_js() -> impl IntoResponse {
     Html(include_str!("../assets/sip-0.17.1.js"))
 }
-fn create_http_app(state: Arc<AppState>) -> Router {
+
+fn create_http_app(state: AppState) -> Router {
     Router::new()
         .route("/", get(serve_index))
         .route("/ws", get(websocket_handler))
@@ -538,45 +599,32 @@ fn create_http_app(state: Arc<AppState>) -> Router {
 }
 
 async fn websocket_handler(
+    client_addr: ClientAddr,
     ws: WebSocketUpgrade,
-    State(state): State<Arc<AppState>>,
+    State(state): State<AppState>,
 ) -> impl IntoResponse {
     ws.protocols(["sip"])
-        .on_upgrade(|socket| handle_websocket(socket, state))
+        .on_upgrade(|socket| handle_websocket(client_addr, socket, state))
 }
 
-async fn handle_websocket(socket: WebSocket, _state: Arc<AppState>) {
-    use axum::extract::ws::Message;
-    use futures::{SinkExt, StreamExt};
-    use rsip::SipMessage;
-    use rsipstack::transport::channel::ChannelConnection;
-    use rsipstack::transport::SipAddr;
-    use rsipstack::transport::{SipConnection, TransportEvent};
-    use std::sync::Arc as StdArc;
-    use tokio::sync::mpsc;
-    use tokio::sync::Mutex;
-    use tracing::{error, info, warn};
-
+async fn handle_websocket(client_addr: ClientAddr, socket: WebSocket, _state: AppState) {
     let (ws_sink, mut ws_read) = socket.split();
-    let ws_sink = StdArc::new(Mutex::new(ws_sink));
+    let ws_sink = Arc::new(Mutex::new(ws_sink));
 
     // Create a channel pair for bidirectional communication
-    let (to_transport_tx, to_transport_rx) = mpsc::unbounded_channel();
-    let (from_transport_tx, mut from_transport_rx) = mpsc::unbounded_channel();
-
+    let (from_ws_tx, from_ws_rx) = mpsc::unbounded_channel();
+    let (to_ws_tx, mut to_ws_rx) = mpsc::unbounded_channel();
+    let transport_type = rsip::transport::Transport::Ws;
     // Create a unique SIP address for this WebSocket connection
     let local_addr = SipAddr {
-        r#type: Some(rsip::transport::Transport::Ws),
-        addr: rsip::HostWithPort {
-            host: rsip::Host::Domain("websocket-proxy".to_string().into()),
-            port: Some(8080.into()),
-        },
+        r#type: Some(transport_type),
+        addr: client_addr.0.into(),
     };
 
     // Create the ChannelConnection
     let connection = match ChannelConnection::create_connection(
-        to_transport_rx,
-        from_transport_tx.clone(),
+        from_ws_rx,
+        to_ws_tx,
         local_addr.clone(),
     )
     .await
@@ -590,25 +638,37 @@ async fn handle_websocket(socket: WebSocket, _state: Arc<AppState>) {
 
     let sip_connection = SipConnection::Channel(connection.clone());
     info!("Created WebSocket channel connection: {}", local_addr);
+    _state
+        .inner
+        .endpoint_ref
+        .transport_layer
+        .add_connection(sip_connection.clone());
 
-    // Spawn task to handle WebSocket -> Transport messages
-    let to_transport_task = {
-        let to_transport_tx = to_transport_tx.clone();
-        let sip_connection = sip_connection.clone();
-        let local_addr = local_addr.clone();
-        let ws_sink = ws_sink.clone();
-
-        tokio::spawn(async move {
-            while let Some(message) = ws_read.next().await {
+    // Use select! instead of spawning multiple tasks
+    loop {
+        select! {
+            // Handle WebSocket -> Transport messages
+            message = ws_read.next() => {
                 match message {
-                    Ok(Message::Text(text)) => match SipMessage::try_from(text.as_str()) {
+                    Some(Ok(Message::Text(text))) => match SipMessage::try_from(text.as_str()) {
                         Ok(sip_msg) => {
                             info!(
                                 "WebSocket received SIP message: {}",
                                 sip_msg.to_string().lines().next().unwrap_or("")
                             );
-                            if let Err(e) = to_transport_tx.send(TransportEvent::Incoming(
+                            let msg = match SipConnection::update_msg_received(
                                 sip_msg,
+                                client_addr.0.into(),
+                                transport_type,
+                            ) {
+                                Ok(msg) => msg,
+                                Err(e) => {
+                                    error!("Error updating SIP via: {:?}", e);
+                                    continue;
+                                }
+                            };
+                            if let Err(e) = from_ws_tx.send(TransportEvent::Incoming(
+                                msg,
                                 sip_connection.clone(),
                                 local_addr.clone(),
                             )) {
@@ -620,13 +680,13 @@ async fn handle_websocket(socket: WebSocket, _state: Arc<AppState>) {
                             warn!("Error parsing SIP message from WebSocket: {}", e);
                         }
                     },
-                    Ok(Message::Binary(bin)) => match SipMessage::try_from(bin) {
+                    Some(Ok(Message::Binary(bin))) => match SipMessage::try_from(bin) {
                         Ok(sip_msg) => {
                             info!(
                                 "WebSocket received binary SIP message: {}",
                                 sip_msg.to_string().lines().next().unwrap_or("")
                             );
-                            if let Err(e) = to_transport_tx.send(TransportEvent::Incoming(
+                            if let Err(e) = from_ws_tx.send(TransportEvent::Incoming(
                                 sip_msg,
                                 sip_connection.clone(),
                                 local_addr.clone(),
@@ -639,37 +699,35 @@ async fn handle_websocket(socket: WebSocket, _state: Arc<AppState>) {
                             warn!("Error parsing binary SIP message from WebSocket: {}", e);
                         }
                     },
-                    Ok(Message::Close(_)) => {
+                    Some(Ok(Message::Close(_))) => {
                         info!("WebSocket connection closed by client");
                         break;
                     }
-                    Ok(Message::Ping(data)) => {
+                    Some(Ok(Message::Ping(data))) => {
                         let mut sink = ws_sink.lock().await;
                         if let Err(e) = sink.send(Message::Pong(data)).await {
                             error!("Error sending pong response: {}", e);
                             break;
                         }
                     }
-                    Ok(Message::Pong(_)) => {
+                    Some(Ok(Message::Pong(_))) => {
                         // Just acknowledge the pong
                     }
-                    Err(e) => {
+                    Some(Err(e)) => {
                         error!("WebSocket error: {}", e);
+                        break;
+                    }
+                    None => {
+                        info!("WebSocket stream ended");
                         break;
                     }
                 }
             }
-            info!("WebSocket -> Transport task exiting");
-        })
-    };
 
-    // Spawn task to handle Transport -> WebSocket messages
-    let from_transport_task = {
-        let ws_sink = ws_sink.clone();
-        tokio::spawn(async move {
-            while let Some(event) = from_transport_rx.recv().await {
+            // Handle Transport -> WebSocket messages
+            event = to_ws_rx.recv() => {
                 match event {
-                    TransportEvent::Incoming(sip_msg, _, _) => {
+                    Some(TransportEvent::Incoming(sip_msg, _, _)) => {
                         let message_text = sip_msg.to_string();
                         info!(
                             "Forwarding message to WebSocket: {}",
@@ -681,48 +739,21 @@ async fn handle_websocket(socket: WebSocket, _state: Arc<AppState>) {
                             break;
                         }
                     }
-                    TransportEvent::New(_) => {
+                    Some(TransportEvent::New(_)) => {
                         // Handle new connection events if needed
                     }
-                    TransportEvent::Closed(_) => {
+                    Some(TransportEvent::Closed(_)) => {
                         info!("Transport connection closed");
+                        break;
+                    }
+                    None => {
+                        info!("Transport channel closed");
                         break;
                     }
                 }
             }
-            info!("Transport -> WebSocket task exiting");
-        })
-    };
-
-    // Start the connection serve loop in a separate task
-    let serve_task = {
-        let connection = connection.clone();
-        let from_transport_tx = from_transport_tx.clone();
-        tokio::spawn(async move {
-            if let Err(e) = connection.serve_loop(from_transport_tx).await {
-                error!("Error in connection serve loop: {:?}", e);
-            }
-        })
-    };
-
-    // Wait for any task to complete
-    tokio::select! {
-        _ = to_transport_task => {
-            info!("WebSocket to transport task completed");
-        }
-        _ = from_transport_task => {
-            info!("Transport to WebSocket task completed");
-        }
-        _ = serve_task => {
-            info!("Connection serve loop completed");
         }
     }
-
-    // Clean up: signal connection closure
-    if let Err(e) = from_transport_tx.send(TransportEvent::Closed(sip_connection)) {
-        warn!("Error sending connection closed event: {:?}", e);
-    }
-
     info!("WebSocket connection handler exiting");
 }
 
@@ -762,16 +793,19 @@ mod tests {
 
     #[tokio::test]
     async fn test_proxy_state_management() {
-        let _endpoint = EndpointBuilder::new()
+        let endpoint = EndpointBuilder::new()
             .with_user_agent("MyApp/1.0")
             .with_timer_interval(Duration::from_millis(10))
             .with_allows(vec![rsip::Method::Invite, rsip::Method::Bye])
             .build();
 
-        let state = Arc::new(AppState {
-            users: Mutex::new(HashMap::new()),
-            sessions: Mutex::new(HashSet::new()),
-        });
+        let state = AppState {
+            inner: Arc::new(AppStateInner {
+                users: Mutex::new(HashMap::new()),
+                sessions: Mutex::new(HashSet::new()),
+                endpoint_ref: endpoint.inner.clone(),
+            }),
+        };
 
         // Test user registration
         let user = User {
@@ -788,26 +822,29 @@ mod tests {
         state
             .users
             .lock()
-            .unwrap()
+            .await
             .insert(user.username.clone(), user.clone());
 
         // Verify user is stored
-        let stored_user = state.users.lock().unwrap().get("testuser").cloned();
+        let stored_user = state.users.lock().await.get("testuser").cloned();
         assert!(stored_user.is_some());
         assert_eq!(stored_user.unwrap().username, "testuser");
     }
 
     #[tokio::test]
     async fn test_dialog_session_management() {
-        let _endpoint = EndpointBuilder::new()
+        let endpoint = EndpointBuilder::new()
             .with_user_agent("MyApp/1.0")
             .with_timer_interval(Duration::from_millis(10))
             .with_allows(vec![rsip::Method::Invite, rsip::Method::Bye])
             .build();
-        let state = Arc::new(AppState {
-            users: Mutex::new(HashMap::new()),
-            sessions: Mutex::new(HashSet::new()),
-        });
+        let state = AppState {
+            inner: Arc::new(AppStateInner {
+                users: Mutex::new(HashMap::new()),
+                sessions: Mutex::new(HashSet::new()),
+                endpoint_ref: endpoint.inner.clone(),
+            }),
+        };
 
         // Create a test dialog ID
         let dialog_id = DialogId {
@@ -817,14 +854,14 @@ mod tests {
         };
 
         // Add session
-        state.sessions.lock().unwrap().insert(dialog_id.clone());
+        state.sessions.lock().await.insert(dialog_id.clone());
 
         // Verify session is stored
-        assert!(state.sessions.lock().unwrap().contains(&dialog_id));
+        assert!(state.sessions.lock().await.contains(&dialog_id));
 
         // Remove session
-        assert!(state.sessions.lock().unwrap().remove(&dialog_id));
-        assert!(!state.sessions.lock().unwrap().contains(&dialog_id));
+        assert!(state.sessions.lock().await.remove(&dialog_id));
+        assert!(!state.sessions.lock().await.contains(&dialog_id));
     }
 
     #[tokio::test]
