@@ -67,6 +67,36 @@ pub async fn build_rtp_conn(
     Ok((conn, sdp))
 }
 
+pub async fn play_echo(conn: UdpConnection, token: CancellationToken) -> Result<()> {
+    select! {
+        _ = token.cancelled() => {
+            info!("RTP session cancelled");
+        }
+        _ = async {
+            loop {
+                let mut mbuf = vec![0; 1500];
+                let (len, addr) = match conn.recv_raw(&mut mbuf).await {
+                    Ok(r) => r,
+                    Err(e) => {
+                        info!("Failed to receive RTP: {:?}", e);
+                        break;
+                    }
+                };
+                match conn.send_raw(&mbuf[..len], &addr).await {
+                    Ok(_) => {},
+                    Err(e) => {
+                        info!("Failed to send RTP: {:?}", e);
+                        break;
+                    }
+                }
+            }
+        } => {
+            info!("playback finished, hangup");
+        }
+    };
+    Ok(())
+}
+
 pub async fn play_example_file(
     conn: UdpConnection,
     token: CancellationToken,

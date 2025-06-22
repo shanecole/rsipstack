@@ -19,6 +19,8 @@ use tokio::sync::mpsc::unbounded_channel;
 use tokio::{select, time::sleep};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info};
+
+use crate::play_file::play_echo;
 mod play_file;
 mod stun;
 #[derive(Debug, Clone)]
@@ -27,6 +29,7 @@ struct MediaSessionOption {
     pub stun_server: Option<String>,
     pub external_ip: Option<String>,
     pub rtp_start_port: u16,
+    pub echo: bool,
 }
 
 /// A SIP client example that sends a REGISTER request to a SIP server.
@@ -40,6 +43,9 @@ struct Args {
     /// SIP port
     #[arg(long, default_value = "12000")]
     rtp_start_port: u16,
+
+    #[arg(long, default_value = "false")]
+    echo: bool,
 
     /// External IP address
     #[arg(long)]
@@ -107,6 +113,7 @@ async fn main() -> rsipstack::Result<()> {
         stun_server: args.stun_server.clone(),
         external_ip: args.external_ip.clone(),
         rtp_start_port: args.rtp_start_port,
+        echo: args.echo,
     };
 
     let token = CancellationToken::new();
@@ -433,10 +440,15 @@ async fn play_example_pcmu(opt: &MediaSessionOption, dialog: ServerInviteDialog)
 
     let peer_addr = format!("{}:{}", peer_addr, peer_port);
     let rtp_token = dialog.cancel_token().child_token();
+    let echo = opt.echo;
     tokio::spawn(async move {
-        play_example_file(conn, rtp_token, ssrc, peer_addr)
-            .await
-            .expect("play example file");
+        if echo {
+            play_echo(conn, rtp_token).await.expect("play echo");
+        } else {
+            play_example_file(conn, rtp_token, ssrc, peer_addr)
+                .await
+                .expect("play example file");
+        }
         dialog.bye().await.expect("send BYE");
     });
     Ok(())
