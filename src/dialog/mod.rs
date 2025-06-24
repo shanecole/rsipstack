@@ -45,11 +45,40 @@ mod tests;
 /// - During early dialog establishment, `to_tag` may be an empty string
 /// - Dialog ID remains constant throughout the dialog lifetime
 /// - Used for managing and routing SIP messages at the dialog layer
-#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+#[derive(Clone, Debug)]
 pub struct DialogId {
     pub call_id: String,
     pub from_tag: String,
     pub to_tag: String,
+}
+
+impl PartialEq for DialogId {
+    fn eq(&self, other: &DialogId) -> bool {
+        if self.call_id != other.call_id {
+            return false;
+        }
+        if self.from_tag == other.from_tag && self.to_tag == other.to_tag {
+            return true;
+        }
+        if self.from_tag == other.to_tag && self.to_tag == other.from_tag {
+            return true;
+        }
+        false
+    }
+}
+
+impl Eq for DialogId {}
+impl std::hash::Hash for DialogId {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.call_id.hash(state);
+        if self.from_tag > self.to_tag {
+            self.from_tag.hash(state);
+            self.to_tag.hash(state);
+        } else {
+            self.to_tag.hash(state);
+            self.from_tag.hash(state);
+        }
+    }
 }
 
 impl TryFrom<&Request> for DialogId {
@@ -102,6 +131,10 @@ impl TryFrom<&Response> for DialogId {
 
 impl std::fmt::Display for DialogId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}-{}-{}", self.call_id, self.from_tag, self.to_tag)
+        if self.from_tag > self.to_tag {
+            write!(f, "{}-{}-{}", self.call_id, self.from_tag, self.to_tag)
+        } else {
+            write!(f, "{}-{}-{}", self.call_id, self.to_tag, self.from_tag)
+        }
     }
 }

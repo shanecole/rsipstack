@@ -67,6 +67,35 @@ async fn create_test_endpoint() -> crate::Result<crate::transaction::endpoint::E
     Ok(endpoint)
 }
 
+#[test]
+fn test_dialog_id_eq() {
+    let dialog_id_1 = DialogId {
+        call_id: "test-call-id-123".to_string(),
+        from_tag: "456".to_string(),
+        to_tag: "789".to_string(),
+    };
+    assert!("456" < "789");
+    assert_eq!(dialog_id_1.to_string(), "test-call-id-123-789-456");
+    let dialog_id_2 = DialogId {
+        call_id: "test-call-id-123".to_string(),
+        from_tag: "789".to_string(),
+        to_tag: "456".to_string(),
+    };
+    assert_eq!(dialog_id_2.to_string(), "test-call-id-123-789-456");
+    assert_eq!(dialog_id_1, dialog_id_2);
+
+    let dialog_id_3 = DialogId {
+        call_id: "mock".to_string(),
+        from_tag: "M3wnsBf".to_string(),
+        to_tag: "1NyRqPt1".to_string(),
+    };
+    let dialog_id_4 = DialogId {
+        call_id: "mock".to_string(),
+        from_tag: "1NyRqPt1".to_string(),
+        to_tag: "M3wnsBf".to_string(),
+    };
+    assert_eq!(dialog_id_3, dialog_id_4);
+}
 #[tokio::test]
 async fn test_dialog_state_transitions() -> crate::Result<()> {
     let endpoint = create_test_endpoint().await?;
