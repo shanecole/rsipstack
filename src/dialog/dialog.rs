@@ -517,7 +517,7 @@ impl Dialog {
             Dialog::ClientInvite(d) => d.inner.id.lock().unwrap().clone(),
         }
     }
-    pub async fn handle(&mut self, tx: Transaction) -> Result<()> {
+    pub async fn handle(&mut self, tx: &mut Transaction) -> Result<()> {
         match self {
             Dialog::ServerInvite(d) => d.handle(tx).await,
             Dialog::ClientInvite(d) => d.handle(tx).await,
@@ -537,13 +537,7 @@ impl Dialog {
     pub async fn hangup(&self) -> Result<()> {
         match self {
             Dialog::ServerInvite(d) => d.bye().await,
-            Dialog::ClientInvite(d) => {
-                if d.inner.is_confirmed() {
-                    d.bye().await
-                } else {
-                    d.cancel().await
-                }
-            }
+            Dialog::ClientInvite(d) => d.hangup().await,
         }
     }
 }

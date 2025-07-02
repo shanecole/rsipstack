@@ -107,6 +107,17 @@ impl ClientInviteDialog {
     pub fn cancel_token(&self) -> &CancellationToken {
         &self.inner.cancel_token
     }
+    /// Hang up the call
+    ///
+    /// If the dialog is confirmed, send a BYE request to terminate the call.
+    /// If the dialog is not confirmed, send a CANCEL request to cancel the call.
+    pub async fn hangup(&self) -> Result<()> {
+        if self.inner.is_confirmed() {
+            self.bye().await
+        } else {
+            self.cancel().await
+        }
+    }
 
     /// Send a BYE request to terminate the dialog
     ///
@@ -345,7 +356,7 @@ impl ClientInviteDialog {
     /// * `OPTIONS` - Handles capability queries
     /// * `UPDATE` - Handles session updates
     /// * `INVITE` - Handles re-INVITE (when confirmed)
-    pub async fn handle(&mut self, mut tx: Transaction) -> Result<()> {
+    pub async fn handle(&mut self, tx: &mut Transaction) -> Result<()> {
         trace!(
             "handle request: {:?} state:{}",
             tx.original,
@@ -390,7 +401,7 @@ impl ClientInviteDialog {
         Ok(())
     }
 
-    async fn handle_bye(&mut self, mut tx: Transaction) -> Result<()> {
+    async fn handle_bye(&mut self, tx: &mut Transaction) -> Result<()> {
         info!("received bye");
         self.inner
             .transition(DialogState::Terminated(self.id(), TerminatedReason::UasBye))?;
@@ -398,7 +409,7 @@ impl ClientInviteDialog {
         Ok(())
     }
 
-    async fn handle_info(&mut self, mut tx: Transaction) -> Result<()> {
+    async fn handle_info(&mut self, tx: &mut Transaction) -> Result<()> {
         info!("received info {}", tx.original.uri);
         self.inner
             .transition(DialogState::Info(self.id(), tx.original.clone()))?;
@@ -406,7 +417,7 @@ impl ClientInviteDialog {
         Ok(())
     }
 
-    async fn handle_options(&mut self, mut tx: Transaction) -> Result<()> {
+    async fn handle_options(&mut self, tx: &mut Transaction) -> Result<()> {
         info!("received options {}", tx.original.uri);
         self.inner
             .transition(DialogState::Options(self.id(), tx.original.clone()))?;
@@ -414,7 +425,7 @@ impl ClientInviteDialog {
         Ok(())
     }
 
-    async fn handle_update(&mut self, mut tx: Transaction) -> Result<()> {
+    async fn handle_update(&mut self, tx: &mut Transaction) -> Result<()> {
         info!("received update {}", tx.original.uri);
         self.inner
             .transition(DialogState::Updated(self.id(), tx.original.clone()))?;
@@ -422,7 +433,7 @@ impl ClientInviteDialog {
         Ok(())
     }
 
-    pub(super) async fn process_invite(
+    pub async fn process_invite(
         &self,
         mut tx: Transaction,
     ) -> Result<(DialogId, Option<Response>)> {

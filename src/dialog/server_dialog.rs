@@ -487,7 +487,7 @@ impl ServerInviteDialog {
     /// * `OPTIONS` - Handles capability queries
     /// * `UPDATE` - Handles session updates
     /// * `INVITE` - Handles initial INVITE or re-INVITE
-    pub async fn handle(&mut self, mut tx: Transaction) -> Result<()> {
+    pub async fn handle(&mut self, tx: &mut Transaction) -> Result<()> {
         trace!(
             "handle request: {:?} state:{}",
             tx.original,
@@ -552,7 +552,7 @@ impl ServerInviteDialog {
         self.handle_invite(tx).await
     }
 
-    async fn handle_bye(&mut self, mut tx: Transaction) -> Result<()> {
+    async fn handle_bye(&mut self, tx: &mut Transaction) -> Result<()> {
         info!("received bye {}", tx.original.uri);
         self.inner
             .transition(DialogState::Terminated(self.id(), TerminatedReason::UacBye))?;
@@ -560,7 +560,7 @@ impl ServerInviteDialog {
         Ok(())
     }
 
-    async fn handle_info(&mut self, mut tx: Transaction) -> Result<()> {
+    async fn handle_info(&mut self, tx: &mut Transaction) -> Result<()> {
         info!("received info {}", tx.original.uri);
         self.inner
             .transition(DialogState::Info(self.id(), tx.original.clone()))?;
@@ -568,7 +568,7 @@ impl ServerInviteDialog {
         Ok(())
     }
 
-    async fn handle_options(&mut self, mut tx: Transaction) -> Result<()> {
+    async fn handle_options(&mut self, tx: &mut Transaction) -> Result<()> {
         info!("received options {}", tx.original.uri);
         self.inner
             .transition(DialogState::Options(self.id(), tx.original.clone()))?;
@@ -576,7 +576,7 @@ impl ServerInviteDialog {
         Ok(())
     }
 
-    async fn handle_update(&mut self, mut tx: Transaction) -> Result<()> {
+    async fn handle_update(&mut self, tx: &mut Transaction) -> Result<()> {
         info!("received update {}", tx.original.uri);
         self.inner
             .transition(DialogState::Updated(self.id(), tx.original.clone()))?;
@@ -584,7 +584,7 @@ impl ServerInviteDialog {
         Ok(())
     }
 
-    async fn handle_invite(&mut self, mut tx: Transaction) -> Result<()> {
+    async fn handle_invite(&mut self, tx: &mut Transaction) -> Result<()> {
         self.inner
             .tu_sender
             .lock()

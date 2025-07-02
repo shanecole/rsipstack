@@ -107,7 +107,7 @@ async fn run_server(
                         .unwrap();
 
                     tokio::spawn(async move {
-                        dialog.handle(tx).await.ok();
+                        dialog.handle(&mut tx).await.ok();
                     });
                 }
                 rsip::Method::Bye => {

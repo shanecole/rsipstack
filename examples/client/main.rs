@@ -260,7 +260,7 @@ async fn process_incoming_request(
             Some(_) => match dialog_layer.match_dialog(&tx.original) {
                 Some(mut d) => {
                     tokio::spawn(async move {
-                        d.handle(tx).await?;
+                        d.handle(&mut tx).await?;
                         Ok::<_, Error>(())
                     });
                     continue;
@@ -293,7 +293,7 @@ async fn process_incoming_request(
                     }
                 };
                 tokio::spawn(async move {
-                    dialog.handle(tx).await?;
+                    dialog.handle(&mut tx).await?;
                     Ok::<_, Error>(())
                 });
             }
