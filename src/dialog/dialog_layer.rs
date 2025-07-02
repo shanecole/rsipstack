@@ -198,19 +198,12 @@ impl DialogLayer {
     }
 
     pub fn get_dialog(&self, id: &DialogId) -> Option<Dialog> {
-        let dialogs = self.inner.dialogs.read().unwrap();
-        match dialogs.get(id) {
-            Some(dialog) => return Some(dialog.clone()),
-            None => {}
-        }
-        let swap_id = DialogId {
-            call_id: id.call_id.clone(),
-            from_tag: id.to_tag.clone(),
-            to_tag: id.from_tag.clone(),
-        };
-        match dialogs.get(&swap_id) {
-            Some(dialog) => Some(dialog.clone()),
-            None => None,
+        match self.inner.dialogs.read() {
+            Ok(dialogs) => match dialogs.get(id) {
+                Some(dialog) => Some(dialog.clone()),
+                None => None,
+            },
+            Err(_) => None,
         }
     }
 

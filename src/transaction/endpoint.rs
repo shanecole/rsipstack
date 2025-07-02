@@ -56,7 +56,7 @@ use tracing::{debug, info, trace, warn};
 /// * `t4` - Maximum duration a message will remain in the network (default 4s)
 /// * `t1x64` - Maximum retransmission timeout (default 32s)
 pub struct EndpointInner {
-    pub allows: Vec<rsip::Method>,
+    pub allows: Mutex<Option<Vec<rsip::Method>>>,
     pub user_agent: String,
     pub timers: Timer<TransactionTimer>,
     pub transport_layer: TransportLayer,
@@ -162,7 +162,7 @@ impl EndpointInner {
         allows: Vec<rsip::Method>,
     ) -> Arc<Self> {
         Arc::new(EndpointInner {
-            allows,
+            allows: Mutex::new(Some(allows)),
             user_agent,
             timers: Timer::new(),
             transport_layer,
