@@ -323,38 +323,15 @@ impl DialogLayer {
         opt: InviteOption,
         state_sender: DialogStateSender,
     ) -> Result<(ClientInviteDialog, Option<Response>)> {
-        let mut request = self.make_invite_request(&opt)?;
-        request.body = opt.offer.unwrap_or_default();
-        request.headers.unique_push(rsip::Header::ContentLength(
-            (request.body.len() as u32).into(),
-        ));
+        let (dialog, tx) = self.create_client_invite_dialog(opt, state_sender)?;
 
-        let id = DialogId::try_from(&request)?;
-        let dlg_inner = DialogInner::new(
-            TransactionRole::Client,
-            id.clone(),
-            request.clone(),
-            self.endpoint.clone(),
-            state_sender,
-            opt.credential,
-            Some(opt.contact),
-        )?;
-
-        let key =
-            TransactionKey::from_request(&dlg_inner.initial_request, TransactionRole::Client)?;
-        let tx = Transaction::new_client(key, request.clone(), self.endpoint.clone(), None);
-
-        let dialog = ClientInviteDialog {
-            inner: Arc::new(dlg_inner),
-        };
+        let id = dialog.id();
         self.inner
             .dialogs
             .write()
             .unwrap()
             .insert(id.clone(), Dialog::ClientInvite(dialog.clone()));
-
         info!("client invite dialog created: {:?}", id);
-
         match dialog.process_invite(tx).await {
             Ok((new_dialog_id, resp)) => {
                 debug!(
@@ -375,5 +352,44 @@ impl DialogLayer {
                 return Err(e);
             }
         }
+    }
+
+    pub fn create_client_invite_dialog(
+        &self,
+        opt: InviteOption,
+        state_sender: DialogStateSender,
+    ) -> Result<(ClientInviteDialog, Transaction)> {
+        let mut request = self.make_invite_request(&opt)?;
+        request.body = opt.offer.unwrap_or_default();
+        request.headers.unique_push(rsip::Header::ContentLength(
+            (request.body.len() as u32).into(),
+        ));
+        let id = DialogId::try_from(&request)?;
+        let dlg_inner = DialogInner::new(
+            TransactionRole::Client,
+            id.clone(),
+            request.clone(),
+            self.endpoint.clone(),
+            state_sender,
+            opt.credential,
+            Some(opt.contact),
+        )?;
+
+        let key =
+            TransactionKey::from_request(&dlg_inner.initial_request, TransactionRole::Client)?;
+        let tx = Transaction::new_client(key, request.clone(), self.endpoint.clone(), None);
+
+        let dialog = ClientInviteDialog {
+            inner: Arc::new(dlg_inner),
+        };
+        Ok((dialog, tx))
+    }
+
+    pub fn confirm_client_dialog(&self, dialog: ClientInviteDialog) {
+        self.inner
+            .dialogs
+            .write()
+            .unwrap()
+            .insert(dialog.id(), Dialog::ClientInvite(dialog));
     }
 }
