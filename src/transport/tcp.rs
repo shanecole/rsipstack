@@ -27,7 +27,7 @@ impl TcpConnection {
 
         let local_addr = SipAddr {
             r#type: Some(rsip::transport::Transport::Tcp),
-            addr: stream.local_addr()?.into(),
+            addr: SipConnection::resolve_bind_address(stream.local_addr()?).into(),
         };
 
         let (read_half, write_half) = tokio::io::split(stream);

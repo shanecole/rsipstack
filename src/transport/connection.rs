@@ -6,10 +6,12 @@ use crate::transport::{
     tls::{TlsConnection, TlsListenerConnection},
 };
 use crate::Result;
+use get_if_addrs::IfAddr;
 use rsip::{
     prelude::{HeadersExt, ToTypedHeader},
     Param, SipMessage,
 };
+use std::net::{IpAddr, Ipv4Addr};
 use std::{fmt, net::SocketAddr};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tracing::debug;
@@ -265,6 +267,32 @@ impl SipConnection {
         }
     }
 
+    pub fn resolve_bind_address(addr: SocketAddr) -> SocketAddr {
+        let ip = addr.ip();
+        if ip.is_unspecified() {
+            // 0.0.0.0 or ::
+            let interfaces = match get_if_addrs::get_if_addrs() {
+                Ok(interfaces) => interfaces,
+                Err(_) => return addr,
+            };
+            for interface in interfaces {
+                if interface.is_loopback() {
+                    continue;
+                }
+                match interface.addr {
+                    IfAddr::V4(v4addr) => {
+                        return SocketAddr::new(IpAddr::V4(v4addr.ip), addr.port());
+                    }
+                    IfAddr::V6(v6addr) => {
+                        return SocketAddr::new(IpAddr::V6(v6addr.ip), addr.port());
+                    }
+                }
+            }
+            // fallback to loopback
+            return SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), addr.port());
+        }
+        addr
+    }
     pub fn build_via_received(
         via: &mut rsip::headers::Via,
         addr: SocketAddr,

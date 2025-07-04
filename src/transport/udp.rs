@@ -25,7 +25,7 @@ impl UdpConnection {
         UdpConnection {
             external: external.map(|addr| SipAddr {
                 r#type: Some(rsip::transport::Transport::Udp),
-                addr: addr.into(),
+                addr: SipConnection::resolve_bind_address(addr).into(),
             }),
             inner: Arc::new(inner),
         }
@@ -39,7 +39,7 @@ impl UdpConnection {
 
         let addr = SipAddr {
             r#type: Some(rsip::transport::Transport::Udp),
-            addr: conn.local_addr()?.into(),
+            addr: SipConnection::resolve_bind_address(conn.local_addr()?).into(),
         };
 
         let t = UdpConnection {
