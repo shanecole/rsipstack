@@ -217,8 +217,10 @@ pub async fn handle_client_authenticate(
     };
 
     // Use MD5 as default algorithm if none specified (RFC 2617 compatibility)
-    let algorithm = challenge.algorithm.unwrap_or(rsip::headers::auth::Algorithm::Md5);
-    
+    let algorithm = challenge
+        .algorithm
+        .unwrap_or(rsip::headers::auth::Algorithm::Md5);
+
     let response = DigestGenerator {
         username: cred.username.as_str(),
         password: cred.password.as_str(),

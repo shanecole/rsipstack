@@ -203,6 +203,7 @@ async fn main() -> rsipstack::Result<()> {
                     contact: contact.clone(),
                     credential: Some(credential.clone()),
                     headers: None,
+                    destination: None,
                 };
 
                 match make_call(dialog_layer, invite_option, opt, state_sender).await {

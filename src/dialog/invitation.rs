@@ -11,6 +11,7 @@ use crate::{
         make_tag,
         transaction::Transaction,
     },
+    transport::SipAddr,
     Result,
 };
 use rsip::{Request, Response};
@@ -117,9 +118,11 @@ use tracing::{debug, info};
 /// # Ok(())
 /// # }
 /// ```
+#[derive(Default)]
 pub struct InviteOption {
     pub caller: rsip::Uri,
     pub callee: rsip::Uri,
+    pub destination: Option<SipAddr>,
     pub content_type: Option<String>,
     pub offer: Option<Vec<u8>>,
     pub contact: rsip::Uri,
@@ -377,8 +380,8 @@ impl DialogLayer {
 
         let key =
             TransactionKey::from_request(&dlg_inner.initial_request, TransactionRole::Client)?;
-        let tx = Transaction::new_client(key, request.clone(), self.endpoint.clone(), None);
-
+        let mut tx = Transaction::new_client(key, request.clone(), self.endpoint.clone(), None);
+        tx.destination = opt.destination;
         let dialog = ClientInviteDialog {
             inner: Arc::new(dlg_inner),
         };

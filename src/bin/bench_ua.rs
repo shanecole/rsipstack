@@ -173,11 +173,9 @@ async fn run_client(
                     let invite_option = InviteOption {
                         callee: contact.clone(),
                         caller: contact.clone(),
-                        content_type: None,
-                        offer: None,
                         contact,
                         credential,
-                        headers: None,
+                        ..Default::default()
                     };
                     stats.total_calls.fetch_add(1, Ordering::Relaxed);
 

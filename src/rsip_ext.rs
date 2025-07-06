@@ -7,6 +7,7 @@ use crate::transport::SipConnection;
 pub trait RsipResponseExt {
     fn reason_phrase(&self) -> Option<&str>;
     fn via_received(&self) -> Option<rsip::HostWithPort>;
+    fn content_type(&self) -> Option<rsip::headers::ContentType>;
 }
 
 impl RsipResponseExt for rsip::Response {
@@ -31,6 +32,18 @@ impl RsipResponseExt for rsip::Response {
     fn via_received(&self) -> Option<rsip::HostWithPort> {
         let via = self.via_header().ok()?;
         SipConnection::parse_target_from_via(via).ok()
+    }
+    fn content_type(&self) -> Option<rsip::headers::ContentType> {
+        let headers = self.headers();
+        for header in headers.iter() {
+            match header {
+                rsip::Header::ContentType(content_type) => {
+                    return Some(content_type.clone());
+                }
+                _ => {}
+            }
+        }
+        None
     }
 }
 
