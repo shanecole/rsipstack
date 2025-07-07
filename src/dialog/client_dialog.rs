@@ -7,7 +7,7 @@ use crate::dialog::{
 use crate::rsip_ext::RsipResponseExt;
 use crate::transaction::transaction::Transaction;
 use crate::Result;
-use rsip::prelude::HeadersExt;
+use rsip::prelude::{HeadersExt, ToTypedHeader};
 use rsip::{Response, SipMessage, StatusCode};
 use std::sync::atomic::Ordering;
 use tokio_util::sync::CancellationToken;
@@ -531,6 +531,13 @@ impl ClientInviteDialog {
 
                     match resp.status_code {
                         StatusCode::OK => {
+                            if let Ok(contact) = resp.contact_header() {
+                                self.inner
+                                    .remote_contact
+                                    .lock()
+                                    .unwrap()
+                                    .replace(contact.typed()?.uri);
+                            }
                             self.inner
                                 .transition(DialogState::Confirmed(dialog_id.clone()))?;
                         }

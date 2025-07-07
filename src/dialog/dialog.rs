@@ -166,6 +166,7 @@ pub struct DialogInner {
 
     pub local_seq: AtomicU32,
     pub local_contact: Option<rsip::Uri>,
+    pub remote_contact: Mutex<Option<rsip::Uri>>,
 
     pub remote_seq: AtomicU32,
     pub remote_uri: rsip::Uri,
@@ -254,6 +255,7 @@ impl DialogInner {
             state: Mutex::new(DialogState::Calling(id)),
             initial_request,
             local_contact,
+            remote_contact: Mutex::new(None),
         })
     }
     pub fn is_confirmed(&self) -> bool {
@@ -404,7 +406,7 @@ impl DialogInner {
 
     pub(super) async fn do_request(&self, mut request: Request) -> Result<Option<rsip::Response>> {
         let method = request.method().to_owned();
-        let destination = request
+        let mut destination = request
             .route_header()
             .map(|r| {
                 r.typed()
@@ -413,6 +415,12 @@ impl DialogInner {
                     .flatten()
             })
             .flatten();
+
+        if destination.is_none() {
+            if let Some(contact) = self.remote_contact.lock().unwrap().as_ref() {
+                destination = Some(contact.clone());
+            }
+        }
 
         header_pop!(request.headers, Header::Route);
 
@@ -517,6 +525,27 @@ impl Dialog {
             Dialog::ClientInvite(d) => d.inner.id.lock().unwrap().clone(),
         }
     }
+
+    pub fn from(&self) -> &str {
+        match self {
+            Dialog::ServerInvite(d) => &d.inner.from,
+            Dialog::ClientInvite(d) => &d.inner.from,
+        }
+    }
+
+    pub fn to(&self) -> String {
+        match self {
+            Dialog::ServerInvite(d) => d.inner.to.lock().unwrap().clone(),
+            Dialog::ClientInvite(d) => d.inner.to.lock().unwrap().clone(),
+        }
+    }
+    pub fn remote_contact(&self) -> Option<rsip::Uri> {
+        match self {
+            Dialog::ServerInvite(d) => d.inner.remote_contact.lock().unwrap().clone(),
+            Dialog::ClientInvite(d) => d.inner.remote_contact.lock().unwrap().clone(),
+        }
+    }
+
     pub async fn handle(&mut self, tx: &mut Transaction) -> Result<()> {
         match self {
             Dialog::ServerInvite(d) => d.handle(tx).await,
