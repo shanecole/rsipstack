@@ -1,5 +1,7 @@
 # rsipstack - A SIP Stack written in Rust
 
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/restsend/rsipstack)
+
 A RFC 3261 compliant SIP stack written in Rust. The goal of this project is to provide a high-performance, reliable, and easy-to-use SIP stack that can be used in various scenarios.
 
 ## Features
