@@ -13,14 +13,15 @@ use tokio::time::sleep;
 use tracing::info;
 
 pub fn get_first_non_loopback_interface() -> Result<IpAddr> {
-    get_if_addrs()?
-        .iter()
-        .find(|i| !i.is_loopback())
-        .map(|i| match i.addr {
-            get_if_addrs::IfAddr::V4(ref addr) => Ok(std::net::IpAddr::V4(addr.ip)),
-            _ => Err(Error::Error("No IPv4 address found".to_string())),
-        })
-        .unwrap_or(Err(Error::Error("No interface found".to_string())))
+    for i in get_if_addrs()? {
+        if !i.is_loopback() {
+            match i.addr {
+                get_if_addrs::IfAddr::V4(ref addr) => return Ok(std::net::IpAddr::V4(addr.ip)),
+                _ => continue,
+            }
+        }
+    }
+    Err(Error::Error("No IPV4 interface found".to_string()))
 }
 
 pub async fn external_by_stun(

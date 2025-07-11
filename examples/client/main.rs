@@ -129,7 +129,7 @@ async fn main() -> rsipstack::Result<()> {
         Some(format!("{}:{}", external_ip, args.port).parse()?)
     };
 
-    let addr = stun::get_first_non_loopback_interface()?;
+    let addr = stun::get_first_non_loopback_interface().expect("get first non loopback interface");
     let mut connection = UdpConnection::create_connection(
         format!("{}:{}", addr, args.port).parse()?,
         external.clone(),

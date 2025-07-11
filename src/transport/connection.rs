@@ -283,9 +283,8 @@ impl SipConnection {
                     IfAddr::V4(v4addr) => {
                         return SocketAddr::new(IpAddr::V4(v4addr.ip), addr.port());
                     }
-                    IfAddr::V6(v6addr) => {
-                        return SocketAddr::new(IpAddr::V6(v6addr.ip), addr.port());
-                    }
+                    //TODO: don't support ipv6 for now
+                    _ => continue,
                 }
             }
             // fallback to loopback
