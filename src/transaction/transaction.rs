@@ -584,7 +584,7 @@ impl Transaction {
                                 .await?;
                         }
                         // Restart Timer A with an upper limit
-                        let duration = (duration * 2).min(self.endpoint_inner.t1x64);
+                        let duration = (duration * 2).min(self.endpoint_inner.option.t1x64);
                         let timer_a = self
                             .endpoint_inner
                             .timers
@@ -623,7 +623,7 @@ impl Transaction {
                         }
                     }
                     // restart Timer G with an upper limit
-                    let duration = (duration * 2).min(self.endpoint_inner.t1x64);
+                    let duration = (duration * 2).min(self.endpoint_inner.option.t1x64);
                     let timer_g = self
                         .endpoint_inner
                         .timers
@@ -666,8 +666,8 @@ impl Transaction {
                             .take()
                             .map(|id| self.endpoint_inner.timers.cancel(id));
                         self.timer_a.replace(self.endpoint_inner.timers.timeout(
-                            self.endpoint_inner.t1,
-                            TransactionTimer::TimerA(self.key.clone(), self.endpoint_inner.t1),
+                            self.endpoint_inner.option.t1,
+                            TransactionTimer::TimerA(self.key.clone(), self.endpoint_inner.option.t1),
                         ));
                     }
                 }
@@ -676,7 +676,7 @@ impl Transaction {
                     .take()
                     .map(|id| self.endpoint_inner.timers.cancel(id));
                 self.timer_b.replace(self.endpoint_inner.timers.timeout(
-                    self.endpoint_inner.t1x64,
+                    self.endpoint_inner.option.t1x64,
                     TransactionTimer::TimerB(self.key.clone()),
                 ));
             }
@@ -686,7 +686,7 @@ impl Transaction {
                     .map(|id| self.endpoint_inner.timers.cancel(id));
                 // start Timer B
                 let timer_b = self.endpoint_inner.timers.timeout(
-                    self.endpoint_inner.t1x64,
+                    self.endpoint_inner.option.t1x64,
                     TransactionTimer::TimerB(self.key.clone()),
                 );
                 self.timer_b.replace(timer_b);
@@ -707,8 +707,8 @@ impl Transaction {
                     ))?;
                     if !connection.is_reliable() {
                         let timer_g = self.endpoint_inner.timers.timeout(
-                            self.endpoint_inner.t1,
-                            TransactionTimer::TimerG(self.key.clone(), self.endpoint_inner.t1),
+                            self.endpoint_inner.option.t1,
+                            TransactionTimer::TimerG(self.key.clone(), self.endpoint_inner.option.t1),
                         );
                         self.timer_g.replace(timer_g);
                     }
@@ -716,7 +716,7 @@ impl Transaction {
 
                 // start Timer D
                 let timer_d = self.endpoint_inner.timers.timeout(
-                    self.endpoint_inner.t1x64,
+                    self.endpoint_inner.option.t1x64,
                     TransactionTimer::TimerD(self.key.clone()),
                 );
                 self.timer_d.replace(timer_d);
@@ -725,7 +725,7 @@ impl Transaction {
                 self.cleanup_timer();
                 // start Timer K, wait for ACK
                 let timer_k = self.endpoint_inner.timers.timeout(
-                    self.endpoint_inner.t4,
+                    self.endpoint_inner.option.t4,
                     TransactionTimer::TimerK(self.key.clone()),
                 );
                 self.timer_k.replace(timer_k);

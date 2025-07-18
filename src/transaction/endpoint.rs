@@ -23,6 +23,23 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, trace, warn};
 
+pub struct EndpointOption {
+    pub t1: Duration,
+    pub t4: Duration,
+    pub t1x64: Duration,    
+    pub ignore_out_of_dialog_option: bool,
+}
+
+impl Default for EndpointOption {
+    fn default() -> Self {
+        EndpointOption {
+            t1: Duration::from_millis(500),
+            t4: Duration::from_secs(4),
+            t1x64: Duration::from_millis(64 * 500),
+            ignore_out_of_dialog_option: true,
+        }
+    }
+}
 /// SIP Endpoint Core Implementation
 ///
 /// `EndpointInner` is the core implementation of a SIP endpoint that manages
@@ -66,9 +83,7 @@ pub struct EndpointInner {
     cancel_token: CancellationToken,
     timer_interval: Duration,
 
-    pub t1: Duration,
-    pub t4: Duration,
-    pub t1x64: Duration,
+    pub option: EndpointOption,
 }
 pub type EndpointInnerRef = Arc<EndpointInner>;
 
@@ -171,9 +186,7 @@ impl EndpointInner {
             timer_interval: timer_interval.unwrap_or(Duration::from_millis(20)),
             cancel_token,
             incoming_sender: Mutex::new(None),
-            t1: Duration::from_millis(500),
-            t4: Duration::from_secs(4),
-            t1x64: Duration::from_millis(64 * 500),
+            option: EndpointOption::default(),
         })
     }
 
@@ -349,9 +362,9 @@ impl EndpointInner {
 
         if let Some(msg) = last_message {
             let timer_k_duration = if msg.is_request() {
-                self.t4
+                self.option.t4
             } else {
-                self.t1x64
+                self.option.t1x64
             };
 
             self.timers.timeout(

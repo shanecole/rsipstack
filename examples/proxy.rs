@@ -289,6 +289,13 @@ async fn process_incoming_request(
                 ack_tx.destination = Some(target.destination);
                 ack_tx.send().await?;
             }
+            rsip::Method::Options => {
+                if tx.endpoint_inner.option.ignore_out_of_dialog_option {
+                    info!("ignoring out of dialog OPTIONS request: {:?}", tx.original.method);                    
+                    continue;
+                }
+                tx.reply(rsip::StatusCode::NotAcceptable).await?;                
+            }
             _ => {
                 tx.reply(rsip::StatusCode::NotAcceptable).await?;
             }
