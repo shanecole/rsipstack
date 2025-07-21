@@ -26,7 +26,7 @@ use tracing::{debug, info, trace, warn};
 pub struct EndpointOption {
     pub t1: Duration,
     pub t4: Duration,
-    pub t1x64: Duration,    
+    pub t1x64: Duration,
     pub ignore_out_of_dialog_option: bool,
 }
 

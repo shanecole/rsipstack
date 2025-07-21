@@ -10,10 +10,13 @@ use crate::{
         make_tag,
         transaction::Transaction,
     },
-    transport::{SipAddr},
+    transport::SipAddr,
     Result,
 };
-use rsip::{prelude::{HeadersExt, ToTypedHeader}, Response, SipMessage, StatusCode};
+use rsip::{
+    prelude::{HeadersExt, ToTypedHeader},
+    Response, SipMessage, StatusCode,
+};
 use tracing::{debug, info};
 
 /// SIP Registration Client
@@ -85,7 +88,7 @@ use tracing::{debug, info};
 ///         Ok(response) if response.status_code == rsip::StatusCode::OK => {
 ///             let expires = registration.expires();
 ///             println!("Registered for {} seconds", expires);
-///             
+///
 ///             // Re-register before expiration (with some margin)
 ///             tokio::time::sleep(Duration::from_secs((expires * 3 / 4) as u64)).await;
 ///         },
@@ -335,10 +338,10 @@ impl Registration {
     /// The method will automatically update the Contact header with the public
     /// address discovered during the registration process. This is essential
     /// for proper NAT traversal in SIP communications.
-    /// 
+    ///
     /// If you want to use a specific Contact header, you can set it manually
     /// before calling this method.
-    /// 
+    ///
     pub async fn register(&mut self, server: rsip::Uri, expires: Option<u32>) -> Result<Response> {
         self.last_seq += 1;
 
@@ -373,9 +376,10 @@ impl Registration {
         //    - Only used for initial registration attempt
         //    - Will be replaced by server-discovered address after first response
         let contact = self.contact.clone().unwrap_or_else(|| {
-            let contact_host_with_port = self.public_address.clone().unwrap_or_else(|| {
-                via.uri.host_with_port.clone()
-            });
+            let contact_host_with_port = self
+                .public_address
+                .clone()
+                .unwrap_or_else(|| via.uri.host_with_port.clone());
             rsip::typed::Contact {
                 display_name: None,
                 uri: rsip::Uri {
@@ -400,7 +404,9 @@ impl Registration {
         request.headers.unique_push(contact.into());
         request.headers.unique_push(self.allow.clone().into());
         if let Some(expires) = expires {
-            request.headers.unique_push(rsip::headers::Expires::from(expires).into());
+            request
+                .headers
+                .unique_push(rsip::headers::Expires::from(expires).into());
         }
 
         let key = TransactionKey::from_request(&request, TransactionRole::Client)?;
@@ -418,7 +424,7 @@ impl Registration {
                     StatusCode::ProxyAuthenticationRequired | StatusCode::Unauthorized => {
                         let received = resp.via_received();
                         if self.public_address != received {
-                            info!(                                    
+                            info!(
                                 "Updated public address from 401 response, will use in authenticated request: {:?} -> {:?}",
                                 self.public_address, received
                             );
@@ -453,9 +459,8 @@ impl Registration {
                         match resp.contact_header() {
                             Ok(contact) => {
                                 self.contact = contact.typed().ok();
-                            },
-                            Err(_) => {
                             }
+                            Err(_) => {}
                         };
                         if self.public_address != received {
                             info!(
@@ -464,7 +469,11 @@ impl Registration {
                             );
                             self.public_address = received;
                         }
-                        info!("registration do_request done: {:?} {:?}", resp.status_code, self.contact.as_ref().map(|c| c.uri.to_string()));
+                        info!(
+                            "registration do_request done: {:?} {:?}",
+                            resp.status_code,
+                            self.contact.as_ref().map(|c| c.uri.to_string())
+                        );
                         return Ok(resp);
                     }
                     _ => {

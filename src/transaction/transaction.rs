@@ -667,7 +667,10 @@ impl Transaction {
                             .map(|id| self.endpoint_inner.timers.cancel(id));
                         self.timer_a.replace(self.endpoint_inner.timers.timeout(
                             self.endpoint_inner.option.t1,
-                            TransactionTimer::TimerA(self.key.clone(), self.endpoint_inner.option.t1),
+                            TransactionTimer::TimerA(
+                                self.key.clone(),
+                                self.endpoint_inner.option.t1,
+                            ),
                         ));
                     }
                 }
@@ -708,7 +711,10 @@ impl Transaction {
                     if !connection.is_reliable() {
                         let timer_g = self.endpoint_inner.timers.timeout(
                             self.endpoint_inner.option.t1,
-                            TransactionTimer::TimerG(self.key.clone(), self.endpoint_inner.option.t1),
+                            TransactionTimer::TimerG(
+                                self.key.clone(),
+                                self.endpoint_inner.option.t1,
+                            ),
                         );
                         self.timer_g.replace(timer_g);
                     }

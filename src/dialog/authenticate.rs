@@ -161,7 +161,7 @@ pub struct Credential {
 ///                     let auth_tx = handle_client_authenticate(
 ///                         new_seq, tx, resp, &credential
 ///                     ).await?;
-///                     
+///
 ///                     // Send authenticated request
 ///                     auth_tx.send().await?;
 ///                     tx = auth_tx;
