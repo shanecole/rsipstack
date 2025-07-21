@@ -88,6 +88,7 @@
 //!     callee: rsip::Uri::try_from("sip:bob@example.com")?,
 //!     contact: rsip::Uri::try_from("sip:alice@myhost.com:5060")?,
 //!     content_type: Some("application/sdp".to_string()),
+//!     destination: None,
 //!     offer: Some(sdp_body),
 //!     credential: None,
 //!     headers: None,

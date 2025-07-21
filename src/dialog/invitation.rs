@@ -47,6 +47,7 @@ use tracing::{debug, info};
 ///     caller: "sip:alice@example.com".try_into()?,
 ///     callee: "sip:bob@example.com".try_into()?,
 ///     content_type: Some("application/sdp".to_string()),
+///     destination: None,
 ///     offer: Some(sdp_offer_bytes),
 ///     contact: "sip:alice@192.168.1.100:5060".try_into()?,
 ///     credential: None,
@@ -84,6 +85,7 @@ use tracing::{debug, info};
 ///     caller: "sip:alice@example.com".try_into()?,
 ///     callee: "sip:bob@example.com".try_into()?,
 ///     content_type: Some("application/sdp".to_string()),
+///     destination: None,
 ///     offer: Some(sdp_bytes),
 ///     contact: "sip:alice@192.168.1.100:5060".try_into()?,
 ///     credential: Some(auth_credential),
@@ -110,6 +112,7 @@ use tracing::{debug, info};
 ///     caller: "sip:alice@example.com".try_into()?,
 ///     callee: "sip:bob@example.com".try_into()?,
 ///     content_type: None, // Will default to "application/sdp"
+///     destination: None,
 ///     offer: Some(sdp_bytes),
 ///     contact: "sip:alice@192.168.1.100:5060".try_into()?,
 ///     credential: Some(credential),

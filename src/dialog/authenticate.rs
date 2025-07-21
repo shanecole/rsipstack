@@ -70,6 +70,7 @@ use rsip::{Header, Param, Response};
 /// let invite_option = InviteOption {
 ///     caller: rsip::Uri::try_from("sip:alice@example.com")?,
 ///     callee: rsip::Uri::try_from("sip:bob@example.com")?,
+///     destination: None,
 ///     content_type: Some("application/sdp".to_string()),
 ///     offer: Some(sdp_bytes),
 ///     contact: rsip::Uri::try_from("sip:alice@192.168.1.100:5060")?,
