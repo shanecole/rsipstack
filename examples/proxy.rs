@@ -291,10 +291,13 @@ async fn process_incoming_request(
             }
             rsip::Method::Options => {
                 if tx.endpoint_inner.option.ignore_out_of_dialog_option {
-                    info!("ignoring out of dialog OPTIONS request: {:?}", tx.original.method);                    
+                    info!(
+                        "ignoring out of dialog OPTIONS request: {:?}",
+                        tx.original.method
+                    );
                     continue;
                 }
-                tx.reply(rsip::StatusCode::NotAcceptable).await?;                
+                tx.reply(rsip::StatusCode::NotAcceptable).await?;
             }
             _ => {
                 tx.reply(rsip::StatusCode::NotAcceptable).await?;
