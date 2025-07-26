@@ -1,5 +1,6 @@
 use super::dialog::{Dialog, DialogInnerRef, DialogState, TerminatedReason};
 use super::DialogId;
+use crate::transport::SipConnection;
 use crate::{
     transaction::transaction::{Transaction, TransactionEvent},
     Result,
@@ -7,7 +8,7 @@ use crate::{
 use rsip::{prelude::HeadersExt, Header, Request, SipMessage, StatusCode};
 use std::sync::atomic::Ordering;
 use tokio_util::sync::CancellationToken;
-use tracing::{info, trace, warn};
+use tracing::{debug, info, trace, warn};
 
 /// Server-side INVITE Dialog (UAS)
 ///
@@ -154,7 +155,15 @@ impl ServerInviteDialog {
                 headers,
                 body,
             );
-
+            let via = self.inner.initial_request.via_header()?;
+            let via_received = SipConnection::parse_target_from_via(via)?;
+            let contact = rsip::Uri {
+                host_with_port: via_received,
+                params: vec![rsip::Param::Transport(via.trasnport()?)],
+                ..Default::default()
+            };
+            debug!(id = %self.id(), "accepting dialog with contact: {}", contact);
+            self.inner.remote_contact.lock().unwrap().replace(contact);
             sender.send(TransactionEvent::Respond(resp.clone()))?;
 
             self.inner
@@ -492,9 +501,9 @@ impl ServerInviteDialog {
     /// * `UPDATE` - Handles session updates
     /// * `INVITE` - Handles initial INVITE or re-INVITE
     pub async fn handle(&mut self, tx: &mut Transaction) -> Result<()> {
-        trace!(
+        debug!(
             id = %self.id(),
-            "handle request: {:?} state:{}",
+            "handle request: {} state:{}",
             tx.original,
             self.inner.state.lock().unwrap()
         );
@@ -608,6 +617,13 @@ impl ServerInviteDialog {
                     SipMessage::Request(req) => match req.method {
                         rsip::Method::Ack => {
                             info!(id = %self.id(),"received ack {}", req.uri);
+                            match req.contact_header() {
+                                Ok(contact) => {
+                                    let contact = contact.uri()?.into();
+                                    self.inner.remote_contact.lock().unwrap().replace(contact);
+                                }
+                                _ => {}
+                            }
                             self.inner.transition(DialogState::Confirmed(self.id()))?;
                         }
                         rsip::Method::Cancel => {

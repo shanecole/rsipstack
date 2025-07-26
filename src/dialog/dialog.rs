@@ -189,6 +189,12 @@ pub(super) type DialogInnerRef = Arc<DialogInner>;
 pub(super) type TuSenderRef = Mutex<Option<TransactionEventSender>>;
 
 impl DialogState {
+    pub fn can_cancel(&self) -> bool {
+        matches!(
+            self,
+            DialogState::Calling(_) | DialogState::Trying(_) | DialogState::Early(_, _)
+        )
+    }
     pub fn is_confirmed(&self) -> bool {
         matches!(self, DialogState::Confirmed(_))
     }
@@ -257,6 +263,9 @@ impl DialogInner {
             local_contact,
             remote_contact: Mutex::new(None),
         })
+    }
+    pub fn can_cancel(&self) -> bool {
+        self.state.lock().unwrap().can_cancel()
     }
     pub fn is_confirmed(&self) -> bool {
         self.state.lock().unwrap().is_confirmed()
@@ -440,13 +449,11 @@ impl DialogInner {
             Err(e) => {
                 warn!(
                     id = self.id.lock().unwrap().to_string(),
-                    method = %method,
-                    destination=?tx.destination,"failed to send request: {}", e);
+                    destination=?tx.destination,"failed to send request error: {}\n{}", e, tx.original);
                 return Err(e);
             }
         }
         let mut auth_sent = false;
-
         while let Some(msg) = tx.receive().await {
             match msg {
                 SipMessage::Response(resp) => match resp.status_code {
@@ -460,7 +467,10 @@ impl DialogInner {
                     StatusCode::ProxyAuthenticationRequired | StatusCode::Unauthorized => {
                         let id = self.id.lock().unwrap().clone();
                         if auth_sent {
-                            info!("received {} response after auth sent", resp.status_code);
+                            info!(
+                                id = self.id.lock().unwrap().to_string(),
+                                "received {} response after auth sent", resp.status_code
+                            );
                             self.transition(DialogState::Terminated(
                                 id,
                                 TerminatedReason::ProxyAuthRequired,
@@ -477,7 +487,10 @@ impl DialogInner {
                             tx.send().await?;
                             continue;
                         } else {
-                            info!("received 407 response without auth option");
+                            info!(
+                                id = self.id.lock().unwrap().to_string(),
+                                "received 407 response without auth option"
+                            );
                             self.transition(DialogState::Terminated(
                                 id,
                                 TerminatedReason::ProxyAuthRequired,
@@ -485,7 +498,11 @@ impl DialogInner {
                         }
                     }
                     _ => {
-                        debug!("dialog do_request done: {:?}", resp.status_code);
+                        debug!(
+                            id = self.id.lock().unwrap().to_string(),
+                            method = %method,
+                            "dialog do_request done: {:?}", resp.status_code
+                        );
                         return Ok(Some(resp));
                     }
                 },

@@ -73,6 +73,47 @@ struct Args {
     call: Option<String>,
 }
 
+async fn handle_user_input(cancel_token: CancellationToken) -> Result<()> {
+    use tokio::io::{AsyncBufReadExt, BufReader};
+
+    let stdin = tokio::io::stdin();
+    let reader = BufReader::new(stdin);
+    let mut lines = reader.lines();
+
+    info!("Press 'q' and Enter to hang up current call");
+
+    loop {
+        select! {
+            line = lines.next_line() => {
+                match line {
+                    Ok(Some(input)) => {
+                        let input = input.trim().to_lowercase();
+                        if input == "q" {
+                            info!("User requested to hang up");
+                            cancel_token.cancel();
+                            info!("Cancelled all dialogs");
+                            break;
+                        }
+                    },
+                    Ok(None) => {
+                        // EOF reached
+                        break;
+                    },
+                    Err(e) => {
+                        info!("Error reading input: {:?}", e);
+                        break;
+                    }
+                }
+            },
+            _ = cancel_token.cancelled() => {
+                info!("User input handler cancelled");
+                break;
+            }
+        }
+    }
+    Ok(())
+}
+
 // A sip client example, that sends a REGISTER request to a sip server.
 #[tokio::main]
 async fn main() -> rsipstack::Result<()> {
@@ -443,12 +484,22 @@ async fn play_example_pcmu(opt: &MediaSessionOption, dialog: ServerInviteDialog)
     let rtp_token = dialog.cancel_token().child_token();
     let echo = opt.echo;
     tokio::spawn(async move {
-        if echo {
-            play_echo(conn, rtp_token).await.expect("play echo");
-        } else {
-            play_example_file(conn, rtp_token, ssrc, peer_addr)
-                .await
-                .expect("play example file");
+        let input_token = CancellationToken::new();
+        select! {
+            _ = handle_user_input(input_token) => {
+                info!("user input handler finished");
+            }
+            _ = async {
+                if echo {
+                    play_echo(conn, rtp_token).await.expect("play echo");
+                } else {
+                    play_example_file(conn, rtp_token, ssrc, peer_addr)
+                        .await
+                        .expect("play example file");
+                }
+            } => {
+                info!("play example finished");
+            }
         }
         dialog.bye().await.expect("send BYE");
     });

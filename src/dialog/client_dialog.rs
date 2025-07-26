@@ -112,10 +112,10 @@ impl ClientInviteDialog {
     /// If the dialog is confirmed, send a BYE request to terminate the call.
     /// If the dialog is not confirmed, send a CANCEL request to cancel the call.
     pub async fn hangup(&self) -> Result<()> {
-        if self.inner.is_confirmed() {
-            self.bye().await
-        } else {
+        if self.inner.can_cancel() {
             self.cancel().await
+        } else {
+            self.bye().await
         }
     }
 
