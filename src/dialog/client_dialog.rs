@@ -183,6 +183,10 @@ impl ClientInviteDialog {
     /// # }
     /// ```
     pub async fn cancel(&self) -> Result<()> {
+        if self.inner.is_confirmed() {
+            return Ok(());
+        }
+        info!(id=%self.id(),"sending cancel request");
         let mut cancel_request = self.inner.initial_request.clone();
         cancel_request.method = rsip::Method::Cancel;
         cancel_request
@@ -229,6 +233,7 @@ impl ClientInviteDialog {
         if !self.inner.is_confirmed() {
             return Ok(None);
         }
+        info!(id=%self.id(),"sending re-invite request, body:\n{:?}", body);
         let request =
             self.inner
                 .make_request(rsip::Method::Invite, None, None, None, headers, body)?;
@@ -281,6 +286,7 @@ impl ClientInviteDialog {
         if !self.inner.is_confirmed() {
             return Ok(None);
         }
+        info!(id=%self.id(),"sending update request, body:\n{:?}", body);
         let request =
             self.inner
                 .make_request(rsip::Method::Update, None, None, None, headers, body)?;
@@ -327,7 +333,7 @@ impl ClientInviteDialog {
         if !self.inner.is_confirmed() {
             return Ok(None);
         }
-
+        info!(id=%self.id(),"sending info request, body:\n{:?}", body);
         let request =
             self.inner
                 .make_request(rsip::Method::Info, None, None, None, headers, body)?;
@@ -358,6 +364,7 @@ impl ClientInviteDialog {
     /// * `INVITE` - Handles re-INVITE (when confirmed)
     pub async fn handle(&mut self, tx: &mut Transaction) -> Result<()> {
         trace!(
+            id=%self.id(),
             "handle request: {:?} state:{}",
             tx.original,
             self.inner.state.lock().unwrap()
@@ -366,7 +373,7 @@ impl ClientInviteDialog {
         let cseq = tx.original.cseq_header()?.seq()?;
         let remote_seq = self.inner.remote_seq.load(Ordering::Relaxed);
         if remote_seq > 0 && cseq < remote_seq {
-            info!("received old request remote_seq: {} > {}", remote_seq, cseq);
+            info!(id=%self.id(),"received old request remote_seq: {} > {}", remote_seq, cseq);
             tx.reply(rsip::StatusCode::ServerInternalError).await?;
             return Ok(());
         }
@@ -384,7 +391,7 @@ impl ClientInviteDialog {
                 rsip::Method::Options => return self.handle_options(tx).await,
                 rsip::Method::Update => return self.handle_update(tx).await,
                 _ => {
-                    info!("invalid request method: {:?}", tx.original.method);
+                    info!(id=%self.id(), "invalid request method: {:?}", tx.original.method);
                     tx.reply(rsip::StatusCode::MethodNotAllowed).await?;
                     return Err(crate::Error::DialogError(
                         "invalid request".to_string(),
@@ -393,7 +400,7 @@ impl ClientInviteDialog {
                 }
             }
         } else {
-            info!(
+            info!(id=%self.id(),
                 "received request before confirmed: {:?}",
                 tx.original.method
             );
@@ -402,7 +409,7 @@ impl ClientInviteDialog {
     }
 
     async fn handle_bye(&mut self, tx: &mut Transaction) -> Result<()> {
-        info!("received bye");
+        info!(id=%self.id(), "received bye {}", tx.original.uri);
         self.inner
             .transition(DialogState::Terminated(self.id(), TerminatedReason::UasBye))?;
         tx.reply(rsip::StatusCode::OK).await?;
@@ -410,7 +417,7 @@ impl ClientInviteDialog {
     }
 
     async fn handle_info(&mut self, tx: &mut Transaction) -> Result<()> {
-        info!("received info {}", tx.original.uri);
+        info!(id=%self.id(),"received info {}", tx.original.uri);
         self.inner
             .transition(DialogState::Info(self.id(), tx.original.clone()))?;
         tx.reply(rsip::StatusCode::OK).await?;
@@ -418,7 +425,7 @@ impl ClientInviteDialog {
     }
 
     async fn handle_options(&mut self, tx: &mut Transaction) -> Result<()> {
-        info!("received options {}", tx.original.uri);
+        info!(id=%self.id(),"received options {}", tx.original.uri);
         self.inner
             .transition(DialogState::Options(self.id(), tx.original.clone()))?;
         tx.reply(rsip::StatusCode::OK).await?;
@@ -426,7 +433,7 @@ impl ClientInviteDialog {
     }
 
     async fn handle_update(&mut self, tx: &mut Transaction) -> Result<()> {
-        info!("received update {}", tx.original.uri);
+        info!(id=%self.id(),"received update {}", tx.original.uri);
         self.inner
             .transition(DialogState::Updated(self.id(), tx.original.clone()))?;
         tx.reply(rsip::StatusCode::OK).await?;
@@ -458,7 +465,7 @@ impl ClientInviteDialog {
                         StatusCode::ProxyAuthenticationRequired | StatusCode::Unauthorized => {
                             if auth_sent {
                                 final_response = Some(resp.clone());
-                                info!("received {} response after auth sent", resp.status_code);
+                                info!(id=%self.id(),"received {} response after auth sent", resp.status_code);
                                 self.inner.transition(DialogState::Terminated(
                                     self.id(),
                                     TerminatedReason::ProxyAuthRequired,
@@ -477,7 +484,7 @@ impl ClientInviteDialog {
                                 tx.send().await?;
                                 continue;
                             } else {
-                                info!("received 407 response without auth option");
+                                info!(id=%self.id(),"received 407 response without auth option");
                                 self.inner.transition(DialogState::Terminated(
                                     self.id(),
                                     TerminatedReason::ProxyAuthRequired,
@@ -502,7 +509,7 @@ impl ClientInviteDialog {
                     {
                         Some(p) => p.clone(),
                         None => {
-                            info!("no branch found in via header");
+                            info!(id=%self.id(),"no branch found in via header");
                             return Err(crate::Error::DialogError(
                                 "no branch found in via header".to_string(),
                                 self.id(),

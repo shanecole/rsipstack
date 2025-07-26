@@ -26,7 +26,7 @@ use std::sync::{
 };
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 /// SIP Dialog State
 ///
@@ -428,7 +428,23 @@ impl DialogInner {
         let mut tx = Transaction::new_client(key, request, self.endpoint_inner.clone(), None);
         tx.destination = destination.as_ref().map(|d| d.try_into().ok()).flatten();
 
-        tx.send().await?;
+        match tx.send().await {
+            Ok(_) => {
+                info!(
+                    id = self.id.lock().unwrap().to_string(),
+                    method = %method,
+                    destination=?tx.destination,
+                    "request sent done",
+                );
+            }
+            Err(e) => {
+                warn!(
+                    id = self.id.lock().unwrap().to_string(),
+                    method = %method,
+                    destination=?tx.destination,"failed to send request: {}", e);
+                return Err(e);
+            }
+        }
         let mut auth_sent = false;
 
         while let Some(msg) = tx.receive().await {

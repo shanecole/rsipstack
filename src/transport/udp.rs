@@ -8,7 +8,7 @@ use crate::{
 };
 use std::{net::SocketAddr, sync::Arc};
 use tokio::net::UdpSocket;
-use tracing::{debug, error, info, instrument};
+use tracing::{debug, error, info};
 pub struct UdpInner {
     pub conn: UdpSocket,
     pub addr: SipAddr,
@@ -135,7 +135,6 @@ impl UdpConnection {
         }
     }
 
-    #[instrument(skip(self, msg), fields(addr = %self.get_addr()))]
     pub async fn send(
         &self,
         msg: rsip::SipMessage,
@@ -146,7 +145,7 @@ impl UdpConnection {
             None => SipConnection::get_destination(&msg),
         }?;
         let buf = msg.to_string();
-        debug!("send {} -> {} {}", buf.len(), destination, buf);
+        debug!(src=%self.get_addr(),"send {} -> {} {}", buf.len(), destination, buf);
 
         self.inner
             .conn
@@ -158,7 +157,6 @@ impl UdpConnection {
             .map(|_| ())
     }
 
-    #[instrument(skip(self, buf), fields(addr = %self.get_addr()))]
     pub async fn send_raw(&self, buf: &[u8], destination: &SipAddr) -> Result<()> {
         //trace!("send_raw {} -> {}", buf.len(), target);
         self.inner
@@ -171,7 +169,6 @@ impl UdpConnection {
             .map(|_| ())
     }
 
-    #[instrument(skip(self, buf), fields(addr = %self.get_addr()))]
     pub async fn recv_raw(&self, buf: &mut [u8]) -> Result<(usize, SipAddr)> {
         let (len, addr) = self.inner.conn.recv_from(buf).await?;
         // trace!("received {} -> {}", len, addr);

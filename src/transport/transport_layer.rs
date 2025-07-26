@@ -1,6 +1,7 @@
 use super::tls::TlsConnection;
 use super::websocket::WebSocketConnection;
 use super::{connection::TransportSender, sip_addr::SipAddr, tcp::TcpConnection, SipConnection};
+use crate::transaction::key::TransactionKey;
 use crate::transport::connection::TransportReceiver;
 use crate::{transport::TransportEvent, Result};
 use rsip_dns::trust_dns_resolver::TokioAsyncResolver;
@@ -59,8 +60,12 @@ impl TransportLayer {
         self.inner.del_connection(addr)
     }
 
-    pub async fn lookup(&self, target: &SipAddr) -> Result<(SipConnection, SipAddr)> {
-        self.inner.lookup(target, self.outbound.as_ref()).await
+    pub async fn lookup(
+        &self,
+        target: &SipAddr,
+        key: Option<&TransactionKey>,
+    ) -> Result<(SipConnection, SipAddr)> {
+        self.inner.lookup(target, self.outbound.as_ref(), key).await
     }
 
     pub async fn serve_listens(&self) -> Result<()> {
@@ -146,6 +151,7 @@ impl TransportLayerInner {
         &self,
         destination: &SipAddr,
         outbound: Option<&SipAddr>,
+        key: Option<&TransactionKey>,
     ) -> Result<(SipConnection, SipAddr)> {
         let target = outbound.unwrap_or(destination);
         let target = if matches!(target.addr.host, rsip::Host::Domain(_)) {
@@ -182,7 +188,7 @@ impl TransportLayerInner {
             target
         };
 
-        info!("lookup target: {} -> {}", destination, target);
+        info!(?key, "lookup target: {} -> {}", destination, target);
         match self.connections.read() {
             Ok(connections) => match connections.get(&target) {
                 Some(transport) => {
@@ -332,12 +338,12 @@ mod tests {
                 port: Some(5060.into()),
             },
         };
-        assert!(tl.lookup(&first_uri).await.is_err());
+        assert!(tl.lookup(&first_uri, None).await.is_err());
         let udp_peer = UdpConnection::create_connection("127.0.0.1:0".parse()?, None).await?;
         let udp_peer_addr = udp_peer.get_addr().to_owned();
         tl.add_transport(udp_peer.into());
 
-        let (target, _) = tl.lookup(&first_uri).await?;
+        let (target, _) = tl.lookup(&first_uri, None).await?;
         assert_eq!(target.get_addr(), &udp_peer_addr);
 
         // test outbound
@@ -347,7 +353,7 @@ mod tests {
         tl.outbound = Some(outbound.clone());
 
         // must return the outbound transport
-        let (target, _) = tl.lookup(&first_uri).await?;
+        let (target, _) = tl.lookup(&first_uri, None).await?;
         assert_eq!(target.get_addr(), &outbound);
         Ok(())
     }

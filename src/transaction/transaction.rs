@@ -9,7 +9,7 @@ use rsip::message::HasHeaders;
 use rsip::prelude::HeadersExt;
 use rsip::{Header, Method, Request, Response, SipMessage, StatusCode};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
-use tracing::{debug, info, instrument};
+use tracing::{debug, info};
 
 pub type TransactionEventReceiver = UnboundedReceiver<TransactionEvent>;
 pub type TransactionEventSender = UnboundedSender<TransactionEvent>;
@@ -226,7 +226,6 @@ impl Transaction {
         Transaction::new(tx_type, key, original, connection, endpoint_inner)
     }
     // send client request
-    #[instrument(skip(self))]
     pub async fn send(&mut self) -> Result<()> {
         match self.transaction_type {
             TransactionType::ClientInvite | TransactionType::ClientNonInvite => {}
@@ -237,7 +236,6 @@ impl Transaction {
                 ));
             }
         }
-
         if self.connection.is_none() {
             let target_uri = match &self.destination {
                 Some(addr) => addr,
@@ -246,7 +244,7 @@ impl Transaction {
             let (connection, resolved_addr) = self
                 .endpoint_inner
                 .transport_layer
-                .lookup(target_uri)
+                .lookup(target_uri, Some(&self.key))
                 .await?;
             // For UDP, we need to store the resolved destination address
             if !connection.is_reliable() {
@@ -294,12 +292,10 @@ impl Transaction {
         self.respond(resp).await
     }
     /// Quick reply with status code
-    #[instrument(skip(self))]
     pub async fn reply(&mut self, status_code: StatusCode) -> Result<()> {
         self.reply_with(status_code, vec![], None).await
     }
     // send server response
-    #[instrument(skip(self, response))]
     pub async fn respond(&mut self, response: Response) -> Result<()> {
         match self.transaction_type {
             TransactionType::ServerInvite | TransactionType::ServerNonInvite => {}
@@ -364,7 +360,6 @@ impl Transaction {
             }
         }
     }
-    #[instrument(skip(self, cancel))]
     pub async fn send_cancel(&mut self, cancel: Request) -> Result<()> {
         if self.transaction_type != TransactionType::ClientInvite {
             return Err(Error::TransactionError(
@@ -390,7 +385,6 @@ impl Transaction {
             }
         }
     }
-    #[instrument(skip(self, ack))]
     pub async fn send_ack(&mut self, ack: Request) -> Result<()> {
         if self.transaction_type != TransactionType::ClientInvite {
             return Err(Error::TransactionError(
