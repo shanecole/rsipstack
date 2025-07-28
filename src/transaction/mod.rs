@@ -3,7 +3,6 @@ use key::TransactionKey;
 use std::time::Duration;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use transaction::Transaction;
-use uuid::Uuid;
 
 pub mod endpoint;
 pub mod key;
@@ -18,7 +17,7 @@ mod tests;
 pub const TO_TAG_LEN: usize = 8;
 pub const BRANCH_LEN: usize = 12;
 pub const CNONCE_LEN: usize = 8;
-
+pub const CALL_ID_LEN: usize = 22;
 pub struct IncomingRequest {
     pub request: rsip::Request,
     pub connection: SipConnection,
@@ -272,7 +271,12 @@ pub fn make_via_branch() -> rsip::Param {
 }
 
 pub fn make_call_id(domain: Option<&str>) -> rsip::headers::CallId {
-    format!("{}@{}", Uuid::new_v4(), domain.unwrap_or("restsend.com")).into()
+    format!(
+        "{}@{}",
+        random_text(CALL_ID_LEN),
+        domain.unwrap_or("restsend.com")
+    )
+    .into()
 }
 
 pub fn make_tag() -> rsip::param::Tag {

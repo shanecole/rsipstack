@@ -93,7 +93,7 @@ impl EndpointInner {
     ) -> rsip::Request {
         let headers = vec![
             Header::Via(via.into()),
-            Header::CallId(make_call_id(None)),
+            Header::CallId(make_call_id(self.option.callid_suffix.as_deref())),
             Header::From(from.into()),
             Header::To(to.into()),
             Header::CSeq(rsip::typed::CSeq { seq, method }.into()),

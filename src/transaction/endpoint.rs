@@ -23,11 +23,13 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, trace, warn};
 
+#[derive(Debug, Clone)]
 pub struct EndpointOption {
     pub t1: Duration,
     pub t4: Duration,
     pub t1x64: Duration,
     pub ignore_out_of_dialog_option: bool,
+    pub callid_suffix: Option<String>,
 }
 
 impl Default for EndpointOption {
@@ -37,6 +39,7 @@ impl Default for EndpointOption {
             t4: Duration::from_secs(4),
             t1x64: Duration::from_millis(64 * 500),
             ignore_out_of_dialog_option: true,
+            callid_suffix: None,
         }
     }
 }
@@ -111,6 +114,7 @@ pub struct EndpointBuilder {
     transport_layer: Option<TransportLayer>,
     cancel_token: Option<CancellationToken>,
     timer_interval: Option<Duration>,
+    option: Option<EndpointOption>,
 }
 
 /// SIP Endpoint
@@ -175,6 +179,7 @@ impl EndpointInner {
         cancel_token: CancellationToken,
         timer_interval: Option<Duration>,
         allows: Vec<rsip::Method>,
+        option: Option<EndpointOption>,
     ) -> Arc<Self> {
         Arc::new(EndpointInner {
             allows: Mutex::new(Some(allows)),
@@ -186,7 +191,7 @@ impl EndpointInner {
             timer_interval: timer_interval.unwrap_or(Duration::from_millis(20)),
             cancel_token,
             incoming_sender: Mutex::new(None),
-            option: EndpointOption::default(),
+            option: option.unwrap_or_default(),
         })
     }
 
@@ -434,9 +439,13 @@ impl EndpointBuilder {
             transport_layer: None,
             cancel_token: None,
             timer_interval: None,
+            option: None,
         }
     }
-
+    pub fn with_option(&mut self, option: EndpointOption) -> &mut Self {
+        self.option = Some(option);
+        self
+    }
     pub fn with_user_agent(&mut self, user_agent: &str) -> &mut Self {
         self.user_agent = user_agent.to_string();
         self
@@ -471,6 +480,7 @@ impl EndpointBuilder {
         let allows = self.allows.to_owned();
         let user_agent = self.user_agent.to_owned();
         let timer_interval = self.timer_interval.to_owned();
+        let option = self.option.to_owned();
 
         let core = EndpointInner::new(
             user_agent,
@@ -478,6 +488,7 @@ impl EndpointBuilder {
             cancel_token,
             timer_interval,
             allows,
+            option,
         );
 
         Endpoint { inner: core }

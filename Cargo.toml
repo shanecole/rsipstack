@@ -1,6 +1,6 @@
 [package]
 name = "rsipstack"
-version = "0.2.25"
+version = "0.2.26"
 edition = "2021"
 description = "SIP Stack Rust library for building SIP applications"
 license = "MIT"
@@ -33,7 +33,6 @@ console_error_panic_hook = { version = "0.1.7", optional = true }
 wasm-bindgen-futures = "0.4.45"
 tokio-util = { version = "0.7.15", features = ["full"] }
 tracing-subscriber = { version = "0.3.19", features = ["local-time"] }
-uuid = { version = "1.16.0", features = ["v4"] }
 rand = { version = "0.9.1" }
 get_if_addrs = "0.5.3"
 rsip-dns = { version = "0.1.4", features = ["trust-dns"] }
@@ -56,7 +55,6 @@ all-transports = ["rustls", "websocket"]
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 tokio = { version = "1.44.2", features = ["time", "sync", "macros", "io-util"] }
 getrandom = { version = "0.3.2" }
-uuid = { version = "1.16.0" }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tokio = { version = "1.44.2", features = ["full"] }
