@@ -11,8 +11,8 @@ use tokio::{select, sync::mpsc::unbounded_channel, time::sleep};
 
 #[tokio::test]
 async fn test_udp_keepalive() -> Result<()> {
-    let peer_bob = UdpConnection::create_connection("127.0.0.1:0".parse()?, None).await?;
-    let peer_alice = UdpConnection::create_connection("127.0.0.1:0".parse()?, None).await?;
+    let peer_bob = UdpConnection::create_connection("127.0.0.1:0".parse()?, None, None).await?;
+    let peer_alice = UdpConnection::create_connection("127.0.0.1:0".parse()?, None, None).await?;
     let (alice_tx, _) = unbounded_channel::<TransportEvent>();
 
     let bob_loop = async {
@@ -42,8 +42,8 @@ async fn test_udp_keepalive() -> Result<()> {
 
 #[tokio::test]
 async fn test_udp_recv_sip_message() -> Result<()> {
-    let peer_bob = UdpConnection::create_connection("127.0.0.1:0".parse()?, None).await?;
-    let peer_alice = UdpConnection::create_connection("127.0.0.1:0".parse()?, None).await?;
+    let peer_bob = UdpConnection::create_connection("127.0.0.1:0".parse()?, None, None).await?;
+    let peer_alice = UdpConnection::create_connection("127.0.0.1:0".parse()?, None, None).await?;
     let (alice_tx, _) = unbounded_channel();
     let (bob_tx, mut bob_rx) = unbounded_channel();
 

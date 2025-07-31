@@ -1,3 +1,5 @@
+use tokio_util::sync::CancellationToken;
+
 use super::{
     connection::{TransportReceiver, TransportSender},
     SipAddr, SipConnection,
@@ -14,6 +16,7 @@ struct ChannelInner {
 #[derive(Clone)]
 pub struct ChannelConnection {
     inner: Arc<ChannelInner>,
+    cancel_token: Option<CancellationToken>,
 }
 
 impl ChannelConnection {
@@ -21,6 +24,7 @@ impl ChannelConnection {
         incoming: TransportReceiver,
         outgoing: TransportSender,
         addr: SipAddr,
+        cancel_token: Option<CancellationToken>,
     ) -> Result<Self> {
         let t = ChannelConnection {
             inner: Arc::new(ChannelInner {
@@ -28,6 +32,7 @@ impl ChannelConnection {
                 outgoing,
                 addr,
             }),
+            cancel_token,
         };
         Ok(t)
     }
@@ -61,6 +66,9 @@ impl ChannelConnection {
     }
     pub async fn close(&self) -> Result<()> {
         Ok(())
+    }
+    pub fn cancel_token(&self) -> Option<CancellationToken> {
+        self.cancel_token.clone()
     }
 }
 

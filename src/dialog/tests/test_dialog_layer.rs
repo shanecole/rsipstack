@@ -50,8 +50,7 @@ fn create_invite_request(from_tag: &str, to_tag: &str, call_id: &str, branch: &s
 
 /// Test helper to create mock connection
 async fn create_mock_connection() -> crate::Result<crate::transport::SipConnection> {
-    // 使用随机端口创建UDP连接
-    let udp_conn = UdpConnection::create_connection("127.0.0.1:0".parse()?, None).await?;
+    let udp_conn = UdpConnection::create_connection("127.0.0.1:0".parse()?, None, None).await?;
     Ok(udp_conn.into())
 }
 

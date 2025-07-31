@@ -14,6 +14,7 @@ use rsip::{
 use std::net::{IpAddr, Ipv4Addr};
 use std::{fmt, net::SocketAddr};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
+use tokio_util::sync::CancellationToken;
 use tracing::debug;
 
 /// Transport Layer Events
@@ -164,6 +165,19 @@ impl SipConnection {
         match self {
             SipConnection::Udp(_) => false,
             _ => true,
+        }
+    }
+
+    pub fn cancel_token(&self) -> Option<CancellationToken> {
+        match self {
+            SipConnection::Channel(transport) => transport.cancel_token(),
+            SipConnection::Udp(transport) => transport.cancel_token(),
+            SipConnection::Tcp(transport) => transport.cancel_token(),
+            #[cfg(feature = "rustls")]
+            SipConnection::Tls(transport) => transport.cancel_token(),
+            #[cfg(feature = "websocket")]
+            SipConnection::WebSocket(transport) => transport.cancel_token(),
+            _ => None,
         }
     }
     pub fn get_addr(&self) -> &SipAddr {

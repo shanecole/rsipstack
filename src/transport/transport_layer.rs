@@ -213,15 +213,26 @@ impl TransportLayerInner {
             ) => {
                 let sip_connection = match target.r#type {
                     Some(rsip::transport::Transport::Tcp) => {
-                        let connection = TcpConnection::connect(target).await?;
+                        let connection =
+                            TcpConnection::connect(target, Some(self.cancel_token.child_token()))
+                                .await?;
                         SipConnection::Tcp(connection)
                     }
                     Some(rsip::transport::Transport::Tls) => {
-                        let connection = TlsConnection::connect(target, None).await?;
+                        let connection = TlsConnection::connect(
+                            target,
+                            None,
+                            Some(self.cancel_token.child_token()),
+                        )
+                        .await?;
                         SipConnection::Tls(connection)
                     }
                     Some(rsip::transport::Transport::Ws | rsip::transport::Transport::Wss) => {
-                        let connection = WebSocketConnection::connect(target).await?;
+                        let connection = WebSocketConnection::connect(
+                            target,
+                            Some(self.cancel_token.child_token()),
+                        )
+                        .await?;
                         SipConnection::WebSocket(connection)
                     }
                     _ => {
@@ -339,7 +350,12 @@ mod tests {
             },
         };
         assert!(tl.lookup(&first_uri, None).await.is_err());
-        let udp_peer = UdpConnection::create_connection("127.0.0.1:0".parse()?, None).await?;
+        let udp_peer = UdpConnection::create_connection(
+            "127.0.0.1:0".parse()?,
+            None,
+            Some(tl.inner.cancel_token.child_token()),
+        )
+        .await?;
         let udp_peer_addr = udp_peer.get_addr().to_owned();
         tl.add_transport(udp_peer.into());
 
@@ -347,7 +363,12 @@ mod tests {
         assert_eq!(target.get_addr(), &udp_peer_addr);
 
         // test outbound
-        let outbound_peer = UdpConnection::create_connection("127.0.0.1:0".parse()?, None).await?;
+        let outbound_peer = UdpConnection::create_connection(
+            "127.0.0.1:0".parse()?,
+            None,
+            Some(tl.inner.cancel_token.child_token()),
+        )
+        .await?;
         let outbound = outbound_peer.get_addr().to_owned();
         tl.add_transport(outbound_peer.into());
         tl.outbound = Some(outbound.clone());
@@ -423,7 +444,12 @@ mod tests {
         let tl = super::TransportLayer::new(tokio_util::sync::CancellationToken::new());
 
         // Add a UDP connection first
-        let udp_conn = UdpConnection::create_connection("127.0.0.1:0".parse()?, None).await?;
+        let udp_conn = UdpConnection::create_connection(
+            "127.0.0.1:0".parse()?,
+            None,
+            Some(tl.inner.cancel_token.child_token()),
+        )
+        .await?;
         let addr = udp_conn.get_addr().clone();
         tl.add_transport(udp_conn.into());
 

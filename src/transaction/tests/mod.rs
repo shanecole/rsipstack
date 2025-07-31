@@ -15,7 +15,7 @@ pub(super) async fn create_test_endpoint(addr: Option<&str>) -> Result<Endpoint>
     let tl = TransportLayer::new(token.child_token());
 
     if let Some(addr) = addr {
-        let peer = UdpConnection::create_connection(addr.parse()?, None).await?;
+        let peer = UdpConnection::create_connection(addr.parse()?, None, None).await?;
         tl.add_transport(peer.into());
     }
 

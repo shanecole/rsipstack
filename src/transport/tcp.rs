@@ -10,6 +10,7 @@ use crate::{
 use rsip::SipMessage;
 use std::{fmt, sync::Arc};
 use tokio::net::TcpStream;
+use tokio_util::sync::CancellationToken;
 use tracing::info;
 
 type TcpInner =
@@ -18,10 +19,14 @@ type TcpInner =
 #[derive(Clone)]
 pub struct TcpConnection {
     pub inner: Arc<TcpInner>,
+    pub cancel_token: Option<CancellationToken>,
 }
 
 impl TcpConnection {
-    pub async fn connect(remote: &SipAddr) -> Result<Self> {
+    pub async fn connect(
+        remote: &SipAddr,
+        cancel_token: Option<CancellationToken>,
+    ) -> Result<Self> {
         let socket_addr = remote.get_socketaddr()?;
         let stream = TcpStream::connect(socket_addr).await?;
 
@@ -39,6 +44,7 @@ impl TcpConnection {
                 read_half,
                 write_half,
             )),
+            cancel_token,
         };
 
         info!(
@@ -50,7 +56,11 @@ impl TcpConnection {
         Ok(connection)
     }
 
-    pub fn from_stream(stream: TcpStream, local_addr: SipAddr) -> Result<Self> {
+    pub fn from_stream(
+        stream: TcpStream,
+        local_addr: SipAddr,
+        cancel_token: Option<CancellationToken>,
+    ) -> Result<Self> {
         let remote_addr = stream.peer_addr()?;
         let remote_sip_addr = SipAddr {
             r#type: Some(rsip::transport::Transport::Tcp),
@@ -66,6 +76,7 @@ impl TcpConnection {
                 read_half,
                 write_half,
             )),
+            cancel_token,
         };
 
         info!(
@@ -75,6 +86,10 @@ impl TcpConnection {
         );
 
         Ok(connection)
+    }
+
+    pub fn cancel_token(&self) -> Option<CancellationToken> {
+        self.cancel_token.clone()
     }
 }
 

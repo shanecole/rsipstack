@@ -162,7 +162,7 @@
 //! # async fn example() -> rsipstack::Result<()> {
 //! # let cancel_token = CancellationToken::new();
 //! let transport_layer = TransportLayer::new(cancel_token.child_token());
-//! let udp_conn = UdpConnection::create_connection("0.0.0.0:5060".parse()?, None).await?;
+//! let udp_conn = UdpConnection::create_connection("0.0.0.0:5060".parse()?, None, Some(cancel_token.child_token())).await?;
 //! transport_layer.add_transport(udp_conn.into());
 //!
 //! let endpoint = EndpointBuilder::new()

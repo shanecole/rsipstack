@@ -17,7 +17,7 @@ async fn test_client_transaction() -> Result<()> {
         .to_owned();
     info!("server addr: {}", server_addr);
 
-    let peer_server = UdpConnection::create_connection("127.0.0.1:0".parse()?, None).await?;
+    let peer_server = UdpConnection::create_connection("127.0.0.1:0".parse()?, None, None).await?;
     let peer_server_loop = async {
         let (sender, mut recevier) = unbounded_channel();
         select! {

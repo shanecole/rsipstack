@@ -128,6 +128,7 @@ async fn main() -> Result<()> {
     let connection = UdpConnection::create_connection(
         format!("{}:{}", addr, args.port).parse()?,
         external.clone(),
+        None,
     )
     .await?;
     transport_layer.add_transport(connection.into());
@@ -630,12 +631,13 @@ async fn handle_websocket(client_addr: ClientAddr, socket: WebSocket, _state: Ap
         r#type: Some(transport_type),
         addr: client_addr.0.into(),
     };
-
+    let ws_token = CancellationToken::new();
     // Create the ChannelConnection
     let connection = match ChannelConnection::create_connection(
         from_ws_rx,
         to_ws_tx,
         local_addr.clone(),
+        Some(ws_token),
     )
     .await
     {
@@ -784,7 +786,7 @@ mod tests {
         let token = CancellationToken::new();
         let transport_layer = TransportLayer::new(token.clone());
 
-        let udp_conn = UdpConnection::create_connection("127.0.0.1:0".parse().unwrap(), None)
+        let udp_conn = UdpConnection::create_connection("127.0.0.1:0".parse().unwrap(), None, None)
             .await
             .unwrap();
         transport_layer.add_transport(udp_conn.into());
@@ -906,7 +908,7 @@ mod tests {
         let transport_layer = TransportLayer::new(token.clone());
 
         // Test that we can add UDP transport
-        let udp_conn = UdpConnection::create_connection("127.0.0.1:0".parse().unwrap(), None)
+        let udp_conn = UdpConnection::create_connection("127.0.0.1:0".parse().unwrap(), None, None)
             .await
             .unwrap();
         transport_layer.add_transport(udp_conn.into());
@@ -945,6 +947,7 @@ mod tests {
             to_transport_rx,
             from_transport_tx.clone(),
             local_addr.clone(),
+            None,
         )
         .await
         .expect("Should create channel connection");

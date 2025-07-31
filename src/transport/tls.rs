@@ -13,6 +13,7 @@ use tokio_rustls::{
     rustls::{pki_types, ClientConfig, RootCertStore, ServerConfig},
     TlsAcceptor, TlsConnector,
 };
+use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
 // TLS configuration
@@ -108,11 +109,11 @@ impl TlsListenerConnection {
                         r#type: Some(rsip::transport::Transport::Tls),
                         addr: remote_addr.into(),
                     };
-
                     // Create TLS connection
                     let tls_connection = match TlsConnection::from_server_stream(
                         tls_stream,
                         remote_sip_addr.clone(),
+                        Some(transport_layer_inner_ref.cancel_token.child_token()),
                     )
                     .await
                     {
@@ -219,6 +220,7 @@ type TlsServerStream = tokio_rustls::server::TlsStream<TcpStream>;
 #[derive(Clone)]
 pub struct TlsConnection {
     inner: TlsConnectionInner,
+    pub cancel_token: Option<CancellationToken>,
 }
 
 #[derive(Clone)]
@@ -246,6 +248,7 @@ impl TlsConnection {
     pub async fn connect(
         remote_addr: &SipAddr,
         custom_verifier: Option<Arc<dyn ServerCertVerifier>>,
+        cancel_token: Option<CancellationToken>,
     ) -> Result<Self> {
         let root_store = RootCertStore::empty();
 
@@ -297,6 +300,7 @@ impl TlsConnection {
                 read_half,
                 write_half,
             ))),
+            cancel_token,
         };
 
         info!(
@@ -309,7 +313,11 @@ impl TlsConnection {
     }
 
     // Create TLS connection from existing client TLS stream
-    pub async fn from_client_stream(stream: TlsClientStream, remote_addr: SipAddr) -> Result<Self> {
+    pub async fn from_client_stream(
+        stream: TlsClientStream,
+        remote_addr: SipAddr,
+        cancel_token: Option<CancellationToken>,
+    ) -> Result<Self> {
         let local_addr = SipAddr {
             r#type: Some(rsip::transport::Transport::Tls),
             addr: stream.get_ref().0.local_addr()?.into(),
@@ -326,6 +334,7 @@ impl TlsConnection {
                 read_half,
                 write_half,
             ))),
+            cancel_token,
         };
 
         info!(
@@ -338,7 +347,11 @@ impl TlsConnection {
     }
 
     // Create TLS connection from existing server TLS stream
-    pub async fn from_server_stream(stream: TlsServerStream, remote_addr: SipAddr) -> Result<Self> {
+    pub async fn from_server_stream(
+        stream: TlsServerStream,
+        remote_addr: SipAddr,
+        cancel_token: Option<CancellationToken>,
+    ) -> Result<Self> {
         let local_addr = SipAddr {
             r#type: Some(rsip::transport::Transport::Tls),
             addr: stream.get_ref().0.local_addr()?.into(),
@@ -355,6 +368,7 @@ impl TlsConnection {
                 read_half,
                 write_half,
             ))),
+            cancel_token,
         };
 
         info!(
@@ -364,6 +378,10 @@ impl TlsConnection {
         );
 
         Ok(connection)
+    }
+
+    pub fn cancel_token(&self) -> Option<CancellationToken> {
+        self.cancel_token.clone()
     }
 }
 

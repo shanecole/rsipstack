@@ -358,7 +358,8 @@ async fn main() -> Result<()> {
 
     // Setup UDP connection
     let addr = format!("0.0.0.0:{}", args.port);
-    let connection = UdpConnection::create_connection(addr.parse()?, None).await?;
+    let connection =
+        UdpConnection::create_connection(addr.parse()?, None, Some(token.child_token())).await?;
     transport_layer.add_transport(connection.into());
 
     let endpoint = EndpointBuilder::new()

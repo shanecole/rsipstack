@@ -8,6 +8,7 @@ use crate::{
 };
 use std::{net::SocketAddr, sync::Arc};
 use tokio::net::UdpSocket;
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info};
 pub struct UdpInner {
     pub conn: UdpSocket,
@@ -17,23 +18,30 @@ pub struct UdpInner {
 #[derive(Clone)]
 pub struct UdpConnection {
     pub external: Option<SipAddr>,
+    cancel_token: Option<CancellationToken>,
     inner: Arc<UdpInner>,
 }
 
 impl UdpConnection {
-    pub async fn attach(inner: UdpInner, external: Option<SocketAddr>) -> Self {
+    pub async fn attach(
+        inner: UdpInner,
+        external: Option<SocketAddr>,
+        cancel_token: Option<CancellationToken>,
+    ) -> Self {
         UdpConnection {
             external: external.map(|addr| SipAddr {
                 r#type: Some(rsip::transport::Transport::Udp),
                 addr: SipConnection::resolve_bind_address(addr).into(),
             }),
             inner: Arc::new(inner),
+            cancel_token,
         }
     }
 
     pub async fn create_connection(
         local: SocketAddr,
         external: Option<SocketAddr>,
+        cancel_token: Option<CancellationToken>,
     ) -> Result<Self> {
         let conn = UdpSocket::bind(local).await?;
 
@@ -48,6 +56,7 @@ impl UdpConnection {
                 addr: addr.into(),
             }),
             inner: Arc::new(UdpInner { addr, conn }),
+            cancel_token,
         };
         info!("created UDP connection: {} external: {:?}", t, external);
         Ok(t)
@@ -187,6 +196,9 @@ impl UdpConnection {
         } else {
             &self.inner.addr
         }
+    }
+    pub fn cancel_token(&self) -> Option<CancellationToken> {
+        self.cancel_token.clone()
     }
 }
 

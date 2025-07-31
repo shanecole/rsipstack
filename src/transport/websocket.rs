@@ -21,6 +21,7 @@ use tokio_tungstenite::{
     },
     MaybeTlsStream, WebSocketStream,
 };
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
 // Define a type alias for the WebSocket sink to make the code more readable
@@ -134,6 +135,7 @@ impl WebSocketListenerConnection {
                             ws_sink: Mutex::new(ws_sink),
                             ws_read: Mutex::new(Some(ws_read)),
                         }),
+                        cancel_token: Some(transport_layer_inner_ref.cancel_token.child_token()),
                     };
                     let sip_connection = SipConnection::WebSocket(connection.clone());
                     let connection_addr = connection.get_addr().clone();
@@ -180,10 +182,14 @@ pub struct WebSocketInner {
 #[derive(Clone)]
 pub struct WebSocketConnection {
     pub inner: Arc<WebSocketInner>,
+    pub cancel_token: Option<CancellationToken>,
 }
 
 impl WebSocketConnection {
-    pub async fn connect(remote: &SipAddr) -> Result<Self> {
+    pub async fn connect(
+        remote: &SipAddr,
+        cancel_token: Option<CancellationToken>,
+    ) -> Result<Self> {
         let scheme = match remote.r#type {
             Some(rsip::transport::Transport::Wss) => "wss",
             _ => "ws",
@@ -211,6 +217,7 @@ impl WebSocketConnection {
                 ws_sink: Mutex::new(ws_sink),
                 ws_read: Mutex::new(Some(ws_stream)),
             }),
+            cancel_token,
         };
 
         info!(
@@ -220,6 +227,9 @@ impl WebSocketConnection {
         );
 
         Ok(connection)
+    }
+    pub fn cancel_token(&self) -> Option<CancellationToken> {
+        self.cancel_token.clone()
     }
 }
 

@@ -174,6 +174,7 @@ async fn main() -> rsipstack::Result<()> {
     let mut connection = UdpConnection::create_connection(
         format!("{}:{}", addr, args.port).parse()?,
         external.clone(),
+        Some(token.child_token()),
     )
     .await?;
 

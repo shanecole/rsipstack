@@ -57,6 +57,7 @@ async fn test_endpoint_recvrequests() {
         let test_conn = crate::transport::udp::UdpConnection::create_connection(
             "127.0.0.1:0".parse().unwrap(),
             None,
+            None,
         )
         .await
         .expect("create_connection");

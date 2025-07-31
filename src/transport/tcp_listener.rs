@@ -49,7 +49,11 @@ impl TcpListenerConnection {
                     r#type: Some(rsip::transport::Transport::Tcp),
                     addr: remote_addr.into(),
                 };
-                let tcp_connection = match TcpConnection::from_stream(stream, local_addr.clone()) {
+                let tcp_connection = match TcpConnection::from_stream(
+                    stream,
+                    local_addr.clone(),
+                    Some(transport_layer_inner.cancel_token.child_token()),
+                ) {
                     Ok(tcp_connection) => tcp_connection,
                     Err(e) => {
                         error!("Failed to create TCP connection: {:?}", e);

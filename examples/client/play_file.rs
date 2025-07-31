@@ -21,7 +21,8 @@ pub async fn build_rtp_conn(
     for p in 0..100 {
         let port = opt.rtp_start_port + p * 2;
         if let Ok(c) =
-            UdpConnection::create_connection(format!("{:?}:{}", addr, port).parse()?, None).await
+            UdpConnection::create_connection(format!("{:?}:{}", addr, port).parse()?, None, None)
+                .await
         {
             conn = Some(c);
             break;

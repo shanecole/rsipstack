@@ -14,7 +14,7 @@ async fn test_server_transaction() {
     let token = CancellationToken::new();
 
     let mock_conn =
-        UdpConnection::create_connection("127.0.0.1:0".parse().expect("parse addr"), None)
+        UdpConnection::create_connection("127.0.0.1:0".parse().expect("parse addr"), None, None)
             .await
             .expect("create_connection");
 
@@ -30,7 +30,7 @@ async fn test_server_transaction() {
         .build();
 
     let client_conn =
-        UdpConnection::create_connection("127.0.0.1:0".parse().expect("parse addr"), None)
+        UdpConnection::create_connection("127.0.0.1:0".parse().expect("parse addr"), None, None)
             .await
             .expect("create client connection");
 
