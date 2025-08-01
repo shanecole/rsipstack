@@ -14,6 +14,7 @@ use crate::{stun, MediaSessionOption};
 pub async fn build_rtp_conn(
     opt: &MediaSessionOption,
     ssrc: u32,
+    payload_type: u8,
 ) -> Result<(UdpConnection, String)> {
     let addr = stun::get_first_non_loopback_interface()?;
     let mut conn = None;
@@ -47,8 +48,12 @@ pub async fn build_rtp_conn(
             }
         }
     }
-    let codec = 0;
-    let codec_name = "PCMU";
+    let codec = payload_type;
+    let codec_name = match codec {
+        0 => "PCMU",
+        8 => "PCMA",
+        _ => "Unknown",
+    };
     let socketaddr: SocketAddr = conn.get_addr().addr.to_owned().try_into()?;
     let sdp = format!(
         "v=0\r\n\
@@ -103,6 +108,7 @@ pub async fn play_example_file(
     token: CancellationToken,
     ssrc: u32,
     peer_addr: String,
+    payload_type: u8,
 ) -> Result<()> {
     select! {
         _ = token.cancelled() => {
@@ -117,12 +123,21 @@ pub async fn play_example_file(
             let sample_size = 160;
             let mut seq = 1;
             let mut ticker = tokio::time::interval(Duration::from_millis(20));
-
-            let example_data = tokio::fs::read("./assets/example.pcmu").await.expect("read example.pcmu");
+            let ext = match payload_type {
+                8 => "pcma",
+                0 => "pcmu",
+                _ => {
+                    info!("Unsupported codec type: {}", payload_type);
+                    return;
+                }
+            };
+            let file_name = format!("./assets/example.{ext}");
+            info!("Playing example file: {} payload_type:{} sample_size:{}", file_name, payload_type, sample_size);
+            let example_data = tokio::fs::read(file_name).await.expect("read example file");
 
             for chunk in example_data.chunks(sample_size) {
                 let result = match RtpPacketBuilder::new()
-                .payload_type(0)
+                .payload_type(payload_type)
                 .ssrc(ssrc)
                 .sequence(seq.into())
                 .timestamp(ts)

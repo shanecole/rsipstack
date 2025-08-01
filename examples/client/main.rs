@@ -400,7 +400,8 @@ async fn make_call(
     state_sender: DialogStateSender,
 ) -> Result<()> {
     let ssrc = rand::random::<u32>();
-    let (rtp_conn, offer) = build_rtp_conn(&media_option, ssrc).await?;
+    let codec_type = 0;
+    let (rtp_conn, offer) = build_rtp_conn(&media_option, ssrc, codec_type).await?;
     let mut invite_option = invite_option;
     invite_option.offer = Some(offer.into());
 
@@ -441,8 +442,13 @@ async fn make_call(
         .ok_or(Error::Error("No audio port in answer SDP".to_string()))?;
 
     let peer_addr = format!("{}:{}", peer_addr, peer_port);
-    info!("Peer address: {}", peer_addr);
-    play_example_file(rtp_conn, rtp_token, ssrc, peer_addr)
+    let payload_type = answer
+        .media_descriptions
+        .first()
+        .and_then(|m| m.media.fmt.parse::<u8>().ok())
+        .unwrap_or(0);
+    info!("Peer address: {} payload_type:{}", peer_addr, payload_type);
+    play_example_file(rtp_conn, rtp_token, ssrc, peer_addr, payload_type)
         .await
         .expect("play example file");
     dialog.bye().await.expect("send BYE");
@@ -451,10 +457,6 @@ async fn make_call(
 
 async fn play_example_pcmu(opt: &MediaSessionOption, dialog: ServerInviteDialog) -> Result<()> {
     let ssrc = rand::random::<u32>();
-    let (conn, answer) = build_rtp_conn(opt, ssrc).await?;
-
-    let headers = vec![rsip::typed::ContentType(MediaType::Sdp(vec![])).into()];
-    dialog.accept(Some(headers), Some(answer.into()))?;
 
     let body = String::from_utf8_lossy(dialog.initial_request().body()).to_string();
     let offer = match sdp_rs::SessionDescription::try_from(body.as_str()) {
@@ -480,10 +482,26 @@ async fn play_example_pcmu(opt: &MediaSessionOption, dialog: ServerInviteDialog)
         .first()
         .map(|m| m.media.port)
         .ok_or(Error::Error("No audio port in offer SDP".to_string()))?;
+    let payload_type = offer
+        .media_descriptions
+        .first()
+        .and_then(|m| m.media.fmt.parse::<u8>().ok())
+        .unwrap_or(0);
+
+    let (conn, answer) = build_rtp_conn(opt, ssrc, payload_type).await?;
+
+    let headers = vec![rsip::typed::ContentType(MediaType::Sdp(vec![])).into()];
+    dialog.accept(Some(headers), Some(answer.into()))?;
+
+    info!(
+        "Accepted call with answer SDP peer address: {} port: {} payload_type: {}",
+        peer_addr, peer_port, payload_type
+    );
 
     let peer_addr = format!("{}:{}", peer_addr, peer_port);
     let rtp_token = dialog.cancel_token().child_token();
     let echo = opt.echo;
+
     tokio::spawn(async move {
         let input_token = CancellationToken::new();
         select! {
@@ -494,7 +512,7 @@ async fn play_example_pcmu(opt: &MediaSessionOption, dialog: ServerInviteDialog)
                 if echo {
                     play_echo(conn, rtp_token).await.expect("play echo");
                 } else {
-                    play_example_file(conn, rtp_token, ssrc, peer_addr)
+                    play_example_file(conn, rtp_token, ssrc, peer_addr,payload_type)
                         .await
                         .expect("play example file");
                 }
