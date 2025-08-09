@@ -71,6 +71,9 @@ struct Args {
 
     #[arg(long)]
     call: Option<String>,
+
+    #[arg(long)]
+    reject: bool,
 }
 
 async fn handle_user_input(cancel_token: CancellationToken) -> Result<()> {
@@ -229,7 +232,7 @@ async fn main() -> rsipstack::Result<()> {
         r = process_registration(endpoint.inner.clone(), sip_server, credential.clone(), token.clone()) => {
             info!("register loop finished {:?}", r);
         }
-        r = process_incoming_request(dialog_layer.clone(), incoming, state_sender.clone(), contact.clone()) => {
+        r = process_incoming_request(dialog_layer.clone(), incoming, state_sender.clone(), contact.clone(), args.reject) => {
             info!("serve loop finished {:?}", r);
         }
         r = process_dialog(dialog_layer.clone(), state_receiver, opt.clone()) => {
@@ -295,6 +298,7 @@ async fn process_incoming_request(
     mut incoming: TransactionReceiver,
     state_sender: DialogStateSender,
     contact: rsip::Uri,
+    reject: bool,
 ) -> Result<()> {
     while let Some(mut tx) = incoming.recv().await {
         info!("Received transaction: {:?}", tx.key);
@@ -320,6 +324,11 @@ async fn process_incoming_request(
         // out dialog, new server dialog
         match tx.original.method {
             rsip::Method::Invite | rsip::Method::Ack => {
+                if reject && tx.original.method == rsip::Method::Invite {
+                    info!("Rejecting incoming call: {}", tx.original);
+                    tx.reply(rsip::StatusCode::BusyHere).await?;
+                    continue;
+                }
                 let mut dialog = match dialog_layer.get_or_create_server_invite(
                     &tx,
                     state_sender.clone(),

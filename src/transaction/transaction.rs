@@ -673,7 +673,7 @@ impl Transaction {
                     .take()
                     .map(|id| self.endpoint_inner.timers.cancel(id));
                 self.timer_b.replace(self.endpoint_inner.timers.timeout(
-                    self.endpoint_inner.option.t1x64,
+                    self.endpoint_inner.option.timerb,
                     TransactionTimer::TimerB(self.key.clone()),
                 ));
             }
@@ -683,7 +683,7 @@ impl Transaction {
                     .map(|id| self.endpoint_inner.timers.cancel(id));
                 // start Timer B
                 let timer_b = self.endpoint_inner.timers.timeout(
-                    self.endpoint_inner.option.t1x64,
+                    self.endpoint_inner.option.timerb,
                     TransactionTimer::TimerB(self.key.clone()),
                 );
                 self.timer_b.replace(timer_b);

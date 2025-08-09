@@ -596,15 +596,11 @@ impl fmt::Display for ClientAddr {
 async fn serve_index() -> impl IntoResponse {
     Html(include_str!("../assets/index.html"))
 }
-async fn serve_sip_js() -> impl IntoResponse {
-    Html(include_str!("../assets/sip-0.17.1.js"))
-}
 
 fn create_http_app(state: AppState) -> Router {
     Router::new()
         .route("/", get(serve_index))
         .route("/ws", get(websocket_handler))
-        .route("/sip-0.17.1.js", get(serve_sip_js))
         .with_state(state)
         .layer(ServiceBuilder::new().layer(CorsLayer::permissive()))
 }
