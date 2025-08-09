@@ -500,39 +500,42 @@ impl ClientInviteDialog {
                         None => {}
                     }
 
-                    let branch = match tx
-                        .original
-                        .via_header()?
-                        .params()?
-                        .iter()
-                        .find(|p| matches!(p, rsip::Param::Branch(_)))
-                    {
-                        Some(p) => p.clone(),
-                        None => {
-                            info!(id=%self.id(),"no branch found in via header");
-                            return Err(crate::Error::DialogError(
-                                "no branch found in via header".to_string(),
-                                self.id(),
-                            ));
+                    // only send ACK if response is final (2xx)
+                    if matches!(resp.status_code, StatusCode::OK | StatusCode::Accepted) {
+                        let branch = match tx
+                            .original
+                            .via_header()?
+                            .params()?
+                            .iter()
+                            .find(|p| matches!(p, rsip::Param::Branch(_)))
+                        {
+                            Some(p) => p.clone(),
+                            None => {
+                                info!(id=%self.id(),"no branch found in via header");
+                                return Err(crate::Error::DialogError(
+                                    "no branch found in via header".to_string(),
+                                    self.id(),
+                                ));
+                            }
+                        };
+
+                        let ack = self.inner.make_request(
+                            rsip::Method::Ack,
+                            resp.cseq_header()?.seq().ok(),
+                            None,
+                            Some(branch),
+                            None,
+                            None,
+                        )?;
+
+                        if let Ok(id) = DialogId::try_from(&ack) {
+                            dialog_id = id;
                         }
-                    };
-
-                    let ack = self.inner.make_request(
-                        rsip::Method::Ack,
-                        resp.cseq_header()?.seq().ok(),
-                        None,
-                        Some(branch),
-                        None,
-                        None,
-                    )?;
-
-                    if let Ok(id) = DialogId::try_from(&ack) {
-                        dialog_id = id;
-                    }
-                    match tx.send_ack(ack).await {
-                        Ok(_) => {}
-                        Err(e) => {
-                            warn!("send ack error: {}", e);
+                        match tx.send_ack(ack).await {
+                            Ok(_) => {}
+                            Err(e) => {
+                                warn!("send ack error: {}", e);
+                            }
                         }
                     }
 
