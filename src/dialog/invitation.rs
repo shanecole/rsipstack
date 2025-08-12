@@ -121,7 +121,7 @@ use tracing::{debug, info};
 /// # Ok(())
 /// # }
 /// ```
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct InviteOption {
     pub caller: rsip::Uri,
     pub callee: rsip::Uri,
