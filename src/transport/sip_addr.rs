@@ -59,7 +59,7 @@ use std::{fmt, hash::Hash, net::SocketAddr};
 /// * `SocketAddr` (for IP addresses only)
 /// * `rsip::Uri` (SIP URI format)
 /// * `rsip::HostWithPort` (host/port only)
-#[derive(Debug, Eq, PartialEq, Clone)]
+#[derive(Debug, Eq, PartialEq, Clone, Default)]
 pub struct SipAddr {
     pub r#type: Option<rsip::transport::Transport>,
     pub addr: HostWithPort,
