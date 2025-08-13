@@ -174,6 +174,7 @@ impl DialogLayer {
             state_sender,
             credential,
             contact,
+            tx.tu_sender.clone(),
         )?;
 
         let dialog = ServerInviteDialog {

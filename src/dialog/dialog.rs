@@ -178,7 +178,7 @@ pub struct DialogInner {
     pub route_set: Vec<Route>,
     pub(super) endpoint_inner: EndpointInnerRef,
     pub(super) state_sender: DialogStateSender,
-    pub(super) tu_sender: TuSenderRef,
+    pub(super) tu_sender: TransactionEventSender,
     pub(super) initial_request: Request,
 }
 
@@ -186,7 +186,6 @@ pub type DialogStateReceiver = UnboundedReceiver<DialogState>;
 pub type DialogStateSender = UnboundedSender<DialogState>;
 
 pub(super) type DialogInnerRef = Arc<DialogInner>;
-pub(super) type TuSenderRef = Mutex<Option<TransactionEventSender>>;
 
 impl DialogState {
     pub fn can_cancel(&self) -> bool {
@@ -212,6 +211,7 @@ impl DialogInner {
         state_sender: DialogStateSender,
         credential: Option<Credential>,
         local_contact: Option<rsip::Uri>,
+        tu_sender: TransactionEventSender,
     ) -> Result<Self> {
         let cseq = initial_request.cseq_header()?.seq()?;
 
@@ -257,7 +257,7 @@ impl DialogInner {
             route_set,
             endpoint_inner,
             state_sender,
-            tu_sender: Mutex::new(None),
+            tu_sender,
             state: Mutex::new(DialogState::Calling(id)),
             initial_request,
             local_contact,

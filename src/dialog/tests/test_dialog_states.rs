@@ -110,6 +110,7 @@ async fn test_dialog_state_transitions() -> crate::Result<()> {
 
     // Create INVITE request
     let invite_req = create_invite_request("alice-tag-456", "", "test-call-id-123");
+    let (tu_sender, _tu_receiver) = unbounded_channel();
 
     // Create dialog inner
     let dialog_inner = DialogInner::new(
@@ -120,6 +121,7 @@ async fn test_dialog_state_transitions() -> crate::Result<()> {
         state_sender,
         None,
         Some(rsip::Uri::try_from("sip:alice@alice.example.com:5060")?),
+        tu_sender,
     )?;
 
     // Test initial state
@@ -173,6 +175,7 @@ async fn test_server_dialog_state_transitions() -> crate::Result<()> {
 
     // Create INVITE request
     let invite_req = create_invite_request("alice-tag-456", "", "test-call-id-server-123");
+    let (tu_sender, _tu_receiver) = unbounded_channel();
 
     // Create server dialog inner
     let dialog_inner = DialogInner::new(
@@ -183,6 +186,7 @@ async fn test_server_dialog_state_transitions() -> crate::Result<()> {
         state_sender,
         None,
         Some(rsip::Uri::try_from("sip:bob@bob.example.com:5060")?),
+        tu_sender,
     )?;
 
     // Test initial state
@@ -229,6 +233,7 @@ async fn test_dialog_in_dialog_requests() -> crate::Result<()> {
     // Create initial INVITE request
     let invite_req =
         create_invite_request("alice-tag-456", "bob-tag-789", "test-call-id-in-dialog-123");
+    let (tu_sender, _tu_receiver) = unbounded_channel();
 
     // Create confirmed dialog
     let dialog_inner = DialogInner::new(
@@ -239,6 +244,7 @@ async fn test_dialog_in_dialog_requests() -> crate::Result<()> {
         state_sender,
         None,
         Some(rsip::Uri::try_from("sip:alice@alice.example.com:5060")?),
+        tu_sender,
     )?;
 
     // Set dialog to confirmed state
@@ -315,6 +321,8 @@ async fn test_dialog_termination_scenarios() -> crate::Result<()> {
     };
 
     let invite_req_1 = create_invite_request("alice-tag-456", "", "test-call-id-term-1");
+    let (tu_sender, _tu_receiver) = unbounded_channel();
+
     let dialog_inner_1 = DialogInner::new(
         TransactionRole::Client,
         dialog_id_1.clone(),
@@ -323,6 +331,7 @@ async fn test_dialog_termination_scenarios() -> crate::Result<()> {
         state_sender.clone(),
         None,
         Some(rsip::Uri::try_from("sip:alice@alice.example.com:5060")?),
+        tu_sender,
     )?;
 
     // Terminate with error
@@ -344,6 +353,8 @@ async fn test_dialog_termination_scenarios() -> crate::Result<()> {
     };
 
     let invite_req_2 = create_invite_request("alice-tag-456", "bob-tag-789", "test-call-id-term-2");
+    let (tu_sender, _tu_receiver) = unbounded_channel();
+
     let dialog_inner_2 = DialogInner::new(
         TransactionRole::Client,
         dialog_id_2.clone(),
@@ -352,6 +363,7 @@ async fn test_dialog_termination_scenarios() -> crate::Result<()> {
         state_sender.clone(),
         None,
         Some(rsip::Uri::try_from("sip:alice@alice.example.com:5060")?),
+        tu_sender,
     )?;
 
     // First confirm the dialog
@@ -381,6 +393,8 @@ async fn test_dialog_sequence_numbers() -> crate::Result<()> {
     };
 
     let invite_req = create_invite_request("alice-tag-456", "bob-tag-789", "test-call-id-seq-123");
+    let (tu_sender, _tu_receiver) = unbounded_channel();
+
     let dialog_inner = DialogInner::new(
         TransactionRole::Client,
         dialog_id.clone(),
@@ -389,6 +403,7 @@ async fn test_dialog_sequence_numbers() -> crate::Result<()> {
         state_sender,
         None,
         Some(rsip::Uri::try_from("sip:alice@alice.example.com:5060")?),
+        tu_sender,
     )?;
 
     // Test initial sequence number

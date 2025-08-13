@@ -148,33 +148,28 @@ impl ServerInviteDialog {
     /// # }
     /// ```
     pub fn accept(&self, headers: Option<Vec<Header>>, body: Option<Vec<u8>>) -> Result<()> {
-        if let Some(sender) = self.inner.tu_sender.lock().unwrap().as_ref() {
-            let resp = self.inner.make_response(
-                &self.inner.initial_request,
-                rsip::StatusCode::OK,
-                headers,
-                body,
-            );
-            let via = self.inner.initial_request.via_header()?;
-            let via_received = SipConnection::parse_target_from_via(via)?;
-            let contact = rsip::Uri {
-                host_with_port: via_received,
-                params: vec![rsip::Param::Transport(via.trasnport()?)],
-                ..Default::default()
-            };
-            debug!(id = %self.id(), "accepting dialog with contact: {}", contact);
-            self.inner.remote_contact.lock().unwrap().replace(contact);
-            sender.send(TransactionEvent::Respond(resp.clone()))?;
+        let resp = self.inner.make_response(
+            &self.inner.initial_request,
+            rsip::StatusCode::OK,
+            headers,
+            body,
+        );
+        let via = self.inner.initial_request.via_header()?;
+        let via_received = SipConnection::parse_target_from_via(via)?;
+        let contact = rsip::Uri {
+            host_with_port: via_received,
+            params: vec![rsip::Param::Transport(via.trasnport()?)],
+            ..Default::default()
+        };
+        debug!(id = %self.id(), "accepting dialog with contact: {}", contact);
+        self.inner.remote_contact.lock().unwrap().replace(contact);
+        self.inner
+            .tu_sender
+            .send(TransactionEvent::Respond(resp.clone()))?;
 
-            self.inner
-                .transition(DialogState::WaitAck(self.id(), resp))?;
-            Ok(())
-        } else {
-            Err(crate::Error::DialogError(
-                "transaction is already terminated".to_string(),
-                self.id(),
-            ))
-        }
+        self.inner
+            .transition(DialogState::WaitAck(self.id(), resp))?;
+        Ok(())
     }
 
     /// Accept the incoming INVITE request with NAT-aware Contact header
@@ -272,24 +267,20 @@ impl ServerInviteDialog {
             return Ok(());
         }
         info!(id=%self.id(), "rejecting dialog");
-        if let Some(sender) = self.inner.tu_sender.lock().unwrap().as_ref() {
-            let resp = self.inner.make_response(
-                &self.inner.initial_request,
-                rsip::StatusCode::Decline,
-                None,
-                None,
-            );
-            sender.send(TransactionEvent::Respond(resp)).ok();
-            self.inner.transition(DialogState::Terminated(
-                self.id(),
-                TerminatedReason::UasDecline,
-            ))
-        } else {
-            Err(crate::Error::DialogError(
-                "transaction is already terminated".to_string(),
-                self.id(),
-            ))
-        }
+        let resp = self.inner.make_response(
+            &self.inner.initial_request,
+            rsip::StatusCode::Decline,
+            None,
+            None,
+        );
+        self.inner
+            .tu_sender
+            .send(TransactionEvent::Respond(resp))
+            .ok();
+        self.inner.transition(DialogState::Terminated(
+            self.id(),
+            TerminatedReason::UasDecline,
+        ))
     }
 
     /// Send a BYE request to terminate the dialog
@@ -551,15 +542,10 @@ impl ServerInviteDialog {
         } else {
             match tx.original.method {
                 rsip::Method::Ack => {
-                    if let Some(sender) = self.inner.tu_sender.lock().unwrap().as_ref() {
-                        sender
-                            .send(TransactionEvent::Received(
-                                tx.original.clone().into(),
-                                tx.connection.clone(),
-                            ))
-                            .ok();
-                    }
-                    return Ok(());
+                    self.inner.tu_sender.send(TransactionEvent::Received(
+                        tx.original.clone().into(),
+                        tx.connection.clone(),
+                    ))?;
                 }
                 _ => {}
             }
@@ -600,16 +586,14 @@ impl ServerInviteDialog {
     }
 
     async fn handle_invite(&mut self, tx: &mut Transaction) -> Result<()> {
-        self.inner
-            .tu_sender
-            .lock()
-            .unwrap()
-            .replace(tx.tu_sender.clone());
-
         let handle_loop = async {
             if !self.inner.is_confirmed() {
-                self.inner.transition(DialogState::Calling(self.id()))?;
-                tx.send_trying().await?;
+                match self.inner.transition(DialogState::Calling(self.id())) {
+                    Ok(_) => {
+                        tx.send_trying().await.ok();
+                    }
+                    Err(_) => {}
+                }
             }
 
             while let Some(msg) = tx.receive().await {
@@ -644,11 +628,9 @@ impl ServerInviteDialog {
         match handle_loop.await {
             Ok(_) => {
                 trace!(id = %self.id(),"process done");
-                self.inner.tu_sender.lock().unwrap().take();
                 Ok(())
             }
             Err(e) => {
-                self.inner.tu_sender.lock().unwrap().take();
                 warn!(id = %self.id(),"handle_invite error: {:?}", e);
                 Err(e)
             }

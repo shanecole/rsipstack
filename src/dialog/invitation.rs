@@ -370,6 +370,10 @@ impl DialogLayer {
         request.headers.unique_push(rsip::Header::ContentLength(
             (request.body.len() as u32).into(),
         ));
+        let key = TransactionKey::from_request(&request, TransactionRole::Client)?;
+        let mut tx = Transaction::new_client(key, request.clone(), self.endpoint.clone(), None);
+        tx.destination = opt.destination;
+
         let id = DialogId::try_from(&request)?;
         let dlg_inner = DialogInner::new(
             TransactionRole::Client,
@@ -379,12 +383,9 @@ impl DialogLayer {
             state_sender,
             opt.credential,
             Some(opt.contact),
+            tx.tu_sender.clone(),
         )?;
 
-        let key =
-            TransactionKey::from_request(&dlg_inner.initial_request, TransactionRole::Client)?;
-        let mut tx = Transaction::new_client(key, request.clone(), self.endpoint.clone(), None);
-        tx.destination = opt.destination;
         let dialog = ClientInviteDialog {
             inner: Arc::new(dlg_inner),
         };

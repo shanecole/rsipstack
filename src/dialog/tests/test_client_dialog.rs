@@ -55,7 +55,7 @@ async fn test_client_dialog_creation() -> crate::Result<()> {
     };
 
     let invite_req = create_invite_request("alice-tag", "", "test-call-id");
-
+    let (tu_sender, _tu_receiver) = unbounded_channel();
     let dialog_inner = DialogInner::new(
         TransactionRole::Client,
         dialog_id.clone(),
@@ -64,6 +64,7 @@ async fn test_client_dialog_creation() -> crate::Result<()> {
         state_sender,
         None,
         Some(Uri::try_from("sip:alice@alice.example.com:5060").unwrap()),
+        tu_sender,
     )?;
 
     let client_dialog = ClientInviteDialog {
@@ -89,6 +90,7 @@ async fn test_client_dialog_sequence_handling() -> crate::Result<()> {
     };
 
     let invite_req = create_invite_request("alice-tag", "bob-tag", "test-call-seq");
+    let (tu_sender, _tu_receiver) = unbounded_channel();
 
     let dialog_inner = DialogInner::new(
         TransactionRole::Client,
@@ -98,6 +100,7 @@ async fn test_client_dialog_sequence_handling() -> crate::Result<()> {
         state_sender,
         None,
         Some(Uri::try_from("sip:alice@alice.example.com:5060").unwrap()),
+        tu_sender,
     )?;
 
     let client_dialog = ClientInviteDialog {
@@ -127,6 +130,7 @@ async fn test_client_dialog_state_transitions() -> crate::Result<()> {
     };
 
     let invite_req = create_invite_request("alice-tag", "", "test-call-flow");
+    let (tu_sender, _tu_receiver) = unbounded_channel();
 
     let dialog_inner = DialogInner::new(
         TransactionRole::Client,
@@ -136,6 +140,7 @@ async fn test_client_dialog_state_transitions() -> crate::Result<()> {
         state_sender,
         None,
         Some(Uri::try_from("sip:alice@alice.example.com:5060").unwrap()),
+        tu_sender,
     )?;
 
     let client_dialog = ClientInviteDialog {
@@ -201,6 +206,8 @@ async fn test_client_dialog_termination_scenarios() -> crate::Result<()> {
     };
 
     let invite_req_1 = create_invite_request("alice-tag", "", "test-call-term-early");
+    let (tu_sender, _tu_receiver) = unbounded_channel();
+
     let dialog_inner_1 = DialogInner::new(
         TransactionRole::Client,
         dialog_id_1.clone(),
@@ -209,6 +216,7 @@ async fn test_client_dialog_termination_scenarios() -> crate::Result<()> {
         state_sender.clone(),
         None,
         Some(Uri::try_from("sip:alice@alice.example.com:5060").unwrap()),
+        tu_sender,
     )?;
 
     let client_dialog_1 = ClientInviteDialog {
@@ -235,6 +243,8 @@ async fn test_client_dialog_termination_scenarios() -> crate::Result<()> {
     };
 
     let invite_req_2 = create_invite_request("alice-tag", "bob-tag", "test-call-term-normal");
+    let (tu_sender, _tu_receiver) = unbounded_channel();
+
     let dialog_inner_2 = DialogInner::new(
         TransactionRole::Client,
         dialog_id_2.clone(),
@@ -243,6 +253,7 @@ async fn test_client_dialog_termination_scenarios() -> crate::Result<()> {
         state_sender,
         None,
         Some(Uri::try_from("sip:alice@alice.example.com:5060").unwrap()),
+        tu_sender,
     )?;
 
     let client_dialog_2 = ClientInviteDialog {
