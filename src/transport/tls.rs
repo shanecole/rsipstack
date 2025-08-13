@@ -14,7 +14,7 @@ use tokio_rustls::{
     TlsAcceptor, TlsConnector,
 };
 use tokio_util::sync::CancellationToken;
-use tracing::{error, info, warn};
+use tracing::{info, warn};
 
 // TLS configuration
 #[derive(Clone, Debug)]
@@ -99,7 +99,7 @@ impl TlsListenerConnection {
                     let tls_stream = match acceptor_clone.accept(stream).await {
                         Ok(stream) => stream,
                         Err(e) => {
-                            error!("TLS handshake failed: {}", e);
+                            warn!("TLS handshake failed: {}", e);
                             return;
                         }
                     };
@@ -119,7 +119,7 @@ impl TlsListenerConnection {
                     {
                         Ok(conn) => conn,
                         Err(e) => {
-                            error!("Failed to create TLS connection: {:?}", e);
+                            warn!("Failed to create TLS connection: {:?}", e);
                             return;
                         }
                     };

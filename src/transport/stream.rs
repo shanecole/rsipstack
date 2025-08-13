@@ -12,7 +12,7 @@ use tokio::{
     sync::Mutex,
 };
 use tokio_util::codec::{Decoder, Encoder};
-use tracing::{debug, error, info};
+use tracing::{debug, info, warn};
 
 pub(super) const MAX_SIP_MESSAGE_SIZE: usize = 65535;
 
@@ -141,7 +141,7 @@ where
         let mut read_half = match self.read_half.lock().await.take() {
             Some(read_half) => read_half,
             None => {
-                error!("Connection closed");
+                warn!("Connection closed");
                 return Ok(());
             }
         };
@@ -179,7 +179,7 @@ where
                                         connection.clone(),
                                         remote_addr.clone(),
                                     )) {
-                                        error!("Error sending incoming message: {:?}", e);
+                                        warn!("Error sending incoming message: {:?}", e);
                                         return Err(e.into());
                                     }
                                 }
@@ -193,14 +193,14 @@ where
                                 break;
                             }
                             Err(e) => {
-                                error!("Error decoding message from {}: {:?}", remote_addr, e);
+                                warn!("Error decoding message from {}: {:?}", remote_addr, e);
                                 // Continue processing despite decode errors
                             }
                         }
                     }
                 }
                 Err(e) => {
-                    error!("Error reading from stream: {}", e);
+                    warn!("Error reading from stream: {}", e);
                     break;
                 }
             }

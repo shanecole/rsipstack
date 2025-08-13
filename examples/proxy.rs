@@ -43,7 +43,7 @@ use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 use tower::ServiceBuilder;
 use tower_http::cors::CorsLayer;
-use tracing::{error, info, warn};
+use tracing::{info, warn};
 
 /// A SIP proxy server that supports UDP, TCP and WebSocket clients
 #[derive(Parser, Debug)]
@@ -207,7 +207,7 @@ async fn main() -> Result<()> {
         }
         #[cfg(not(feature = "websocket"))]
         {
-            error!("WebSocket feature not enabled");
+            warn!("WebSocket feature not enabled");
         }
     }
 
@@ -538,7 +538,7 @@ async fn handle_bye(state: AppState, mut tx: Transaction) -> Result<()> {
                 tx.respond(resp).await?;
             }
             _ => {
-                error!("UAC/BYE Received request: {}", msg.to_string());
+                warn!("UAC/BYE Received request: {}", msg.to_string());
             }
         }
     }
@@ -639,7 +639,7 @@ async fn handle_websocket(client_addr: ClientAddr, socket: WebSocket, _state: Ap
     {
         Ok(conn) => conn,
         Err(e) => {
-            error!("Failed to create channel connection: {:?}", e);
+            warn!("Failed to create channel connection: {:?}", e);
             return;
         }
     };
@@ -671,7 +671,7 @@ async fn handle_websocket(client_addr: ClientAddr, socket: WebSocket, _state: Ap
                             ) {
                                 Ok(msg) => msg,
                                 Err(e) => {
-                                    error!("Error updating SIP via: {:?}", e);
+                                    warn!("Error updating SIP via: {:?}", e);
                                     continue;
                                 }
                             };
@@ -680,7 +680,7 @@ async fn handle_websocket(client_addr: ClientAddr, socket: WebSocket, _state: Ap
                                 sip_connection.clone(),
                                 local_addr.clone(),
                             )) {
-                                error!("Error forwarding message to transport: {:?}", e);
+                                warn!("Error forwarding message to transport: {:?}", e);
                                 break;
                             }
                         }
@@ -699,7 +699,7 @@ async fn handle_websocket(client_addr: ClientAddr, socket: WebSocket, _state: Ap
                                 sip_connection.clone(),
                                 local_addr.clone(),
                             )) {
-                                error!("Error forwarding binary message to transport: {:?}", e);
+                                warn!("Error forwarding binary message to transport: {:?}", e);
                                 break;
                             }
                         }
@@ -714,7 +714,7 @@ async fn handle_websocket(client_addr: ClientAddr, socket: WebSocket, _state: Ap
                     Some(Ok(Message::Ping(data))) => {
                         let mut sink = ws_sink.lock().await;
                         if let Err(e) = sink.send(Message::Pong(data)).await {
-                            error!("Error sending pong response: {}", e);
+                            warn!("Error sending pong response: {}", e);
                             break;
                         }
                     }
@@ -722,7 +722,7 @@ async fn handle_websocket(client_addr: ClientAddr, socket: WebSocket, _state: Ap
                         // Just acknowledge the pong
                     }
                     Some(Err(e)) => {
-                        error!("WebSocket error: {}", e);
+                        warn!("WebSocket error: {}", e);
                         break;
                     }
                     None => {
@@ -743,7 +743,7 @@ async fn handle_websocket(client_addr: ClientAddr, socket: WebSocket, _state: Ap
                         );
                         let mut sink = ws_sink.lock().await;
                         if let Err(e) = sink.send(Message::Text(message_text.into())).await {
-                            error!("Error sending message to WebSocket: {}", e);
+                            warn!("Error sending message to WebSocket: {}", e);
                             break;
                         }
                     }

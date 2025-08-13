@@ -9,7 +9,7 @@ use crate::{
 use std::{net::SocketAddr, sync::Arc};
 use tokio::net::UdpSocket;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, info};
+use tracing::{debug, info, warn};
 pub struct UdpInner {
     pub conn: UdpSocket,
     pub addr: SipAddr,
@@ -68,7 +68,7 @@ impl UdpConnection {
             let (len, addr) = match self.inner.conn.recv_from(&mut buf).await {
                 Ok((len, addr)) => (len, addr),
                 Err(e) => {
-                    error!("error receiving UDP packet: {}", e);
+                    warn!("error receiving UDP packet: {}", e);
                     continue;
                 }
             };

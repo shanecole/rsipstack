@@ -22,7 +22,7 @@ use tokio_tungstenite::{
     MaybeTlsStream, WebSocketStream,
 };
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
 // Define a type alias for the WebSocket sink to make the code more readable
 type WsSink = futures_util::stream::SplitSink<
@@ -123,7 +123,7 @@ impl WebSocketListenerConnection {
                         {
                             Ok(ws) => ws,
                             Err(e) => {
-                                error!("Error upgrading to WebSocket: {}", e);
+                                warn!("Error upgrading to WebSocket: {}", e);
                                 return;
                             }
                         };
@@ -260,7 +260,7 @@ impl StreamConnection for WebSocketConnection {
         let mut ws_read = match self.inner.ws_read.lock().await.take() {
             Some(ws_read) => ws_read,
             None => {
-                error!("WebSocket connection closed");
+                warn!("WebSocket connection closed");
                 return Ok(());
             }
         };
@@ -281,7 +281,7 @@ impl StreamConnection for WebSocketConnection {
                             sip_connection.clone(),
                             remote_addr.clone(),
                         )) {
-                            error!("Error sending incoming message: {:?}", e);
+                            warn!("Error sending incoming message: {:?}", e);
                             break;
                         }
                     }
@@ -292,7 +292,7 @@ impl StreamConnection for WebSocketConnection {
                 Ok(Message::Binary(bin)) => {
                     if bin == *KEEPALIVE_REQUEST {
                         if let Err(e) = self.send_raw(KEEPALIVE_RESPONSE).await {
-                            error!("Error sending keepalive response: {:?}", e);
+                            warn!("Error sending keepalive response: {:?}", e);
                         }
                         continue;
                     }
@@ -303,7 +303,7 @@ impl StreamConnection for WebSocketConnection {
                                 sip_connection.clone(),
                                 remote_addr.clone(),
                             )) {
-                                error!("Error sending incoming message: {:?}", e);
+                                warn!("Error sending incoming message: {:?}", e);
                                 break;
                             }
                         }
@@ -315,7 +315,7 @@ impl StreamConnection for WebSocketConnection {
                 Ok(Message::Ping(data)) => {
                     let mut sink = self.inner.ws_sink.lock().await;
                     if let Err(e) = sink.send(Message::Pong(data)).await {
-                        error!("Error sending pong: {}", e);
+                        warn!("Error sending pong: {}", e);
                         break;
                     }
                 }
@@ -324,7 +324,7 @@ impl StreamConnection for WebSocketConnection {
                     break;
                 }
                 Err(e) => {
-                    error!("WebSocket error: {}", e);
+                    warn!("WebSocket error: {}", e);
                     break;
                 }
                 _ => {}
