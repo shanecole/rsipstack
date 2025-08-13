@@ -313,13 +313,7 @@ impl Transaction {
                 _ => TransactionState::Proceeding,
             },
             _ => match self.transaction_type {
-                TransactionType::ServerInvite => {
-                    if response.status_code.kind() == rsip::StatusCodeKind::Successful {
-                        TransactionState::Completed
-                    } else {
-                        TransactionState::Terminated
-                    }
-                }
+                TransactionType::ServerInvite => TransactionState::Completed,
                 _ => TransactionState::Terminated,
             },
         };
@@ -551,13 +545,7 @@ impl Transaction {
             }
             _ => {
                 if self.transaction_type == TransactionType::ClientInvite {
-                    if self.original.method == rsip::Method::Invite
-                        && resp.status_code.kind() == rsip::StatusCodeKind::Successful
-                    {
-                        TransactionState::Completed
-                    } else {
-                        TransactionState::Terminated
-                    }
+                    TransactionState::Completed
                 } else {
                     TransactionState::Terminated
                 }
