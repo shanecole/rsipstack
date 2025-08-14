@@ -23,7 +23,11 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, trace, warn};
 
-#[derive(Debug, Clone)]
+pub trait MessageInspector: Send + Sync {
+    fn before_send(&self, msg: SipMessage) -> SipMessage;
+    fn after_received(&self, msg: SipMessage) -> SipMessage;
+}
+
 pub struct EndpointOption {
     pub t1: Duration,
     pub t4: Duration,
@@ -87,7 +91,7 @@ pub struct EndpointInner {
     incoming_sender: Mutex<Option<TransactionSender>>,
     cancel_token: CancellationToken,
     timer_interval: Duration,
-
+    pub(super) inspector: Option<Box<dyn MessageInspector>>,
     pub option: EndpointOption,
 }
 pub type EndpointInnerRef = Arc<EndpointInner>;
@@ -117,6 +121,7 @@ pub struct EndpointBuilder {
     cancel_token: Option<CancellationToken>,
     timer_interval: Option<Duration>,
     option: Option<EndpointOption>,
+    inspector: Option<Box<dyn MessageInspector>>,
 }
 
 /// SIP Endpoint
@@ -182,6 +187,7 @@ impl EndpointInner {
         timer_interval: Option<Duration>,
         allows: Vec<rsip::Method>,
         option: Option<EndpointOption>,
+        inspector: Option<Box<dyn MessageInspector>>,
     ) -> Arc<Self> {
         Arc::new(EndpointInner {
             allows: Mutex::new(Some(allows)),
@@ -194,6 +200,7 @@ impl EndpointInner {
             cancel_token,
             incoming_sender: Mutex::new(None),
             option: option.unwrap_or_default(),
+            inspector,
         })
     }
 
@@ -332,7 +339,12 @@ impl EndpointInner {
 
         if self.incoming_sender.lock().unwrap().is_none() {
             let resp = self.make_response(&request, rsip::StatusCode::ServiceUnavailable, None);
-            connection.send(resp.into(), None).await?;
+            let resp = if let Some(ref inspector) = self.inspector {
+                inspector.before_send(resp.into())
+            } else {
+                resp.into()
+            };
+            connection.send(resp, None).await?;
             return Err(Error::TransactionError(
                 "incoming_sender not set".to_string(),
                 key,
@@ -442,6 +454,7 @@ impl EndpointBuilder {
             cancel_token: None,
             timer_interval: None,
             option: None,
+            inspector: None,
         }
     }
     pub fn with_option(&mut self, option: EndpointOption) -> &mut Self {
@@ -471,6 +484,10 @@ impl EndpointBuilder {
         self.allows = allows;
         self
     }
+    pub fn with_inspector(&mut self, inspector: Box<dyn MessageInspector>) -> &mut Self {
+        self.inspector = Some(inspector);
+        self
+    }
     pub fn build(&mut self) -> Endpoint {
         let cancel_token = self.cancel_token.take().unwrap_or_default();
 
@@ -482,7 +499,8 @@ impl EndpointBuilder {
         let allows = self.allows.to_owned();
         let user_agent = self.user_agent.to_owned();
         let timer_interval = self.timer_interval.to_owned();
-        let option = self.option.to_owned();
+        let option = self.option.take();
+        let inspector = self.inspector.take();
 
         let core = EndpointInner::new(
             user_agent,
@@ -491,6 +509,7 @@ impl EndpointBuilder {
             timer_interval,
             allows,
             option,
+            inspector,
         );
 
         Endpoint { inner: core }

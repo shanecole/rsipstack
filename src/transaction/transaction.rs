@@ -262,9 +262,14 @@ impl Transaction {
         self.original
             .headers_mut()
             .unique_push(content_length_header);
-        connection
-            .send(self.original.to_owned().into(), self.destination.as_ref())
-            .await?;
+
+        let message = if let Some(ref inspector) = self.endpoint_inner.inspector {
+            inspector.before_send(self.original.to_owned().into())
+        } else {
+            self.original.to_owned().into()
+        };
+
+        connection.send(message, self.destination.as_ref()).await?;
         self.transition(TransactionState::Trying).map(|_| ())
     }
 
@@ -324,11 +329,20 @@ impl Transaction {
             "no connection found".to_string(),
             self.key.clone(),
         ))?;
+
+        let response = if let Some(ref inspector) = self.endpoint_inner.inspector {
+            inspector.before_send(response.clone().to_owned().into())
+        } else {
+            response.to_owned().into()
+        };
         debug!("responding with {}", response);
         connection
-            .send(response.to_owned().into(), self.destination.as_ref())
+            .send(response.clone(), self.destination.as_ref())
             .await?;
-        self.last_response.replace(response);
+        match response {
+            SipMessage::Response(resp) => self.last_response.replace(resp),
+            _ => None,
+        };
         self.transition(new_state).map(|_| ())
     }
 
@@ -371,9 +385,13 @@ impl Transaction {
         match self.state {
             TransactionState::Calling | TransactionState::Trying | TransactionState::Proceeding => {
                 if let Some(connection) = &self.connection {
-                    connection
-                        .send(cancel.to_owned().into(), self.destination.as_ref())
-                        .await?;
+                    let cancel = if let Some(ref inspector) = self.endpoint_inner.inspector {
+                        inspector.before_send(cancel.to_owned().into())
+                    } else {
+                        cancel.to_owned().into()
+                    };
+
+                    connection.send(cancel, self.destination.as_ref()).await?;
                 }
                 self.transition(TransactionState::Terminated).map(|_| ())
             }
@@ -407,11 +425,18 @@ impl Transaction {
                 ));
             }
         }
-
+        let ack = if let Some(ref inspector) = self.endpoint_inner.inspector {
+            inspector.before_send(ack.to_owned().into())
+        } else {
+            ack.to_owned().into()
+        };
         connection
-            .send(ack.to_owned().into(), self.destination.as_ref())
+            .send(ack.clone(), self.destination.as_ref())
             .await?;
-        self.last_ack.replace(ack);
+        match ack {
+            SipMessage::Request(ack) => self.last_ack.replace(ack),
+            _ => None,
+        };
         // client send ack and transition to Terminated
         self.transition(TransactionState::Terminated).map(|_| ())
     }
@@ -424,6 +449,9 @@ impl Transaction {
                         SipMessage::Request(req) => self.on_received_request(req, connection).await,
                         SipMessage::Response(resp) => self.on_received_response(resp).await,
                     } {
+                        if let Some(ref inspector) = self.endpoint_inner.inspector {
+                            return Some(inspector.after_received(msg));
+                        }
                         return Some(msg);
                     }
                 }
@@ -487,10 +515,14 @@ impl Transaction {
                         let resp = self
                             .endpoint_inner
                             .make_response(&req, StatusCode::OK, None);
-                        connection
-                            .send(resp.into(), self.destination.as_ref())
-                            .await
-                            .ok();
+
+                        let resp = if let Some(ref inspector) = self.endpoint_inner.inspector {
+                            inspector.before_send(resp.into())
+                        } else {
+                            resp.into()
+                        };
+
+                        connection.send(resp, self.destination.as_ref()).await.ok();
                     }
                     return Some(req.into()); // into dialog
                 }
@@ -501,10 +533,12 @@ impl Transaction {
                             StatusCode::CallTransactionDoesNotExist,
                             None,
                         );
-                        connection
-                            .send(resp.into(), self.destination.as_ref())
-                            .await
-                            .ok();
+                        let resp = if let Some(ref inspector) = self.endpoint_inner.inspector {
+                            inspector.before_send(resp.into())
+                        } else {
+                            resp.into()
+                        };
+                        connection.send(resp, self.destination.as_ref()).await.ok();
                     }
                 }
             };
@@ -573,8 +607,14 @@ impl Transaction {
                     if let TransactionTimer::TimerA(key, duration) = timer {
                         // Resend the INVITE request
                         if let Some(connection) = &self.connection {
+                            let retry_message =
+                                if let Some(ref inspector) = self.endpoint_inner.inspector {
+                                    inspector.before_send(self.original.to_owned().into())
+                                } else {
+                                    self.original.to_owned().into()
+                                };
                             connection
-                                .send(self.original.to_owned().into(), self.destination.as_ref())
+                                .send(retry_message, self.destination.as_ref())
                                 .await?;
                         }
                         // Restart Timer A with an upper limit
@@ -611,8 +651,14 @@ impl Transaction {
                     // resend the response
                     if let Some(last_response) = &self.last_response {
                         if let Some(connection) = &self.connection {
+                            let last_response =
+                                if let Some(ref inspector) = self.endpoint_inner.inspector {
+                                    inspector.before_send(last_response.to_owned().into())
+                                } else {
+                                    last_response.to_owned().into()
+                                };
                             connection
-                                .send(last_response.to_owned().into(), self.destination.as_ref())
+                                .send(last_response, self.destination.as_ref())
                                 .await?;
                         }
                     }
