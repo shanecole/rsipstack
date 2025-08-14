@@ -116,6 +116,27 @@ impl ServerInviteDialog {
         &self.inner.initial_request
     }
 
+    pub fn ringing(&self, headers: Option<Vec<Header>>, body: Option<Vec<u8>>) -> Result<()> {
+        if !self.inner.can_cancel() {
+            return Ok(());
+        }
+        info!(id = %self.id(), "sending ringing response");
+        let resp = self.inner.make_response(
+            &self.inner.initial_request,
+            if body.is_some() {
+                StatusCode::SessionProgress
+            } else {
+                StatusCode::Ringing
+            },
+            headers,
+            body,
+        );
+        self.inner
+            .tu_sender
+            .send(TransactionEvent::Respond(resp.clone()))?;
+        self.inner.transition(DialogState::Early(self.id(), resp))?;
+        Ok(())
+    }
     /// Accept the incoming INVITE request
     ///
     /// Sends a 200 OK response to accept the incoming INVITE request.
