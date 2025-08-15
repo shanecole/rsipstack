@@ -51,7 +51,7 @@ impl TransactionKey {
         let via = req.via_header()?.typed()?;
         let mut method = req.method().clone();
 
-        if matches!(method, Method::Ack | Method::Cancel) {
+        if matches!(method, Method::Ack | Method::Cancel) && role == TransactionRole::Server {
             method = Method::Invite;
         }
 

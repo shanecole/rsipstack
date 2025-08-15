@@ -7,7 +7,7 @@ use crate::dialog::{
 use crate::rsip_ext::RsipResponseExt;
 use crate::transaction::transaction::Transaction;
 use crate::Result;
-use rsip::prelude::{HeadersExt, ToTypedHeader};
+use rsip::prelude::HeadersExt;
 use rsip::{Response, SipMessage, StatusCode};
 use std::sync::atomic::Ordering;
 use tokio_util::sync::CancellationToken;
@@ -191,8 +191,10 @@ impl ClientInviteDialog {
         cancel_request.method = rsip::Method::Cancel;
         cancel_request
             .cseq_header_mut()?
-            .mut_seq(self.inner.get_local_seq())?;
+            .mut_seq(self.inner.get_local_seq())?
+            .mut_method(rsip::Method::Cancel)?;
         cancel_request.body = vec![];
+        cancel_request.to_header_mut()?.mut_tag("".into())?;
         self.inner.do_request(cancel_request).await?;
         Ok(())
     }
@@ -558,7 +560,7 @@ impl ClientInviteDialog {
                                     .remote_contact
                                     .lock()
                                     .unwrap()
-                                    .replace(contact.typed()?.uri);
+                                    .replace(contact.clone());
                             }
                             self.inner
                                 .transition(DialogState::Confirmed(dialog_id.clone()))?;

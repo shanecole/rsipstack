@@ -9,7 +9,7 @@ use rsip::message::HasHeaders;
 use rsip::prelude::HeadersExt;
 use rsip::{Header, Method, Request, Response, SipMessage, StatusCode};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
-use tracing::{debug, info};
+use tracing::{debug, info, trace};
 
 pub type TransactionEventReceiver = UnboundedReceiver<TransactionEvent>;
 pub type TransactionEventSender = UnboundedSender<TransactionEvent>;
@@ -335,7 +335,7 @@ impl Transaction {
         } else {
             response.to_owned().into()
         };
-        debug!("responding with {}", response);
+        trace!(key = %self.key, "responding with {}", response);
         connection
             .send(response.clone(), self.destination.as_ref())
             .await?;
@@ -393,7 +393,7 @@ impl Transaction {
 
                     connection.send(cancel, self.destination.as_ref()).await?;
                 }
-                self.transition(TransactionState::Terminated).map(|_| ())
+                self.transition(TransactionState::Completed).map(|_| ())
             }
             _ => {
                 return Err(Error::TransactionError(
@@ -706,6 +706,10 @@ impl Transaction {
                             .take()
                             .map(|id| self.endpoint_inner.timers.cancel(id));
                     }
+                    self.timer_a.replace(self.endpoint_inner.timers.timeout(
+                        self.endpoint_inner.option.t1,
+                        TransactionTimer::TimerA(self.key.clone(), self.endpoint_inner.option.t1),
+                    ));
                 }
 
                 self.timer_b

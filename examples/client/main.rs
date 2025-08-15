@@ -1,5 +1,5 @@
 use clap::Parser;
-use play_file::{build_rtp_conn, play_example_file};
+use play_file::{build_rtp_conn, play_audio_file};
 use rsip::prelude::HeadersExt;
 use rsip::typed::MediaType;
 use rsipstack::dialog::dialog::{Dialog, DialogState, DialogStateReceiver, DialogStateSender};
@@ -14,19 +14,19 @@ use rsipstack::{
     transport::{udp::UdpConnection, TransportLayer},
     EndpointBuilder, Error,
 };
+use std::net::IpAddr;
 use std::{env, sync::Arc, time::Duration};
 use tokio::sync::mpsc::unbounded_channel;
 use tokio::{select, time::sleep};
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, info};
+use tracing::{debug, error, info};
 
 use crate::play_file::play_echo;
 mod play_file;
-mod stun;
 #[derive(Debug, Clone)]
 struct MediaSessionOption {
-    pub stun: bool,
-    pub stun_server: Option<String>,
+    pub auto_answer: bool,
+    pub cancel_token: CancellationToken,
     pub external_ip: Option<String>,
     pub rtp_start_port: u16,
     pub echo: bool,
@@ -63,27 +63,25 @@ struct Args {
     #[arg(long)]
     password: Option<String>,
 
-    #[arg(long, default_value = "restsend.com:3478")]
-    stun_server: Option<String>,
-
-    #[arg(long)]
-    stun: bool,
-
     #[arg(long)]
     call: Option<String>,
 
     #[arg(long)]
     reject: bool,
+
+    #[arg(long)]
+    auto_answer: bool,
 }
 
-async fn handle_user_input(cancel_token: CancellationToken) -> Result<()> {
+async fn handle_user_input(
+    cancel_token: CancellationToken,
+    answer_sender: tokio::sync::mpsc::UnboundedSender<String>,
+) -> Result<()> {
     use tokio::io::{AsyncBufReadExt, BufReader};
 
     let stdin = tokio::io::stdin();
     let reader = BufReader::new(stdin);
     let mut lines = reader.lines();
-
-    info!("Press 'q' and Enter to hang up current call");
 
     loop {
         select! {
@@ -96,6 +94,8 @@ async fn handle_user_input(cancel_token: CancellationToken) -> Result<()> {
                             cancel_token.cancel();
                             info!("Cancelled all dialogs");
                             break;
+                        } else if input == "a" || input == "r" {
+                            answer_sender.send(input.to_string()).expect("send answer");
                         }
                     },
                     Ok(None) => {
@@ -116,7 +116,17 @@ async fn handle_user_input(cancel_token: CancellationToken) -> Result<()> {
     }
     Ok(())
 }
-
+pub fn get_first_non_loopback_interface() -> Result<IpAddr> {
+    for i in get_if_addrs::get_if_addrs()? {
+        if !i.is_loopback() {
+            match i.addr {
+                get_if_addrs::IfAddr::V4(ref addr) => return Ok(std::net::IpAddr::V4(addr.ip)),
+                _ => continue,
+            }
+        }
+    }
+    Err(Error::Error("No IPV4 interface found".to_string()))
+}
 // A sip client example, that sends a REGISTER request to a sip server.
 #[tokio::main]
 async fn main() -> rsipstack::Result<()> {
@@ -152,15 +162,15 @@ async fn main() -> rsipstack::Result<()> {
         .password
         .unwrap_or(env::var("SIP_PASSWORD").unwrap_or_default());
 
+    let token = CancellationToken::new();
     let opt = MediaSessionOption {
-        stun: args.stun,
-        stun_server: args.stun_server.clone(),
+        cancel_token: token.clone(),
         external_ip: args.external_ip.clone(),
         rtp_start_port: args.rtp_start_port,
         echo: args.echo,
+        auto_answer: args.auto_answer,
     };
 
-    let token = CancellationToken::new();
     let transport_layer = TransportLayer::new(token.clone());
 
     let external_ip = args
@@ -173,22 +183,13 @@ async fn main() -> rsipstack::Result<()> {
         Some(format!("{}:{}", external_ip, args.port).parse()?)
     };
 
-    let addr = stun::get_first_non_loopback_interface().expect("get first non loopback interface");
-    let mut connection = UdpConnection::create_connection(
+    let addr = get_first_non_loopback_interface().expect("get first non loopback interface");
+    let connection = UdpConnection::create_connection(
         format!("{}:{}", addr, args.port).parse()?,
         external.clone(),
         Some(token.child_token()),
     )
     .await?;
-
-    if external.is_none() && args.stun {
-        if let Some(server) = args.stun_server {
-            match stun::external_by_stun(&mut connection, &server, Duration::from_secs(5)).await {
-                Ok(socket) => info!("external IP: {:?}", socket),
-                Err(e) => info!("Failed to get external IP, stunserver {} : {:?}", server, e),
-            }
-        }
-    }
 
     transport_layer.add_transport(connection.into());
 
@@ -380,7 +381,7 @@ async fn process_dialog(
                         // play example pcmu of handling incoming call
                         //
                         // [A] Ai answer, [R] Reject, [E] Play example pcmu
-                        play_example_pcmu(&opt, d).await?;
+                        process_invite(&opt, d).await?;
                     }
                     Dialog::ClientInvite(_) => {
                         info!("Client invite dialog {}", id);
@@ -457,14 +458,23 @@ async fn make_call(
         .and_then(|m| m.media.fmt.parse::<u8>().ok())
         .unwrap_or(0);
     info!("Peer address: {} payload_type:{}", peer_addr, payload_type);
-    play_example_file(rtp_conn, rtp_token, ssrc, peer_addr, payload_type)
-        .await
-        .expect("play example file");
+    play_audio_file(
+        rtp_conn,
+        rtp_token,
+        ssrc,
+        "example",
+        0,
+        1,
+        peer_addr,
+        payload_type,
+    )
+    .await
+    .expect("play example file");
     dialog.bye().await.expect("send BYE");
     Ok(())
 }
 
-async fn play_example_pcmu(opt: &MediaSessionOption, dialog: ServerInviteDialog) -> Result<()> {
+async fn process_invite(opt: &MediaSessionOption, dialog: ServerInviteDialog) -> Result<()> {
     let ssrc = rand::random::<u32>();
 
     let body = String::from_utf8_lossy(dialog.initial_request().body()).to_string();
@@ -499,34 +509,98 @@ async fn play_example_pcmu(opt: &MediaSessionOption, dialog: ServerInviteDialog)
 
     let (conn, answer) = build_rtp_conn(opt, ssrc, payload_type).await?;
 
-    let headers = vec![rsip::typed::ContentType(MediaType::Sdp(vec![])).into()];
-    dialog.accept(Some(headers), Some(answer.into()))?;
+    let (answer_sender, mut answer_receiver) = tokio::sync::mpsc::unbounded_channel();
+    if opt.auto_answer {
+        let headers = vec![rsip::typed::ContentType(MediaType::Sdp(vec![])).into()];
+        dialog.accept(Some(headers), Some(answer.clone().into()))?;
+        answer_sender.send("a".to_string()).expect("send answer");
 
-    info!(
-        "Accepted call with answer SDP peer address: {} port: {} payload_type: {}",
-        peer_addr, peer_port, payload_type
-    );
+        info!(
+            "Accepted call with answer SDP peer address: {} port: {} payload_type: {}",
+            peer_addr, peer_port, payload_type
+        );
+    } else {
+        let headers = vec![rsip::typed::ContentType(MediaType::Sdp(vec![])).into()];
+        dialog.ringing(Some(headers), Some(answer.clone().into()))?;
+    }
 
     let peer_addr = format!("{}:{}", peer_addr, peer_port);
     let rtp_token = dialog.cancel_token().child_token();
     let echo = opt.echo;
+    let answered = opt.auto_answer;
 
     tokio::spawn(async move {
         let input_token = CancellationToken::new();
         select! {
-            _ = handle_user_input(input_token) => {
+            _ = handle_user_input(input_token, answer_sender) => {
                 info!("user input handler finished");
             }
             _ = async {
+                let mut ts = 0;
+                let mut seq = 1;
+                let mut rejected = false;
+
+                println!("\x1b[32mPress 'a' to answer, 'r' to reject, or 'q' to quit.\x1b[0m");
+                if !answered {
+                    let ringback_token = rtp_token.child_token();
+                    let (pos,_) = tokio::join!(
+                            play_audio_file(
+                            conn.clone(),
+                            ringback_token.clone(),
+                            ssrc,
+                            "ringback",
+                            ts,
+                            seq,
+                            peer_addr.clone(),
+                            payload_type
+                        ),
+                        async {
+                            let r = answer_receiver.recv().await.unwrap_or_default();
+                            ringback_token.cancel();
+
+                            if r == "a" {
+                                info!("User answered the call");
+                            } else if r == "r" {
+                                info!("User rejected the call");
+                                dialog.reject().ok();
+                                rejected = true;
+                                return;
+                            } else {
+                                info!("Unknown command: {}", r);
+                                return;
+                            }
+                        }
+                    );
+                    match pos {
+                        Ok((t, s)) => {
+                            ts = t;
+                            seq = s;
+                        }
+                        Err(e) => {
+                            info!("Failed to play ringback: {:?}", e);
+                        }
+                    }
+                }
+                if rejected {
+                    return;
+                }
+                let headers = vec![rsip::typed::ContentType(MediaType::Sdp(vec![])).into()];
+                match dialog.accept(Some(headers), Some(answer.clone().into())) {
+                    Ok(_) => info!("Accepted call with answer SDP peer address: {} port: {} payload_type: {}", peer_addr, peer_port, payload_type),
+                    Err(e) => {
+                        error!("Failed to accept call: {:?}", e);
+                        return;
+                    }
+                }
                 if echo {
                     play_echo(conn, rtp_token).await.expect("play echo");
                 } else {
-                    play_example_file(conn, rtp_token, ssrc, peer_addr,payload_type)
+                    play_audio_file(conn, rtp_token, ssrc, "example", ts, seq, peer_addr, payload_type)
                         .await
                         .expect("play example file");
                 }
             } => {
-                info!("play example finished");
+                info!("answer receiver finished");
             }
         }
         dialog.bye().await.expect("send BYE");

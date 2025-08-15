@@ -167,7 +167,7 @@ pub struct DialogInner {
 
     pub local_seq: AtomicU32,
     pub local_contact: Option<rsip::Uri>,
-    pub remote_contact: Mutex<Option<rsip::Uri>>,
+    pub remote_contact: Mutex<Option<rsip::headers::untyped::Contact>>,
 
     pub remote_seq: AtomicU32,
     pub remote_uri: rsip::Uri,
@@ -461,7 +461,7 @@ impl DialogInner {
 
         if destination.is_none() {
             if let Some(contact) = self.remote_contact.lock().unwrap().as_ref() {
-                destination = Some(contact.clone());
+                destination = contact.uri().ok();
             }
         }
 
@@ -608,8 +608,22 @@ impl Dialog {
     }
     pub fn remote_contact(&self) -> Option<rsip::Uri> {
         match self {
-            Dialog::ServerInvite(d) => d.inner.remote_contact.lock().unwrap().clone(),
-            Dialog::ClientInvite(d) => d.inner.remote_contact.lock().unwrap().clone(),
+            Dialog::ServerInvite(d) => d
+                .inner
+                .remote_contact
+                .lock()
+                .unwrap()
+                .as_ref()
+                .map(|c| c.uri().ok())
+                .flatten(),
+            Dialog::ClientInvite(d) => d
+                .inner
+                .remote_contact
+                .lock()
+                .unwrap()
+                .as_ref()
+                .map(|c| c.uri().ok())
+                .flatten(),
         }
     }
 

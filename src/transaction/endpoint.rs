@@ -9,7 +9,7 @@ use crate::{
     transport::{SipAddr, TransportEvent, TransportLayer},
     Error, Result, USER_AGENT,
 };
-use rsip::SipMessage;
+use rsip::{prelude::HeadersExt, SipMessage};
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex},
@@ -332,7 +332,9 @@ impl EndpointInner {
         let request = match msg {
             SipMessage::Request(req) => req,
             SipMessage::Response(resp) => {
-                debug!("the transaction is not exist {} {}", key, resp);
+                if resp.cseq_header()?.method()? != rsip::Method::Cancel {
+                    debug!(%key, "the transaction is not exist {}", resp);
+                }
                 return Ok(());
             }
         };

@@ -456,6 +456,7 @@ impl Registration {
                         // Check if server indicated our public IP in Via header
                         let received = resp.via_received();
                         // Update contact header from response
+
                         match resp.contact_header() {
                             Ok(contact) => {
                                 self.contact = contact.typed().ok();

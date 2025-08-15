@@ -1,29 +1,32 @@
-use std::net::SocketAddr;
-use std::time::Duration;
-
+use crate::{get_first_non_loopback_interface, MediaSessionOption};
 use rsipstack::transport::udp::UdpConnection;
 use rsipstack::Result;
 use rsipstack::{transport::SipAddr, Error};
 use rtp_rs::RtpPacketBuilder;
+use std::net::SocketAddr;
+use std::time::Duration;
 use tokio::select;
 use tokio_util::sync::CancellationToken;
 use tracing::info;
-
-use crate::{stun, MediaSessionOption};
 
 pub async fn build_rtp_conn(
     opt: &MediaSessionOption,
     ssrc: u32,
     payload_type: u8,
 ) -> Result<(UdpConnection, String)> {
-    let addr = stun::get_first_non_loopback_interface()?;
+    let addr = get_first_non_loopback_interface()?;
     let mut conn = None;
 
     for p in 0..100 {
         let port = opt.rtp_start_port + p * 2;
-        if let Ok(c) =
-            UdpConnection::create_connection(format!("{:?}:{}", addr, port).parse()?, None, None)
-                .await
+        if let Ok(c) = UdpConnection::create_connection(
+            format!("{:?}:{}", addr, port).parse()?,
+            opt.external_ip
+                .as_ref()
+                .map(|ip| ip.parse::<SocketAddr>().expect("Invalid external IP")),
+            Some(opt.cancel_token.clone()),
+        )
+        .await
         {
             conn = Some(c);
             break;
@@ -36,18 +39,7 @@ pub async fn build_rtp_conn(
         return Err(Error::Error("Failed to bind RTP socket".to_string()));
     }
 
-    let mut conn = conn.unwrap();
-    if opt.external_ip.is_none() && opt.stun {
-        if let Some(ref server) = opt.stun_server {
-            match stun::external_by_stun(&mut conn, &server, Duration::from_secs(5)).await {
-                Ok(socket) => info!("media external IP by stun: {:?}", socket),
-                Err(e) => info!(
-                    "Failed to get media external IP, stunserver {} : {:?}",
-                    server, e
-                ),
-            }
-        }
-    }
+    let conn = conn.unwrap();
     let codec = payload_type;
     let codec_name = match codec {
         0 => "PCMU",
@@ -103,13 +95,16 @@ pub async fn play_echo(conn: UdpConnection, token: CancellationToken) -> Result<
     Ok(())
 }
 
-pub async fn play_example_file(
+pub async fn play_audio_file(
     conn: UdpConnection,
     token: CancellationToken,
     ssrc: u32,
+    filename: &str,
+    mut ts: u32,
+    mut seq: u16,
     peer_addr: String,
     payload_type: u8,
-) -> Result<()> {
+) -> Result<(u32, u16)> {
     select! {
         _ = token.cancelled() => {
             info!("RTP session cancelled");
@@ -119,9 +114,7 @@ pub async fn play_example_file(
                 addr: peer_addr.try_into().expect("peer_addr"),
                 r#type: Some(rsip::transport::Transport::Udp),
             };
-            let mut ts = 0;
             let sample_size = 160;
-            let mut seq = 1;
             let mut ticker = tokio::time::interval(Duration::from_millis(20));
             let ext = match payload_type {
                 8 => "pcma",
@@ -131,9 +124,9 @@ pub async fn play_example_file(
                     return;
                 }
             };
-            let file_name = format!("./assets/example.{ext}");
-            info!("Playing example file: {} payload_type:{} sample_size:{}", file_name, payload_type, sample_size);
-            let example_data = tokio::fs::read(file_name).await.expect("read example file");
+            let file_name = format!("./assets/{filename}.{ext}");
+            info!("Playing {filename} file: {} payload_type:{} sample_size:{}", file_name, payload_type, sample_size);
+            let example_data = tokio::fs::read(file_name).await.expect("read file");
 
             for chunk in example_data.chunks(sample_size) {
                 let result = match RtpPacketBuilder::new()
@@ -164,5 +157,5 @@ pub async fn play_example_file(
             info!("playback finished, hangup");
         }
     };
-    Ok(())
+    Ok((ts, seq))
 }

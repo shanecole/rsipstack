@@ -181,13 +181,21 @@ impl ServerInviteDialog {
         if via_transport != rsip::transport::Transport::Udp {
             params.push(rsip::param::Param::Transport(via_transport));
         }
-        let contact = rsip::Uri {
-            host_with_port: via_received,
-            params,
-            ..Default::default()
+        let contact = rsip::headers::typed::Contact {
+            uri: rsip::Uri {
+                host_with_port: via_received,
+                params,
+                ..Default::default()
+            },
+            display_name: None,
+            params: vec![],
         };
         debug!(id = %self.id(), "accepting dialog with contact: {}", contact);
-        self.inner.remote_contact.lock().unwrap().replace(contact);
+        self.inner
+            .remote_contact
+            .lock()
+            .unwrap()
+            .replace(contact.untyped());
         self.inner
             .tu_sender
             .send(TransactionEvent::Respond(resp.clone()))?;
@@ -562,11 +570,23 @@ impl ServerInviteDialog {
 
         if self.inner.is_confirmed() {
             match tx.original.method {
+                rsip::Method::Cancel => {
+                    info!(id=%self.id(),
+                        "invalid request received {} {}",
+                        tx.original.method, tx.original.uri
+                    );
+                    tx.reply(rsip::StatusCode::OK).await?;
+                    return Ok(());
+                }
                 rsip::Method::Invite | rsip::Method::Ack => {
                     info!(id=%self.id(),
                         "invalid request received {} {}",
                         tx.original.method, tx.original.uri
                     );
+                    return Err(crate::Error::DialogError(
+                        "invalid request in confirmed state".to_string(),
+                        self.id(),
+                    ));
                 }
                 rsip::Method::Bye => return self.handle_bye(tx).await,
                 rsip::Method::Info => return self.handle_info(tx).await,
@@ -645,8 +665,11 @@ impl ServerInviteDialog {
                             info!(id = %self.id(),"received ack {}", req.uri);
                             match req.contact_header() {
                                 Ok(contact) => {
-                                    let contact = contact.uri()?.into();
-                                    self.inner.remote_contact.lock().unwrap().replace(contact);
+                                    self.inner
+                                        .remote_contact
+                                        .lock()
+                                        .unwrap()
+                                        .replace(contact.clone());
                                 }
                                 _ => {}
                             }

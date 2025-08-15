@@ -64,10 +64,10 @@ A complete SIP client with registration, calling, and media support:
 
 ```bash
 # Local demo proxy
-cargo run --example client -- --port 25061 --sip-server 127.0.0.1:25060
+cargo run --example client -- --port 25061 --sip-server 127.0.0.1:25060 --auto-answer
 
 # Register with a SIP server
-cargo run --example client -- --sip-server sip.example.com --user alice --password secret
+cargo run --example client -- --sip-server sip.example.com --user alice --password secret --auto-answer
 ```
 
 This example demonstrates:
