@@ -31,7 +31,9 @@ impl RsipResponseExt for rsip::Response {
     /// and returns it as a HostWithPort struct.
     fn via_received(&self) -> Option<rsip::HostWithPort> {
         let via = self.via_header().ok()?;
-        SipConnection::parse_target_from_via(via).ok()
+        SipConnection::parse_target_from_via(via)
+            .map(|(_, host_with_port)| host_with_port)
+            .ok()
     }
     fn content_type(&self) -> Option<rsip::headers::ContentType> {
         let headers = self.headers();

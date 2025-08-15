@@ -176,10 +176,14 @@ impl ServerInviteDialog {
             body,
         );
         let via = self.inner.initial_request.via_header()?;
-        let via_received = SipConnection::parse_target_from_via(via)?;
+        let (via_transport, via_received) = SipConnection::parse_target_from_via(via)?;
+        let mut params = vec![];
+        if via_transport != rsip::transport::Transport::Udp {
+            params.push(rsip::param::Param::Transport(via_transport));
+        }
         let contact = rsip::Uri {
             host_with_port: via_received,
-            params: vec![rsip::Param::Transport(via.trasnport()?)],
+            params,
             ..Default::default()
         };
         debug!(id = %self.id(), "accepting dialog with contact: {}", contact);

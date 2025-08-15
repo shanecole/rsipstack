@@ -18,7 +18,7 @@ fn test_via_received() {
         body: Default::default(),
     };
 
-    let parse_addr =
+    let (_, parse_addr) =
         SipConnection::parse_target_from_via(&register_req.via_header().expect("via_header"))
             .expect("get_target_socketaddr");
 
@@ -38,7 +38,7 @@ fn test_via_received() {
 
     match msg {
         SipMessage::Request(req) => {
-            let parse_addr =
+            let (_, parse_addr) =
                 SipConnection::parse_target_from_via(&req.via_header().expect("via_header"))
                     .expect("get_target_socketaddr");
             assert_eq!(parse_addr, addr.into());

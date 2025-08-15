@@ -336,10 +336,16 @@ impl SipConnection {
         typed_via.params.retain(|param| {
             if let Param::Other(key, _) = param {
                 !key.value().eq_ignore_ascii_case("rport")
+            } else if let Param::Transport(_) = param {
+                false
             } else {
                 true
             }
         });
+
+        if transport != rsip::transport::Transport::Udp && typed_via.transport != transport {
+            typed_via.params.push(Param::Transport(transport));
+        }
 
         *via = typed_via
             .with_param(Param::Received(rsip::param::Received::new(
@@ -353,8 +359,11 @@ impl SipConnection {
         Ok(())
     }
 
-    pub fn parse_target_from_via(via: &rsip::headers::untyped::Via) -> Result<rsip::HostWithPort> {
+    pub fn parse_target_from_via(
+        via: &rsip::headers::untyped::Via,
+    ) -> Result<(rsip::Transport, rsip::HostWithPort)> {
         let mut host_with_port = via.uri()?.host_with_port;
+        let mut transport = via.trasnport().unwrap_or(rsip::Transport::Udp);
         if let Ok(params) = via.params().as_ref() {
             for param in params {
                 match param {
@@ -362,6 +371,9 @@ impl SipConnection {
                         if let Ok(addr) = v.parse() {
                             host_with_port.host = addr.into();
                         }
+                    }
+                    Param::Transport(t) => {
+                        transport = t.clone();
                     }
                     Param::Other(key, Some(value)) if key.value().eq_ignore_ascii_case("rport") => {
                         if let Ok(port) = value.value().try_into() {
@@ -372,13 +384,13 @@ impl SipConnection {
                 }
             }
         }
-        Ok(host_with_port)
+        Ok((transport, host_with_port))
     }
 
     pub fn get_destination(msg: &rsip::SipMessage) -> Result<SocketAddr> {
         let host_with_port = match msg {
             rsip::SipMessage::Request(req) => req.uri().host_with_port.clone(),
-            rsip::SipMessage::Response(res) => Self::parse_target_from_via(res.via_header()?)?,
+            rsip::SipMessage::Response(res) => Self::parse_target_from_via(res.via_header()?)?.1,
         };
         host_with_port.try_into().map_err(Into::into)
     }
