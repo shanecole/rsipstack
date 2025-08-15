@@ -14,12 +14,13 @@ use tokio::sync::mpsc::unbounded_channel;
 use tokio_util::sync::CancellationToken;
 
 /// Test helper to create a mock INVITE request
-fn create_invite_request(from_tag: &str, to_tag: &str, call_id: &str) -> Request {
+pub(super) fn create_invite_request(from_tag: &str, to_tag: &str, call_id: &str) -> Request {
     Request {
         method: rsip::Method::Invite,
         uri: rsip::Uri::try_from("sip:bob@example.com:5060").unwrap(),
         headers: vec![
-            Via::new("SIP/2.0/UDP alice.example.com:5060;branch=z9hG4bKnashds").into(),
+            Via::new("SIP/2.0/UDP alice.example.com:5060;branch=z9hG4bKnashds;received=172.0.0.1")
+                .into(),
             CSeq::new("1 INVITE").into(),
             From::new(&format!("Alice <sip:alice@example.com>;tag={}", from_tag)).into(),
             To::new(&format!("Bob <sip:bob@example.com>;tag={}", to_tag)).into(),
@@ -57,7 +58,8 @@ fn create_response(status: StatusCode, from_tag: &str, to_tag: &str, call_id: &s
     }
 }
 
-async fn create_test_endpoint() -> crate::Result<crate::transaction::endpoint::Endpoint> {
+pub(super) async fn create_test_endpoint() -> crate::Result<crate::transaction::endpoint::Endpoint>
+{
     let token = CancellationToken::new();
     let tl = TransportLayer::new(token.child_token());
     let endpoint = EndpointBuilder::new()

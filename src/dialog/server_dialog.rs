@@ -331,9 +331,14 @@ impl ServerInviteDialog {
             return Ok(());
         }
         info!(id=%self.id(), "sending bye request");
-        let request = self
-            .inner
-            .make_request(rsip::Method::Bye, None, None, None, None, None)?;
+
+        let request = self.inner.make_request_with_vias(
+            rsip::Method::Bye,
+            None,
+            self.inner.build_vias_from_request()?,
+            None,
+            None,
+        )?;
 
         match self.inner.do_request(request).await {
             Ok(_) => {}
@@ -383,9 +388,13 @@ impl ServerInviteDialog {
             return Ok(None);
         }
         info!(id=%self.id(), "sending re-invite request, body: \n{:?}", body);
-        let request =
-            self.inner
-                .make_request(rsip::Method::Invite, None, None, None, headers, body)?;
+        let request = self.inner.make_request_with_vias(
+            rsip::Method::Invite,
+            None,
+            self.inner.build_vias_from_request()?,
+            headers,
+            body,
+        )?;
         let resp = self.inner.do_request(request.clone()).await;
         match resp {
             Ok(Some(ref resp)) => {
@@ -436,9 +445,13 @@ impl ServerInviteDialog {
             return Ok(None);
         }
         info!(id=%self.id(), "sending update request, body: \n{:?}", body);
-        let request =
-            self.inner
-                .make_request(rsip::Method::Update, None, None, None, headers, body)?;
+        let request = self.inner.make_request_with_vias(
+            rsip::Method::Update,
+            None,
+            self.inner.build_vias_from_request()?,
+            headers,
+            body,
+        )?;
         self.inner.do_request(request.clone()).await
     }
 
@@ -483,9 +496,13 @@ impl ServerInviteDialog {
             return Ok(None);
         }
         info!(id=%self.id(), "sending info request, body: \n{:?}", body);
-        let request =
-            self.inner
-                .make_request(rsip::Method::Info, None, None, None, headers, body)?;
+        let request = self.inner.make_request_with_vias(
+            rsip::Method::Info,
+            None,
+            self.inner.build_vias_from_request()?,
+            headers,
+            body,
+        )?;
         self.inner.do_request(request.clone()).await
     }
 
@@ -608,7 +625,7 @@ impl ServerInviteDialog {
 
     async fn handle_invite(&mut self, tx: &mut Transaction) -> Result<()> {
         let handle_loop = async {
-            if !self.inner.is_confirmed() {
+            if !self.inner.is_confirmed() && matches!(tx.original.method, rsip::Method::Invite) {
                 match self.inner.transition(DialogState::Calling(self.id())) {
                     Ok(_) => {
                         tx.send_trying().await.ok();
