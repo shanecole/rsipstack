@@ -705,13 +705,6 @@ impl Transaction {
                         self.timer_a
                             .take()
                             .map(|id| self.endpoint_inner.timers.cancel(id));
-                        self.timer_a.replace(self.endpoint_inner.timers.timeout(
-                            self.endpoint_inner.option.t1,
-                            TransactionTimer::TimerA(
-                                self.key.clone(),
-                                self.endpoint_inner.option.t1,
-                            ),
-                        ));
                     }
                 }
 
@@ -781,7 +774,10 @@ impl Transaction {
                 self.tu_sender.send(TransactionEvent::Terminate).ok(); // tell TU to terminate
             }
         }
-        debug!("transition: {:?} -> {:?}", self.state, state);
+        debug!(
+            key = %self.key,
+            "transition: {:?} -> {:?}", self.state, state
+        );
         self.state = state;
         Ok(self.state.clone())
     }
