@@ -3,7 +3,7 @@ use crate::transaction::key::{TransactionKey, TransactionRole};
 use crate::transaction::transaction::Transaction;
 use crate::transaction::{make_via_branch, random_text, CNONCE_LEN};
 use crate::Result;
-use rsip::headers::auth::AuthQop;
+use rsip::headers::auth::{AuthQop, Qop};
 use rsip::prelude::{HasHeaders, HeadersExt, ToTypedHeader};
 use rsip::services::DigestGenerator;
 use rsip::typed::{Authorization, ProxyAuthorization};
@@ -206,15 +206,17 @@ pub async fn handle_client_authenticate(
     let mut new_req = tx.original.clone();
     new_req.cseq_header_mut()?.mut_seq(new_seq)?;
 
-    let auth_qop = AuthQop::Auth {
-        cnonce: random_text(CNONCE_LEN),
-        nc: 1,
-    };
-
     let challenge = match &header {
         Header::WwwAuthenticate(h) => h.typed()?,
         Header::ProxyAuthenticate(h) => h.typed()?.0,
         _ => unreachable!(),
+    };
+
+    let cnonce = random_text(CNONCE_LEN);
+    let auth_qop = match challenge.qop {
+        Some(Qop::Auth) => Some(AuthQop::Auth { cnonce, nc: 1 }),
+        Some(Qop::AuthInt) => Some(AuthQop::AuthInt { cnonce, nc: 1 }),
+        _ => None,
     };
 
     // Use MD5 as default algorithm if none specified (RFC 2617 compatibility)
@@ -228,7 +230,7 @@ pub async fn handle_client_authenticate(
         algorithm,
         nonce: challenge.nonce.as_str(),
         method: &tx.original.method,
-        qop: Some(&auth_qop),
+        qop: auth_qop.as_ref(),
         uri: &tx.original.uri,
         realm: challenge.realm.as_str(),
     }
@@ -243,7 +245,7 @@ pub async fn handle_client_authenticate(
         response,
         algorithm: Some(algorithm),
         opaque: challenge.opaque,
-        qop: Some(auth_qop),
+        qop: auth_qop,
     };
 
     let via_header = tx.original.via_header()?.clone();
