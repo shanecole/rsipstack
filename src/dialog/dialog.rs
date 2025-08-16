@@ -477,6 +477,7 @@ impl DialogInner {
                     id = self.id.lock().unwrap().to_string(),
                     method = %method,
                     destination=?tx.destination,
+                    key=%tx.key,
                     "request sent done",
                 );
             }
@@ -548,9 +549,7 @@ impl DialogInner {
 
     pub(super) fn transition(&self, state: DialogState) -> Result<()> {
         // Try to send state update, but don't fail if channel is closed
-        if let Err(_) = self.state_sender.send(state.clone()) {
-            debug!("State sender channel closed, continuing with state transition");
-        }
+        self.state_sender.send(state.clone()).ok();
 
         match state {
             DialogState::Updated(_, _)
@@ -562,6 +561,16 @@ impl DialogInner {
             _ => {}
         }
         let mut old_state = self.state.lock().unwrap();
+        match (&*old_state, &state) {
+            (DialogState::Terminated(id, _), _) => {
+                warn!(
+                    %id,
+                    "dialog already terminated, ignoring transition to {}", state
+                );
+                return Ok(());
+            }
+            _ => {}
+        }
         info!("transitioning state: {} -> {}", old_state, state);
         *old_state = state;
         Ok(())

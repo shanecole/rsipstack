@@ -232,4 +232,27 @@ impl EndpointInner {
             body: body.unwrap_or_default(),
         }
     }
+
+    pub fn make_ack(&self, uri: rsip::Uri, resp: &Response) -> Request {
+        let mut headers = resp.headers.clone();
+        headers.retain(|h| {
+            matches!(
+                h,
+                Header::Via(_)
+                    | Header::CallId(_)
+                    | Header::From(_)
+                    | Header::To(_)
+                    | Header::MaxForwards(_)
+                    | Header::CSeq(_)
+            )
+        });
+        headers.unique_push(Header::UserAgent(self.user_agent.clone().into()));
+        rsip::Request {
+            method: rsip::Method::Ack,
+            uri,
+            headers: headers.into(),
+            body: vec![],
+            version: rsip::Version::V2,
+        }
+    }
 }

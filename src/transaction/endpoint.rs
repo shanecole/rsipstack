@@ -297,7 +297,7 @@ impl EndpointInner {
         msg: SipMessage,
         connection: SipConnection,
     ) -> Result<()> {
-        let mut key = match &msg {
+        let key = match &msg {
             SipMessage::Request(req) => {
                 TransactionKey::from_request(req, super::key::TransactionRole::Server)?
             }
@@ -305,20 +305,29 @@ impl EndpointInner {
                 TransactionKey::from_response(resp, super::key::TransactionRole::Client)?
             }
         };
+        match &msg {
+            SipMessage::Request(req) => {
+                match req.method() {
+                    rsip::Method::Ack => {}
+                    _ => {
+                        // check is the termination of an existing transaction
+                        let last_message = self
+                            .finished_transactions
+                            .lock()
+                            .unwrap()
+                            .get(&key)
+                            .map(|m| m.clone())
+                            .flatten();
 
-        // check is the termination of an existing transaction
-        let last_message = self
-            .finished_transactions
-            .lock()
-            .unwrap()
-            .get(&key)
-            .map(|m| m.clone())
-            .flatten();
-
-        if let Some(last_message) = last_message {
-            connection.send(last_message, None).await?;
-            return Ok(());
-        }
+                        if let Some(last_message) = last_message {
+                            connection.send(last_message, None).await?;
+                            return Ok(());
+                        }
+                    }
+                }
+            }
+            SipMessage::Response(_) => {}
+        };
 
         match self.transactions.lock().unwrap().get(&key) {
             Some(tu) => {
@@ -352,10 +361,22 @@ impl EndpointInner {
                 key,
             ));
         }
-
-        if matches!(request.method, rsip::Method::Ack | rsip::Method::Cancel) {
-            key =
-                TransactionKey::from_ack_or_cancel(&request, super::key::TransactionRole::Server)?;
+        match request.method {
+            rsip::Method::Cancel => {
+                let resp = self.make_response(
+                    &request,
+                    rsip::StatusCode::CallTransactionDoesNotExist,
+                    None,
+                );
+                let resp = if let Some(ref inspector) = self.inspector {
+                    inspector.before_send(resp.into())
+                } else {
+                    resp.into()
+                };
+                connection.send(resp, None).await?;
+                return Ok(());
+            }
+            _ => {}
         }
 
         let tx =

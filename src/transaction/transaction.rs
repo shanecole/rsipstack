@@ -403,7 +403,8 @@ impl Transaction {
             }
         }
     }
-    pub async fn send_ack(&mut self, ack: Request) -> Result<()> {
+
+    async fn send_ack(&mut self) -> Result<()> {
         if self.transaction_type != TransactionType::ClientInvite {
             return Err(Error::TransactionError(
                 "send_ack is only valid for client invite transactions".to_string(),
@@ -425,6 +426,20 @@ impl Transaction {
                 ));
             }
         }
+        let ack = match self.last_ack.clone() {
+            Some(ack) => ack,
+            None => match self.last_response {
+                Some(ref resp) => self
+                    .endpoint_inner
+                    .make_ack(self.original.uri.clone(), resp),
+                None => {
+                    return Err(Error::TransactionError(
+                        "no last response found to send ACK".to_string(),
+                        self.key.clone(),
+                    ));
+                }
+            },
+        };
         let ack = if let Some(ref inspector) = self.endpoint_inner.inspector {
             inspector.before_send(ack.to_owned().into())
         } else {
@@ -579,6 +594,7 @@ impl Transaction {
             }
             _ => {
                 if self.transaction_type == TransactionType::ClientInvite {
+                    self.send_ack().await.ok(); // send ACK for client invite
                     TransactionState::Completed
                 } else {
                     TransactionState::Terminated
@@ -829,6 +845,6 @@ impl Transaction {
 impl Drop for Transaction {
     fn drop(&mut self) {
         self.cleanup();
-        info!("transaction dropped: {}", self.key);
+        info!(key=%self.key, state=?self.state, "transaction dropped");
     }
 }

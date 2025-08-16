@@ -475,9 +475,6 @@ async fn handle_invite(state: AppState, mut tx: Transaction) -> Result<()> {
                 if let Some(msg) = msg {
                     match msg {
                         rsip::message::SipMessage::Request(req) => match req.method {
-                            rsip::Method::Ack => {
-                                inv_tx.send_ack(req).await?;
-                            }
                             rsip::Method::Cancel => {
                                 inv_tx.send_cancel(req).await?;
                             }

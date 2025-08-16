@@ -209,7 +209,7 @@ impl DialogLayer {
     }
 
     pub fn remove_dialog(&self, id: &DialogId) {
-        info!("remove dialog: {id}");
+        info!(%id, "remove dialog");
         self.inner
             .dialogs
             .write()
