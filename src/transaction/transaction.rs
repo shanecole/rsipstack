@@ -583,7 +583,7 @@ impl Transaction {
             TransactionType::ServerInvite | TransactionType::ServerNonInvite => return None,
             _ => {}
         }
-
+        let mut need_ack = false;
         let new_state = match resp.status_code.kind() {
             rsip::StatusCodeKind::Provisional => {
                 if resp.status_code == rsip::StatusCode::Trying {
@@ -594,7 +594,7 @@ impl Transaction {
             }
             _ => {
                 if self.transaction_type == TransactionType::ClientInvite {
-                    self.send_ack().await.ok(); // send ACK for client invite
+                    need_ack = true;
                     TransactionState::Completed
                 } else {
                     TransactionState::Terminated
@@ -610,6 +610,9 @@ impl Transaction {
 
         self.last_response.replace(resp.clone());
         self.transition(new_state).ok();
+        if need_ack {
+            self.send_ack().await.ok(); // send ACK for client invite
+        }
         return Some(SipMessage::Response(resp));
     }
 
