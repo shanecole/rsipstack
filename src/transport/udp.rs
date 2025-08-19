@@ -65,11 +65,28 @@ impl UdpConnection {
     pub async fn serve_loop(&self, sender: TransportSender) -> Result<()> {
         let mut buf = vec![0u8; 2048];
         loop {
-            let (len, addr) = match self.inner.conn.recv_from(&mut buf).await {
-                Ok((len, addr)) => (len, addr),
-                Err(e) => {
-                    warn!("error receiving UDP packet: {}", e);
-                    continue;
+            let (len, addr) = tokio::select! {
+                // Check for cancellation on each iteration
+                _ = async {
+                    if let Some(ref cancel_token) = self.cancel_token {
+                        cancel_token.cancelled().await;
+                    } else {
+                        // If no cancel token, wait forever
+                        std::future::pending::<()>().await;
+                    }
+                } => {
+                    debug!("UDP serve_loop cancelled");
+                    return Ok(());
+                }
+                // Receive UDP packets
+                result = self.inner.conn.recv_from(&mut buf) => {
+                    match result {
+                        Ok((len, addr)) => (len, addr),
+                        Err(e) => {
+                            warn!("error receiving UDP packet: {}", e);
+                            continue;
+                        }
+                    }
                 }
             };
 
