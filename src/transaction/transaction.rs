@@ -462,7 +462,9 @@ impl Transaction {
                 TransactionEvent::Received(msg, connection) => {
                     if let Some(msg) = match msg {
                         SipMessage::Request(req) => self.on_received_request(req, connection).await,
-                        SipMessage::Response(resp) => self.on_received_response(resp).await,
+                        SipMessage::Response(resp) => {
+                            self.on_received_response(resp, connection).await
+                        }
                     } {
                         if let Some(ref inspector) = self.endpoint_inner.inspector {
                             return Some(inspector.after_received(msg));
@@ -578,7 +580,11 @@ impl Transaction {
         None
     }
 
-    async fn on_received_response(&mut self, resp: Response) -> Option<SipMessage> {
+    async fn on_received_response(
+        &mut self,
+        resp: Response,
+        connection: Option<SipConnection>,
+    ) -> Option<SipMessage> {
         match self.transaction_type {
             TransactionType::ServerInvite | TransactionType::ServerNonInvite => return None,
             _ => {}
@@ -594,7 +600,9 @@ impl Transaction {
             }
             _ => {
                 if self.transaction_type == TransactionType::ClientInvite {
-                    need_ack = true;
+                    if connection.is_some() {
+                        need_ack = true;
+                    }
                     TransactionState::Completed
                 } else {
                     TransactionState::Terminated
@@ -725,10 +733,6 @@ impl Transaction {
                             .take()
                             .map(|id| self.endpoint_inner.timers.cancel(id));
                     }
-                    self.timer_a.replace(self.endpoint_inner.timers.timeout(
-                        self.endpoint_inner.option.t1,
-                        TransactionTimer::TimerA(self.key.clone(), self.endpoint_inner.option.t1),
-                    ));
                 }
 
                 self.timer_b
