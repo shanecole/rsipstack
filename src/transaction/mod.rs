@@ -88,6 +88,18 @@ pub enum TransactionState {
     Terminated,
 }
 
+impl std::fmt::Display for TransactionState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TransactionState::Calling => write!(f, "Calling"),
+            TransactionState::Trying => write!(f, "Trying"),
+            TransactionState::Proceeding => write!(f, "Proceeding"),
+            TransactionState::Completed => write!(f, "Completed"),
+            TransactionState::Confirmed => write!(f, "Confirmed"),
+            TransactionState::Terminated => write!(f, "Terminated"),
+        }
+    }
+}
 /// SIP Transaction Type
 ///
 /// `TransactionType` distinguishes between the four types of SIP transactions
@@ -145,7 +157,16 @@ pub enum TransactionType {
     ServerInvite,
     ServerNonInvite,
 }
-
+impl std::fmt::Display for TransactionType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TransactionType::ClientInvite => write!(f, "ClientInvite"),
+            TransactionType::ClientNonInvite => write!(f, "ClientNonInvite"),
+            TransactionType::ServerInvite => write!(f, "ServerInvite"),
+            TransactionType::ServerNonInvite => write!(f, "ServerNonInvite"),
+        }
+    }
+}
 /// SIP Transaction Timers
 ///
 /// `TransactionTimer` represents the various timers used in SIP transactions

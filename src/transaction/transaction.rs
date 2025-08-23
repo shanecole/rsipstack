@@ -175,7 +175,7 @@ impl Transaction {
         endpoint_inner: EndpointInnerRef,
     ) -> Self {
         let (tu_sender, tu_receiver) = unbounded_channel();
-        info!("transaction created {:?} {}", transaction_type, key);
+        info!(%key, "transaction created");
         let tx = Self {
             transaction_type,
             endpoint_inner,
@@ -848,6 +848,6 @@ impl Transaction {
 impl Drop for Transaction {
     fn drop(&mut self) {
         self.cleanup();
-        info!(key=%self.key, state=?self.state, "transaction dropped");
+        info!(key=%self.key, state=%self.state, "transaction dropped");
     }
 }

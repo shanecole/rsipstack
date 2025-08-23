@@ -242,15 +242,15 @@ impl EndpointInner {
                     match self.on_received_message(msg, connection).await {
                         Ok(()) => {}
                         Err(e) => {
-                            warn!("on_received_message error:{} {:?}", from, e);
+                            warn!(addr=%from,"on_received_message error: {}", e);
                         }
                     }
                 }
                 TransportEvent::New(t) => {
-                    info!(addr=?t.get_addr(), "new connection");
+                    info!(addr=%t.get_addr(), "new connection");
                 }
                 TransportEvent::Closed(t) => {
-                    info!(addr=?t.get_addr(), "closed connection");
+                    info!(addr=%t.get_addr(), "closed connection");
                 }
             }
         }
@@ -262,7 +262,7 @@ impl EndpointInner {
             for t in self.timers.poll(Instant::now()) {
                 match t {
                     TransactionTimer::TimerCleanup(key) => {
-                        debug!("TimerCleanup {}", key);
+                        trace!(%key, "TimerCleanup");
                         self.transactions.lock().unwrap().remove(&key);
                         self.finished_transactions.lock().unwrap().remove(&key);
                         continue;

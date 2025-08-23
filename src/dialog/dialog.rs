@@ -476,7 +476,7 @@ impl DialogInner {
                 info!(
                     id = self.id.lock().unwrap().to_string(),
                     method = %method,
-                    destination=?tx.destination,
+                    destination=tx.destination.as_ref().map(|d| d.to_string()).as_deref(),
                     key=%tx.key,
                     "request sent done",
                 );
@@ -484,7 +484,11 @@ impl DialogInner {
             Err(e) => {
                 warn!(
                     id = self.id.lock().unwrap().to_string(),
-                    destination=?tx.destination,"failed to send request error: {}\n{}", e, tx.original);
+                    destination = tx.destination.as_ref().map(|d| d.to_string()).as_deref(),
+                    "failed to send request error: {}\n{}",
+                    e,
+                    tx.original
+                );
                 return Err(e);
             }
         }

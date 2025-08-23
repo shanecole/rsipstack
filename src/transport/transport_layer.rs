@@ -310,7 +310,7 @@ impl TransportLayerInner {
             match sender_clone.send(TransportEvent::New(transport.clone())) {
                 Ok(()) => {}
                 Err(e) => {
-                    warn!(addr=?transport.get_addr(), "Error sending new connection event: {:?}", e);
+                    warn!(addr=%transport.get_addr(), "Error sending new connection event: {:?}", e);
                     return;
                 }
             }
@@ -319,7 +319,7 @@ impl TransportLayerInner {
                 _ = transport.serve_loop(sender_clone.clone()) => {
                 }
             }
-            info!(addr=?transport.get_addr(), "transport serve_loop exited");
+            info!(addr=%transport.get_addr(), "transport serve_loop exited");
             sender_clone.send(TransportEvent::Closed(transport)).ok();
         });
     }
