@@ -329,6 +329,11 @@ impl EndpointInner {
             SipMessage::Response(_) => {}
         };
 
+        let msg = if let Some(inspector) = &self.inspector {
+            inspector.after_received(msg)
+        } else {
+            msg
+        };
         match self.transactions.lock().unwrap().get(&key) {
             Some(tu) => {
                 tu.send(TransactionEvent::Received(msg, Some(connection)))

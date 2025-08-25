@@ -143,11 +143,8 @@ impl UdpConnection {
             };
 
             debug!(
-                "received {} {} -> {} {}",
-                len,
-                addr,
-                self.get_addr(),
-                undecoded
+                len, src=%addr,dest=%self.get_addr(), message=undecoded,
+                "udp received"
             );
 
             sender.send(TransportEvent::Incoming(
@@ -171,7 +168,10 @@ impl UdpConnection {
             None => SipConnection::get_destination(&msg),
         }?;
         let buf = msg.to_string();
-        debug!(src=%self.get_addr(),"send {} -> {} {}", buf.len(), destination, buf);
+
+        debug!(len=buf.len(), src=%self.get_addr(),
+        dest=%destination, message=%buf,
+        "udp send");
 
         self.inner
             .conn
