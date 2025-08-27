@@ -250,8 +250,6 @@ pub enum TransactionTimer {
     TimerA(TransactionKey, Duration),
     TimerB(TransactionKey),
     TimerD(TransactionKey),
-    TimerE(TransactionKey),
-    TimerF(TransactionKey),
     TimerK(TransactionKey),
     TimerG(TransactionKey, Duration),
     TimerCleanup(TransactionKey),
@@ -263,8 +261,6 @@ impl TransactionTimer {
             TransactionTimer::TimerA(key, _) => key,
             TransactionTimer::TimerB(key) => key,
             TransactionTimer::TimerD(key) => key,
-            TransactionTimer::TimerE(key) => key,
-            TransactionTimer::TimerF(key) => key,
             TransactionTimer::TimerG(key, _) => key,
             TransactionTimer::TimerK(key) => key,
             TransactionTimer::TimerCleanup(key) => key,
@@ -280,8 +276,6 @@ impl std::fmt::Display for TransactionTimer {
             }
             TransactionTimer::TimerB(key) => write!(f, "TimerB: {}", key),
             TransactionTimer::TimerD(key) => write!(f, "TimerD: {}", key),
-            TransactionTimer::TimerE(key) => write!(f, "TimerE: {}", key),
-            TransactionTimer::TimerF(key) => write!(f, "TimerF: {}", key),
             TransactionTimer::TimerG(key, duration) => {
                 write!(f, "TimerG: {} {}", key, duration.as_millis())
             }

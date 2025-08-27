@@ -40,7 +40,7 @@ impl Default for EndpointOption {
     fn default() -> Self {
         EndpointOption {
             t1: Duration::from_millis(500),
-            t4: Duration::from_secs(4),
+            t4: Duration::from_secs(5),
             t1x64: Duration::from_millis(64 * 500),
             timerb: Duration::from_secs(64),
             ignore_out_of_dialog_option: true,
@@ -341,19 +341,9 @@ impl EndpointInner {
                                 if resp.status_code.kind() == rsip::StatusCodeKind::Provisional {
                                     return Ok(());
                                 }
-
                                 match resp.to_header()?.tag() {
                                     Ok(Some(tag)) => {
-                                        last_req
-                                            .to_header_mut()
-                                            .and_then(|h| {
-                                                if h.tag().ok().is_none() {
-                                                    h.mut_tag(tag)
-                                                } else {
-                                                    Ok(h)
-                                                }
-                                            })
-                                            .ok();
+                                        last_req.to_header_mut().and_then(|h| h.mut_tag(tag)).ok();
                                     }
                                     _ => {}
                                 }

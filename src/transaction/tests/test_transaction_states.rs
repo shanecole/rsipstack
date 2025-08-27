@@ -93,8 +93,8 @@ async fn test_server_invite_transaction_creation() -> crate::Result<()> {
         None,
     );
 
-    // Initial state should be Calling
-    assert_eq!(tx.state, TransactionState::Calling);
+    // Initial state should be Trying
+    assert_eq!(tx.state, TransactionState::Trying);
     assert_eq!(tx.transaction_type, TransactionType::ServerInvite);
 
     Ok(())
@@ -115,8 +115,8 @@ async fn test_server_non_invite_transaction_creation() -> crate::Result<()> {
         None,
     );
 
-    // Initial state should be Calling
-    assert_eq!(tx.state, TransactionState::Calling);
+    // Initial state should be Trying
+    assert_eq!(tx.state, TransactionState::Trying);
     assert_eq!(tx.transaction_type, TransactionType::ServerNonInvite);
 
     Ok(())

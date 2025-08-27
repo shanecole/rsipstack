@@ -179,7 +179,7 @@ impl Transaction {
             transaction_type,
             TransactionType::ServerInvite | TransactionType::ServerNonInvite
         ) {
-            TransactionState::Calling
+            TransactionState::Trying
         } else {
             TransactionState::Nothing
         };
@@ -737,43 +737,28 @@ impl Transaction {
                         );
                         self.timer_a.replace(timer_a);
                     }
+                    self.timer_b.replace(self.endpoint_inner.timers.timeout(
+                        self.endpoint_inner.option.timerb,
+                        TransactionTimer::TimerB(self.key.clone()),
+                    ));
                 }
             }
-            TransactionState::Trying => {
-                let connection = self.connection.as_ref().ok_or(Error::TransactionError(
-                    "no connection found".to_string(),
-                    self.key.clone(),
-                ))?;
+            TransactionState::Trying | TransactionState::Proceeding => {
+                self.timer_a
+                    .take()
+                    .map(|id| self.endpoint_inner.timers.cancel(id));
 
                 if matches!(
                     self.transaction_type,
                     TransactionType::ClientInvite | TransactionType::ClientNonInvite
-                ) {
-                    if !connection.is_reliable() {
-                        self.timer_a
-                            .take()
-                            .map(|id| self.endpoint_inner.timers.cancel(id));
-                    }
+                ) && self.timer_b.is_none()
+                {
+                    let timer_b = self.endpoint_inner.timers.timeout(
+                        self.endpoint_inner.option.timerb,
+                        TransactionTimer::TimerB(self.key.clone()),
+                    );
+                    self.timer_b.replace(timer_b);
                 }
-
-                self.timer_b
-                    .take()
-                    .map(|id| self.endpoint_inner.timers.cancel(id));
-                self.timer_b.replace(self.endpoint_inner.timers.timeout(
-                    self.endpoint_inner.option.timerb,
-                    TransactionTimer::TimerB(self.key.clone()),
-                ));
-            }
-            TransactionState::Proceeding => {
-                self.timer_a
-                    .take()
-                    .map(|id| self.endpoint_inner.timers.cancel(id));
-                // start Timer B
-                let timer_b = self.endpoint_inner.timers.timeout(
-                    self.endpoint_inner.option.timerb,
-                    TransactionTimer::TimerB(self.key.clone()),
-                );
-                self.timer_b.replace(timer_b);
             }
             TransactionState::Completed => {
                 self.timer_a
