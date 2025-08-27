@@ -246,6 +246,11 @@ impl EndpointInner {
                     | Header::CSeq(_)
             )
         });
+        headers.iter_mut().for_each(|h| {
+            if let Header::CSeq(cseq) = h {
+                cseq.mut_method(rsip::Method::Ack).ok();
+            }
+        });
         headers.unique_push(Header::UserAgent(self.user_agent.clone().into()));
         rsip::Request {
             method: rsip::Method::Ack,
