@@ -436,14 +436,8 @@ impl EndpointInner {
         self.transactions.lock().unwrap().remove(key);
 
         if let Some(msg) = last_message {
-            let timer_k_duration = if msg.is_request() {
-                self.option.t4
-            } else {
-                self.option.t1x64
-            };
-
             self.timers.timeout(
-                timer_k_duration,
+                self.option.t1x64,
                 TransactionTimer::TimerCleanup(key.clone()), // maybe use TimerK ???
             );
 
