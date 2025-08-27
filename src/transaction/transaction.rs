@@ -404,18 +404,13 @@ impl Transaction {
         }
     }
 
-    async fn send_ack(&mut self) -> Result<()> {
+    async fn send_ack(&mut self, connection: Option<SipConnection>) -> Result<()> {
         if self.transaction_type != TransactionType::ClientInvite {
             return Err(Error::TransactionError(
                 "send_ack is only valid for client invite transactions".to_string(),
                 self.key.clone(),
             ));
         }
-
-        let connection = self.connection.as_ref().ok_or(Error::TransactionError(
-            "no connection found".to_string(),
-            self.key.clone(),
-        ))?;
 
         match self.state {
             TransactionState::Completed => {} // must be in completed state, to send ACK
@@ -445,9 +440,9 @@ impl Transaction {
         } else {
             ack.to_owned().into()
         };
-        connection
-            .send(ack.clone(), self.destination.as_ref())
-            .await?;
+        if let Some(conn) = connection {
+            conn.send(ack.clone(), self.destination.as_ref()).await?;
+        }
         match ack {
             SipMessage::Request(ack) => self.last_ack.replace(ack),
             _ => None,
@@ -589,7 +584,6 @@ impl Transaction {
             TransactionType::ServerInvite | TransactionType::ServerNonInvite => return None,
             _ => {}
         }
-        let mut need_ack = false;
         let new_state = match resp.status_code.kind() {
             rsip::StatusCodeKind::Provisional => {
                 if resp.status_code == rsip::StatusCode::Trying {
@@ -600,9 +594,6 @@ impl Transaction {
             }
             _ => {
                 if self.transaction_type == TransactionType::ClientInvite {
-                    if connection.is_some() {
-                        need_ack = true;
-                    }
                     TransactionState::Completed
                 } else {
                     TransactionState::Terminated
@@ -618,9 +609,7 @@ impl Transaction {
 
         self.last_response.replace(resp.clone());
         self.transition(new_state).ok();
-        if need_ack {
-            self.send_ack().await.ok(); // send ACK for client invite
-        }
+        self.send_ack(connection).await.ok(); // send ACK for client invite
         return Some(SipMessage::Response(resp));
     }
 
