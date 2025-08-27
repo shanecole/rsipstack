@@ -18,7 +18,6 @@ use std::{
 use tokio::{
     select,
     sync::mpsc::{error, unbounded_channel},
-    time::sleep,
 };
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, trace, warn};
@@ -208,7 +207,7 @@ impl EndpointInner {
         select! {
             _ = self.cancel_token.cancelled() => {
             },
-            r = self.clone().process_timer() => {
+            r = self.process_timer() => {
                 _ = r?
             },
             r = self.clone().process_transport_layer() => {
@@ -257,8 +256,9 @@ impl EndpointInner {
         Ok(())
     }
 
-    pub async fn process_timer(self: Arc<Self>) -> Result<()> {
-        while !self.cancel_token.is_cancelled() {
+    pub async fn process_timer(&self) -> Result<()> {
+        let mut ticker = tokio::time::interval(self.timer_interval);
+        loop {
             for t in self.timers.poll(Instant::now()) {
                 match t {
                     TransactionTimer::TimerCleanup(key) => {
@@ -282,9 +282,8 @@ impl EndpointInner {
                     }
                 }
             }
-            sleep(self.timer_interval).await;
+            ticker.tick().await;
         }
-        Ok(())
     }
 
     pub fn attach_incoming_sender(&self, sender: Option<TransactionSender>) {
@@ -326,7 +325,42 @@ impl EndpointInner {
                     }
                 }
             }
-            SipMessage::Response(_) => {}
+            SipMessage::Response(resp) => {
+                let last_message = self
+                    .finished_transactions
+                    .lock()
+                    .unwrap()
+                    .get(&key)
+                    .map(|m| m.clone())
+                    .flatten();
+
+                if let Some(mut last_message) = last_message {
+                    match last_message {
+                        SipMessage::Request(ref mut last_req) => {
+                            if last_req.method() == &rsip::Method::Ack {
+                                match resp.to_header()?.tag() {
+                                    Ok(Some(tag)) => {
+                                        last_req
+                                            .to_header_mut()
+                                            .and_then(|h| {
+                                                if h.tag().ok().is_none() {
+                                                    h.mut_tag(tag)
+                                                } else {
+                                                    Ok(h)
+                                                }
+                                            })
+                                            .ok();
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                    connection.send(last_message, None).await?;
+                    return Ok(());
+                }
+            }
         };
 
         let msg = if let Some(inspector) = &self.inspector {

@@ -366,7 +366,7 @@ impl Transaction {
             _ => {
                 return Err(Error::TransactionError(
                     format!(
-                        "invalid state transition from {:?} to {:?}",
+                        "invalid state transition from {} to {}",
                         self.state, target
                     ),
                     self.key.clone(),
