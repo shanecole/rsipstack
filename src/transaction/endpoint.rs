@@ -338,6 +338,10 @@ impl EndpointInner {
                     match last_message {
                         SipMessage::Request(ref mut last_req) => {
                             if last_req.method() == &rsip::Method::Ack {
+                                if resp.status_code.kind() == rsip::StatusCodeKind::Provisional {
+                                    return Ok(());
+                                }
+
                                 match resp.to_header()?.tag() {
                                     Ok(Some(tag)) => {
                                         last_req
