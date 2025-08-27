@@ -430,7 +430,7 @@ impl EndpointInner {
     }
 
     pub fn attach_transaction(&self, key: &TransactionKey, tu_sender: TransactionEventSender) {
-        trace!("attach_transaction {}", key);
+        trace!(%key, "attach transaction");
         self.transactions
             .lock()
             .unwrap()
@@ -438,7 +438,7 @@ impl EndpointInner {
     }
 
     pub fn detach_transaction(&self, key: &TransactionKey, last_message: Option<SipMessage>) {
-        trace!("detach_transaction {}", key);
+        trace!(%key, "detach transaction");
         self.transactions.lock().unwrap().remove(key);
 
         if let Some(msg) = last_message {

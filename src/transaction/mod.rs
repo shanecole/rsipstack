@@ -35,7 +35,8 @@ pub type TransactionSender = UnboundedSender<Transaction>;
 ///
 /// # States
 ///
-/// * `Calling` - Initial state for client transactions when request is sent
+/// * `Nothing` - Initial state for client transactions created
+/// * `Calling` - Initial state for client transactions when request is sent or received
 /// * `Trying` - Request has been sent/received, waiting for response/processing
 /// * `Proceeding` - Provisional response received/sent (1xx except 100 Trying)
 /// * `Completed` - Final response received/sent, waiting for ACK (INVITE) or cleanup
@@ -46,21 +47,21 @@ pub type TransactionSender = UnboundedSender<Transaction>;
 ///
 /// ## Client Non-INVITE Transaction
 /// ```text
-/// Calling → Trying → Proceeding → Completed → Terminated
+/// Nothing → Calling → Trying → Proceeding → Completed → Terminated
 /// ```
 ///
 /// ## Client INVITE Transaction  
 /// ```text
-/// Calling → Trying → Proceeding → Completed → Terminated
+/// Nothing → Calling → Trying → Proceeding → Completed → Terminated
 ///                                      ↓
-///                                 Confirmed → Terminated
+///                                   Confirmed → Terminated
 /// ```
 ///
 /// ## Server Transactions
 /// ```text
-/// Trying → Proceeding → Completed → Terminated
+/// Calling → Trying → Proceeding → Completed → Terminated
 ///                           ↓
-///                      Confirmed → Terminated (INVITE only)
+///                         Confirmed → Terminated (INVITE only)
 /// ```
 ///
 /// # Examples
@@ -70,7 +71,8 @@ pub type TransactionSender = UnboundedSender<Transaction>;
 ///
 /// let state = TransactionState::Proceeding;
 /// match state {
-///     TransactionState::Calling => println!("Transaction starting"),
+///     TransactionState::Nothing => println!("Transaction starting"),
+///     TransactionState::Calling => println!("Request sent"),
 ///     TransactionState::Trying => println!("Request sent/received"),
 ///     TransactionState::Proceeding => println!("Provisional response"),
 ///     TransactionState::Completed => println!("Final response"),
@@ -80,6 +82,7 @@ pub type TransactionSender = UnboundedSender<Transaction>;
 /// ```
 #[derive(Debug, Clone, PartialEq)]
 pub enum TransactionState {
+    Nothing,
     Calling,
     Trying,
     Proceeding,
@@ -91,6 +94,7 @@ pub enum TransactionState {
 impl std::fmt::Display for TransactionState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            TransactionState::Nothing => write!(f, "Nothing"),
             TransactionState::Calling => write!(f, "Calling"),
             TransactionState::Trying => write!(f, "Trying"),
             TransactionState::Proceeding => write!(f, "Proceeding"),

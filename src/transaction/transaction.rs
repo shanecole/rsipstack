@@ -175,7 +175,15 @@ impl Transaction {
         endpoint_inner: EndpointInnerRef,
     ) -> Self {
         let (tu_sender, tu_receiver) = unbounded_channel();
-        info!(%key, "transaction created");
+        let state = if matches!(
+            transaction_type,
+            TransactionType::ServerInvite | TransactionType::ServerNonInvite
+        ) {
+            TransactionState::Calling
+        } else {
+            TransactionState::Nothing
+        };
+        info!(%key, %state, "transaction created");
         let tx = Self {
             transaction_type,
             endpoint_inner,
@@ -183,7 +191,7 @@ impl Transaction {
             key,
             original,
             destination: None,
-            state: TransactionState::Calling,
+            state,
             last_response: None,
             last_ack: None,
             timer_a: None,
@@ -270,7 +278,7 @@ impl Transaction {
         };
 
         connection.send(message, self.destination.as_ref()).await?;
-        self.transition(TransactionState::Trying).map(|_| ())
+        self.transition(TransactionState::Calling).map(|_| ())
     }
 
     pub async fn reply_with(
@@ -348,7 +356,11 @@ impl Transaction {
 
     fn can_transition(&self, target: &TransactionState) -> Result<()> {
         match (&self.state, target) {
-            (&TransactionState::Calling, &TransactionState::Trying)
+            (&TransactionState::Nothing, &TransactionState::Calling)
+            | (&TransactionState::Nothing, &TransactionState::Trying)
+            | (&TransactionState::Nothing, &TransactionState::Proceeding)
+            | (&TransactionState::Nothing, &TransactionState::Terminated)
+            | (&TransactionState::Calling, &TransactionState::Trying)
             | (&TransactionState::Calling, &TransactionState::Proceeding)
             | (&TransactionState::Calling, &TransactionState::Completed)
             | (&TransactionState::Calling, &TransactionState::Terminated)
@@ -615,7 +627,7 @@ impl Transaction {
 
     async fn on_timer(&mut self, timer: TransactionTimer) -> Result<()> {
         match self.state {
-            TransactionState::Trying => {
+            TransactionState::Calling | TransactionState::Trying => {
                 if matches!(
                     self.transaction_type,
                     TransactionType::ClientInvite | TransactionType::ClientNonInvite
@@ -704,8 +716,28 @@ impl Transaction {
             return Ok(self.state.clone());
         }
         match state {
+            TransactionState::Nothing => {}
             TransactionState::Calling => {
-                // not state can transition to Calling
+                let connection = self.connection.as_ref().ok_or(Error::TransactionError(
+                    "no connection found".to_string(),
+                    self.key.clone(),
+                ))?;
+
+                if matches!(
+                    self.transaction_type,
+                    TransactionType::ClientInvite | TransactionType::ClientNonInvite
+                ) {
+                    if !connection.is_reliable() {
+                        let timer_a = self.endpoint_inner.timers.timeout(
+                            self.endpoint_inner.option.t1,
+                            TransactionTimer::TimerA(
+                                self.key.clone(),
+                                self.endpoint_inner.option.t1,
+                            ),
+                        );
+                        self.timer_a.replace(timer_a);
+                    }
+                }
             }
             TransactionState::Trying => {
                 let connection = self.connection.as_ref().ok_or(Error::TransactionError(
