@@ -1,6 +1,7 @@
 use super::endpoint::EndpointInnerRef;
 use super::key::TransactionKey;
 use super::{SipConnection, TransactionState, TransactionTimer, TransactionType};
+use crate::dialog::DialogId;
 use crate::transaction::make_tag;
 use crate::transport::SipAddr;
 use crate::{Error, Result};
@@ -344,13 +345,12 @@ impl Transaction {
             response.to_owned().into()
         };
         trace!(key = %self.key, "responding with {}", response);
-        connection
-            .send(response.clone(), self.destination.as_ref())
-            .await?;
-        match response {
+
+        match response.clone() {
             SipMessage::Response(resp) => self.last_response.replace(resp),
             _ => None,
         };
+        connection.send(response, self.destination.as_ref()).await?;
         self.transition(new_state).map(|_| ())
     }
 
@@ -447,18 +447,19 @@ impl Transaction {
                 }
             },
         };
+
         let ack = if let Some(ref inspector) = self.endpoint_inner.inspector {
             inspector.before_send(ack.to_owned().into())
         } else {
             ack.to_owned().into()
         };
-        if let Some(conn) = connection {
-            conn.send(ack.clone(), self.destination.as_ref()).await?;
-        }
-        match ack {
+        match ack.clone() {
             SipMessage::Request(ack) => self.last_ack.replace(ack),
             _ => None,
         };
+        if let Some(conn) = connection {
+            conn.send(ack, self.destination.as_ref()).await?;
+        }
         // client send ack and transition to Terminated
         self.transition(TransactionState::Terminated).map(|_| ())
     }
@@ -529,7 +530,6 @@ impl Transaction {
         if self.connection.is_none() && connection.is_some() {
             self.connection = connection;
         }
-
         if req.method == Method::Cancel {
             match self.state {
                 TransactionState::Proceeding
@@ -576,7 +576,7 @@ impl Transaction {
                     self.respond(last_response.to_owned()).await.ok();
                 }
             }
-            TransactionState::Completed => {
+            TransactionState::Completed | TransactionState::Confirmed => {
                 if req.method == Method::Ack {
                     self.transition(TransactionState::Confirmed).ok();
                     return Some(req.into());
@@ -699,6 +699,8 @@ impl Transaction {
                     self.timer_g.replace(timer_g);
                 } else if let TransactionTimer::TimerD(_) = timer {
                     self.transition(TransactionState::Terminated)?;
+                } else if let TransactionTimer::TimerK(_) = timer {
+                    self.transition(TransactionState::Terminated)?;
                 }
             }
             TransactionState::Confirmed => {
@@ -784,8 +786,25 @@ impl Transaction {
                         );
                         self.timer_g.replace(timer_g);
                     }
+                    info!(key=%self.key, last = self.last_response.is_none(), "entered confirmed state, waiting for ACK");
+                    match self.last_response {
+                        Some(ref resp) => {
+                            let dialog_id = DialogId::try_from(resp)?;
+                            self.endpoint_inner
+                                .waiting_ack
+                                .lock()
+                                .unwrap()
+                                .insert(dialog_id, self.key.clone());
+                        }
+                        _ => {}
+                    }
+                    // start Timer K, wait for ACK
+                    let timer_k = self.endpoint_inner.timers.timeout(
+                        self.endpoint_inner.option.t4,
+                        TransactionTimer::TimerK(self.key.clone()),
+                    );
+                    self.timer_k.replace(timer_k);
                 }
-
                 // start Timer D
                 let timer_d = self.endpoint_inner.timers.timeout(
                     self.endpoint_inner.option.t1x64,
@@ -795,7 +814,6 @@ impl Transaction {
             }
             TransactionState::Confirmed => {
                 self.cleanup_timer();
-                // start Timer K, wait for ACK
                 let timer_k = self.endpoint_inner.timers.timeout(
                     self.endpoint_inner.option.t4,
                     TransactionTimer::TimerK(self.key.clone()),
@@ -839,6 +857,20 @@ impl Transaction {
         }
         self.is_cleaned_up = true;
         self.cleanup_timer();
+
+        match self.last_response {
+            Some(ref resp) => match DialogId::try_from(resp) {
+                Ok(dialog_id) => self
+                    .endpoint_inner
+                    .waiting_ack
+                    .lock()
+                    .unwrap()
+                    .remove(&dialog_id),
+                Err(_) => None,
+            },
+            _ => None,
+        };
+
         let last_message = {
             match self.transaction_type {
                 TransactionType::ClientInvite => {

@@ -1,5 +1,7 @@
+use crate::transaction::make_via_branch;
+
 use super::{endpoint::EndpointInner, make_call_id};
-use rsip::{Header, Request, Response, StatusCode};
+use rsip::{prelude::ToTypedHeader, Header, Request, Response, StatusCode};
 
 impl EndpointInner {
     /// Create a SIP request message
@@ -235,6 +237,20 @@ impl EndpointInner {
 
     pub fn make_ack(&self, uri: rsip::Uri, resp: &Response) -> Request {
         let mut headers = resp.headers.clone();
+
+        if resp.status_code.kind() == rsip::StatusCodeKind::Successful {
+            for h in headers.iter_mut() {
+                if let Header::Via(via) = h {
+                    if let Ok(mut typed_via) = via.typed() {
+                        typed_via
+                            .params
+                            .retain(|p| !matches!(p, rsip::Param::Branch(_)));
+                        *via = typed_via.with_param(make_via_branch()).untyped();
+                    }
+                }
+            }
+        }
+
         headers.retain(|h| {
             matches!(
                 h,

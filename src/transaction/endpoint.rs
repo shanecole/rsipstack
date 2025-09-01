@@ -6,6 +6,7 @@ use super::{
     SipConnection, TransactionReceiver, TransactionSender, TransactionTimer,
 };
 use crate::{
+    dialog::DialogId,
     transport::{SipAddr, TransportEvent, TransportLayer},
     Error, Result, USER_AGENT,
 };
@@ -40,7 +41,7 @@ impl Default for EndpointOption {
     fn default() -> Self {
         EndpointOption {
             t1: Duration::from_millis(500),
-            t4: Duration::from_secs(5),
+            t4: Duration::from_secs(4),
             t1x64: Duration::from_millis(64 * 500),
             timerb: Duration::from_secs(64),
             ignore_out_of_dialog_option: true,
@@ -87,6 +88,7 @@ pub struct EndpointInner {
     pub transport_layer: TransportLayer,
     pub finished_transactions: Mutex<HashMap<TransactionKey, Option<SipMessage>>>,
     pub transactions: Mutex<HashMap<TransactionKey, TransactionEventSender>>,
+    pub waiting_ack: Mutex<HashMap<DialogId, TransactionKey>>,
     incoming_sender: Mutex<Option<TransactionSender>>,
     cancel_token: CancellationToken,
     timer_interval: Duration,
@@ -195,6 +197,7 @@ impl EndpointInner {
             transport_layer,
             transactions: Mutex::new(HashMap::new()),
             finished_transactions: Mutex::new(HashMap::new()),
+            waiting_ack: Mutex::new(HashMap::new()),
             timer_interval: timer_interval.unwrap_or(Duration::from_millis(20)),
             cancel_token,
             incoming_sender: Mutex::new(None),
@@ -296,7 +299,7 @@ impl EndpointInner {
         msg: SipMessage,
         connection: SipConnection,
     ) -> Result<()> {
-        let key = match &msg {
+        let mut key = match &msg {
             SipMessage::Request(req) => {
                 TransactionKey::from_request(req, super::key::TransactionRole::Server)?
             }
@@ -307,22 +310,29 @@ impl EndpointInner {
         match &msg {
             SipMessage::Request(req) => {
                 match req.method() {
-                    rsip::Method::Ack => {}
-                    _ => {
-                        // check is the termination of an existing transaction
-                        let last_message = self
-                            .finished_transactions
-                            .lock()
-                            .unwrap()
-                            .get(&key)
-                            .map(|m| m.clone())
-                            .flatten();
-
-                        if let Some(last_message) = last_message {
-                            connection.send(last_message, None).await?;
-                            return Ok(());
+                    rsip::Method::Ack => match DialogId::try_from(req) {
+                        Ok(dialog_id) => {
+                            let tx_key = self.waiting_ack.lock().unwrap().get(&dialog_id).cloned();
+                            if let Some(tx_key) = tx_key {
+                                key = tx_key;
+                            }
                         }
-                    }
+                        Err(_) => {}
+                    },
+                    _ => {}
+                }
+                // check is the termination of an existing transaction
+                let last_message = self
+                    .finished_transactions
+                    .lock()
+                    .unwrap()
+                    .get(&key)
+                    .map(|m| m.clone())
+                    .flatten();
+
+                if let Some(last_message) = last_message {
+                    connection.send(last_message, None).await?;
+                    return Ok(());
                 }
             }
             SipMessage::Response(resp) => {
@@ -409,6 +419,7 @@ impl EndpointInner {
                 connection.send(resp, None).await?;
                 return Ok(());
             }
+            rsip::Method::Ack => return Ok(()),
             _ => {}
         }
 
