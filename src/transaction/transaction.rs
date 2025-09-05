@@ -438,7 +438,7 @@ impl Transaction {
             None => match self.last_response {
                 Some(ref resp) => self
                     .endpoint_inner
-                    .make_ack(self.original.uri.clone(), resp),
+                    .make_ack(self.original.uri.clone(), resp)?,
                 None => {
                     return Err(Error::TransactionError(
                         "no last response found to send ACK".to_string(),
