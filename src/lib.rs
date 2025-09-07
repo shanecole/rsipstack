@@ -48,7 +48,7 @@
 //!         .build();
 //!
 //!     // Get incoming transactions
-//!     let mut incoming = endpoint.incoming_transactions();
+//!     let mut incoming = endpoint.incoming_transactions().expect("incoming_transactions");
 //!
 //!     // Start the endpoint (in production, you'd run this in a separate task)
 //!     // let endpoint_inner = endpoint.inner.clone();

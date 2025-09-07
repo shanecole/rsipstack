@@ -792,9 +792,10 @@ impl Transaction {
                             let dialog_id = DialogId::try_from(resp)?;
                             self.endpoint_inner
                                 .waiting_ack
-                                .lock()
-                                .unwrap()
-                                .insert(dialog_id, self.key.clone());
+                                .write()
+                                .as_mut()
+                                .and_then(|wa| Ok(wa.insert(dialog_id, self.key.clone())))
+                                .ok();
                         }
                         _ => {}
                     }
@@ -863,9 +864,10 @@ impl Transaction {
                 Ok(dialog_id) => self
                     .endpoint_inner
                     .waiting_ack
-                    .lock()
-                    .unwrap()
-                    .remove(&dialog_id),
+                    .write()
+                    .as_mut()
+                    .map(|wa| wa.remove(&dialog_id))
+                    .ok(),
                 Err(_) => None,
             },
             _ => None,

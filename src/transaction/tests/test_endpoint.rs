@@ -21,7 +21,9 @@ async fn test_endpoint_serve() {
         endpoint_ref.serve().await;
     });
 
-    let mut incoming = endpoint.incoming_transactions();
+    let mut incoming = endpoint
+        .incoming_transactions()
+        .expect("incoming_transactions");
     select! {
         _ = async {
             sleep(Duration::from_millis(100)).await;
@@ -93,7 +95,9 @@ async fn test_endpoint_recvrequests() {
     };
 
     let incoming_loop = async {
-        let mut incoming = endpoint.incoming_transactions();
+        let mut incoming = endpoint
+            .incoming_transactions()
+            .expect("incoming_transactions");
         incoming.recv().await.expect("incoming").original.clone()
     };
 

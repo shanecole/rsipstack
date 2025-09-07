@@ -73,7 +73,9 @@ async fn test_server_transaction() {
     };
 
     let incoming_loop = async {
-        let mut incoming = endpoint.incoming_transactions();
+        let mut incoming = endpoint
+            .incoming_transactions()
+            .expect("incoming_transactions");
         let mut tx = incoming.recv().await.expect("incoming");
         assert_eq!(tx.original.method, rsip::method::Method::Register);
         let headers = tx.original.headers.clone();
@@ -89,7 +91,7 @@ async fn test_server_transaction() {
         assert!(tx
             .endpoint_inner
             .finished_transactions
-            .lock()
+            .read()
             .unwrap()
             .contains_key(&tx.key));
         sleep(Duration::from_secs(2)).await;

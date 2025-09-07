@@ -381,7 +381,7 @@ async fn main() -> Result<()> {
         headers: vec![],
     };
 
-    let incoming = endpoint.incoming_transactions();
+    let incoming = endpoint.incoming_transactions()?;
     let dialog_layer = Arc::new(DialogLayer::new(endpoint.inner.clone()));
     let (state_sender, state_receiver) = unbounded_channel();
     let stats = Stats::new();

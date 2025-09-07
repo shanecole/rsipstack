@@ -35,7 +35,7 @@ impl<T> Timer<T> {
     }
 
     pub fn len(&self) -> usize {
-        self.tasks.read().unwrap().len()
+        self.tasks.read().map(|ts| ts.len()).unwrap_or_default()
     }
 
     pub fn timeout(&self, duration: Duration, value: T) -> u64 {
@@ -44,28 +44,49 @@ impl<T> Timer<T> {
 
     pub fn timeout_at(&self, execute_at: Instant, value: T) -> u64 {
         let task_id = self.last_task_id.fetch_add(1, Ordering::Relaxed);
-        self.tasks.write().unwrap().insert(
-            TimerKey {
-                task_id,
-                execute_at,
-            },
-            value,
-        );
+        self.tasks
+            .write()
+            .as_mut()
+            .and_then(|ts| {
+                Ok(ts.insert(
+                    TimerKey {
+                        task_id,
+                        execute_at,
+                    },
+                    value,
+                ))
+            })
+            .ok();
 
         self.id_to_tasks
             .write()
-            .unwrap()
-            .insert(task_id, execute_at);
+            .as_mut()
+            .and_then(|it| Ok(it.insert(task_id, execute_at)))
+            .ok();
         task_id
     }
 
     pub fn cancel(&self, task_id: u64) -> Option<T> {
-        let position = { self.id_to_tasks.write().unwrap().remove(&task_id) };
+        let position = self
+            .id_to_tasks
+            .write()
+            .as_mut()
+            .map(|it| it.remove(&task_id))
+            .ok()
+            .flatten();
+
         if let Some(execute_at) = position {
-            self.tasks.write().unwrap().remove(&TimerKey {
-                task_id,
-                execute_at,
-            })
+            self.tasks
+                .write()
+                .as_mut()
+                .map(|ts| {
+                    ts.remove(&TimerKey {
+                        task_id,
+                        execute_at,
+                    })
+                })
+                .ok()
+                .flatten()
         } else {
             None
         }
@@ -74,7 +95,11 @@ impl<T> Timer<T> {
     pub fn poll(&self, now: Instant) -> Vec<T> {
         let mut result = Vec::new();
         let keys_to_remove = {
-            let mut tasks = self.tasks.write().unwrap();
+            let mut tasks = match self.tasks.write() {
+                Ok(tasks) => tasks,
+                Err(_) => return result,
+            };
+
             let keys_to_remove = tasks
                 .range(
                     ..=TimerKey {
@@ -95,10 +120,16 @@ impl<T> Timer<T> {
             keys_to_remove
         };
         {
-            let mut id_to_tasks = self.id_to_tasks.write().unwrap();
-            for key in keys_to_remove {
-                id_to_tasks.remove(&key.task_id);
-            }
+            self.id_to_tasks
+                .write()
+                .as_mut()
+                .and_then(|it| {
+                    for key in keys_to_remove {
+                        it.remove(&key.task_id);
+                    }
+                    Ok(())
+                })
+                .ok();
         }
         result
     }

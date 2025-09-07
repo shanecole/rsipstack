@@ -211,7 +211,7 @@ async fn main() -> Result<()> {
         }
     }
 
-    let incoming = endpoint.incoming_transactions();
+    let incoming = endpoint.incoming_transactions()?;
     select! {
         _ = endpoint.serve() => {
             info!("proxy endpoint finished");

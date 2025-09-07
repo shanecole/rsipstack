@@ -2,7 +2,7 @@ use super::dialog::DialogInnerRef;
 use super::DialogId;
 use crate::dialog::{
     authenticate::handle_client_authenticate,
-    dialog::{DialogState, TerminatedReason},
+    dialog::{DialogInner, DialogState, TerminatedReason},
 };
 use crate::rsip_ext::RsipResponseExt;
 use crate::transaction::transaction::Transaction;
@@ -342,6 +342,20 @@ impl ClientInviteDialog {
         self.inner.do_request(request.clone()).await
     }
 
+    pub async fn options(
+        &self,
+        headers: Option<Vec<rsip::Header>>,
+        body: Option<Vec<u8>>,
+    ) -> Result<Option<rsip::Response>> {
+        if !self.inner.is_confirmed() {
+            return Ok(None);
+        }
+        info!(id=%self.id(),"sending option request, body:\n{:?}", body);
+        let request =
+            self.inner
+                .make_request(rsip::Method::Options, None, None, None, headers, body)?;
+        self.inner.do_request(request.clone()).await
+    }
     /// Handle incoming transaction for this dialog
     ///
     /// Processes incoming SIP requests that are routed to this dialog.
@@ -516,6 +530,8 @@ impl ClientInviteDialog {
                             }
                             self.inner
                                 .transition(DialogState::Confirmed(dialog_id.clone()))?;
+                            DialogInner::serve_keepalive_options(self.inner.clone());
+                            break;
                         }
                         _ => {
                             let mut reason = format!("{}", resp.status_code);
