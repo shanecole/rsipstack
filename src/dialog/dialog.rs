@@ -5,7 +5,6 @@ use super::{
     DialogId,
 };
 use crate::{
-    header_pop,
     rsip_ext::extract_uri_from_contact,
     transaction::{
         endpoint::EndpointInnerRef,
@@ -173,13 +172,13 @@ pub struct DialogInner {
     pub remote_contact: Mutex<Option<rsip::headers::untyped::Contact>>,
 
     pub remote_seq: AtomicU32,
-    pub remote_uri: rsip::Uri,
+    pub remote_uri: Mutex<rsip::Uri>,
 
     pub from: String,
     pub to: Mutex<String>,
 
     pub credential: Option<Credential>,
-    pub route_set: Vec<Route>,
+    pub route_set: Mutex<Vec<Route>>,
     pub(super) endpoint_inner: EndpointInnerRef,
     pub(super) state_sender: DialogStateSender,
     pub(super) tu_sender: TransactionEventSender,
@@ -244,10 +243,6 @@ impl DialogInner {
             }
         }
 
-        // For UAS (server), route set must be reversed (RFC 3261 section 12.1.1)
-        if role == TransactionRole::Server {
-            route_set.reverse();
-        }
         Ok(Self {
             role,
             cancel_token: CancellationToken::new(),
@@ -255,10 +250,10 @@ impl DialogInner {
             from,
             to: Mutex::new(to),
             local_seq: AtomicU32::new(cseq),
-            remote_uri,
+            remote_uri: Mutex::new(remote_uri),
             remote_seq: AtomicU32::new(0),
             credential,
-            route_set,
+            route_set: Mutex::new(route_set),
             endpoint_inner,
             state_sender,
             tu_sender,
@@ -344,8 +339,9 @@ impl DialogInner {
             .as_ref()
             .map(|c| headers.push(Contact::from(c.clone()).into()));
 
-        for route in &self.route_set {
-            headers.push(Header::Route(route.clone()));
+        {
+            let route_set = self.route_set.lock().unwrap();
+            headers.extend(route_set.iter().cloned().map(Header::Route));
         }
         headers.push(Header::MaxForwards(70.into()));
 
@@ -355,7 +351,7 @@ impl DialogInner {
 
         let req = rsip::Request {
             method,
-            uri: self.remote_uri.clone(),
+            uri: self.remote_uri.lock().unwrap().clone(),
             headers: headers.into(),
             body: body.unwrap_or_default(),
             version: rsip::Version::V2,
@@ -450,25 +446,19 @@ impl DialogInner {
         }
     }
 
-    pub(super) async fn do_request(&self, mut request: Request) -> Result<Option<rsip::Response>> {
+    pub(super) async fn do_request(&self, request: Request) -> Result<Option<rsip::Response>> {
         let method = request.method().to_owned();
-        let mut destination = request
-            .route_header()
-            .map(|r| {
-                r.typed()
-                    .ok()
-                    .map(|r| r.uris().first().map(|u| u.uri.clone()))
-                    .flatten()
-            })
-            .flatten();
+        let mut destination = request.route_header().and_then(|r| {
+            r.typed()
+                .ok()
+                .and_then(|r| r.uris().first().map(|u| u.uri.clone()))
+        });
 
         if destination.is_none() {
             if let Some(contact) = self.remote_contact.lock().unwrap().as_ref() {
                 destination = contact.uri().ok();
             }
         }
-
-        header_pop!(request.headers, Header::Route);
 
         let key = TransactionKey::from_request(&request, TransactionRole::Client)?;
         let mut tx = Transaction::new_client(key, request, self.endpoint_inner.clone(), None);
@@ -593,6 +583,8 @@ impl DialogInner {
 
         tokio::spawn(async move {
             let mut ticker = interval(keepalive);
+            // skip first tick, which will be reached immediately
+            ticker.tick().await;
             let keepalive_loop = async {
                 loop {
                     ticker.tick().await;

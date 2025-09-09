@@ -1,7 +1,12 @@
-use crate::transaction::make_via_branch;
+use crate::{rsip_ext::extract_uri_from_contact, transaction::make_via_branch};
 
 use super::{endpoint::EndpointInner, make_call_id};
-use rsip::{prelude::ToTypedHeader, Header, Request, Response, StatusCode};
+use rsip::{
+    header,
+    headers::Route,
+    prelude::{HeadersExt, ToTypedHeader, UntypedHeader},
+    Error, Header, Request, Response, StatusCode,
+};
 
 impl EndpointInner {
     /// Create a SIP request message
@@ -235,20 +240,59 @@ impl EndpointInner {
         }
     }
 
-    pub fn make_ack(&self, uri: rsip::Uri, resp: &Response) -> Request {
+    pub fn make_ack(&self, mut uri: rsip::Uri, resp: &Response) -> crate::Result<Request> {
         let mut headers = resp.headers.clone();
+        // Check if response to INVITE
+        let mut resp_to_invite = false;
+        if let Ok(cseq) = resp.cseq_header() {
+            if let Ok(rsip::Method::Invite) = cseq.method() {
+                resp_to_invite = true;
+            }
+        }
 
-        if resp.status_code.kind() == rsip::StatusCodeKind::Successful {
-            for h in headers.iter_mut() {
-                if let Header::Via(via) = h {
-                    if let Ok(mut typed_via) = via.typed() {
-                        typed_via
-                            .params
-                            .retain(|p| !matches!(p, rsip::Param::Branch(_)));
-                        *via = typed_via.with_param(make_via_branch()).untyped();
+        // For 200 OK responses to INVITE, this creates an ACK with:
+        // 1. Request-URI from Contact header
+        // 2. Route headers from Record-Route headers
+        // 3. New Via branch (creates new transaction)
+        //
+        // **FIXME**: This duplicates logic in `client_dialog.rs` - should be refactored
+        if resp_to_invite && resp.status_code.kind() == rsip::StatusCodeKind::Successful {
+            if let Ok(top_most_via) = header!(
+                headers.iter_mut(),
+                Header::Via,
+                Error::missing_header("Via")
+            ) {
+                if let Ok(mut typed_via) = top_most_via.typed() {
+                    for param in typed_via.params.iter_mut() {
+                        if let rsip::Param::Branch(_) = param {
+                            *param = make_via_branch();
+                        }
                     }
+                    *top_most_via = typed_via.into();
                 }
             }
+
+            let contact = resp.contact_header()?;
+
+            let contact_uri = if let Ok(typed_contact) = contact.typed() {
+                typed_contact.uri
+            } else {
+                let mut uri = extract_uri_from_contact(contact.value())?;
+                uri.headers.clear();
+                uri
+            };
+            uri = contact_uri;
+
+            // update route set from Record-Route header
+            let mut route_set = Vec::new();
+            for header in resp.headers.iter() {
+                if let Header::RecordRoute(record_route) = header {
+                    route_set.push(Header::Route(Route::from(record_route.value())));
+                }
+            }
+
+            route_set.reverse();
+            headers.extend(route_set);
         }
 
         headers.retain(|h| {
@@ -258,22 +302,23 @@ impl EndpointInner {
                     | Header::CallId(_)
                     | Header::From(_)
                     | Header::To(_)
-                    | Header::MaxForwards(_)
                     | Header::CSeq(_)
+                    | Header::Route(_)
             )
         });
+        headers.push(Header::MaxForwards(70.into()));
         headers.iter_mut().for_each(|h| {
             if let Header::CSeq(cseq) = h {
                 cseq.mut_method(rsip::Method::Ack).ok();
             }
         });
         headers.unique_push(Header::UserAgent(self.user_agent.clone().into()));
-        rsip::Request {
+        Ok(rsip::Request {
             method: rsip::Method::Ack,
             uri,
             headers: headers.into(),
             body: vec![],
             version: rsip::Version::V2,
-        }
+        })
     }
 }

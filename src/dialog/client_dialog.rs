@@ -1,13 +1,21 @@
 use super::dialog::DialogInnerRef;
 use super::DialogId;
-use crate::dialog::{
-    authenticate::handle_client_authenticate,
-    dialog::{DialogInner, DialogState, TerminatedReason},
-};
+use crate::dialog::dialog::DialogInner;
 use crate::rsip_ext::RsipResponseExt;
 use crate::transaction::transaction::Transaction;
 use crate::Result;
-use rsip::prelude::HeadersExt;
+use crate::{
+    dialog::{
+        authenticate::handle_client_authenticate,
+        dialog::{DialogState, TerminatedReason},
+    },
+    rsip_ext::extract_uri_from_contact,
+};
+use rsip::{
+    headers::Route,
+    prelude::{HeadersExt, ToTypedHeader, UntypedHeader},
+    Header,
+};
 use rsip::{Response, SipMessage, StatusCode};
 use std::sync::atomic::Ordering;
 use tokio_util::sync::CancellationToken;
@@ -521,13 +529,33 @@ impl ClientInviteDialog {
                     }
                     match resp.status_code {
                         StatusCode::OK => {
-                            if let Ok(contact) = resp.contact_header() {
-                                self.inner
-                                    .remote_contact
-                                    .lock()
-                                    .unwrap()
-                                    .replace(contact.clone());
+                            // 200 response to INVITE always contains Contact header
+                            let contact = resp.contact_header()?;
+                            self.inner
+                                .remote_contact
+                                .lock()
+                                .unwrap()
+                                .replace(contact.clone());
+
+                            // update remote uri
+                            let uri = if let Ok(typed_contact) = contact.typed() {
+                                typed_contact.uri
+                            } else {
+                                let mut uri = extract_uri_from_contact(contact.value())?;
+                                uri.headers.clear();
+                                uri
+                            };
+                            *self.inner.remote_uri.lock().unwrap() = uri;
+
+                            // update route set from Record-Route header
+                            let mut route_set = Vec::new();
+                            for header in resp.headers.iter() {
+                                if let Header::RecordRoute(record_route) = header {
+                                    route_set.push(Route::from(record_route.value()));
+                                }
                             }
+                            *self.inner.route_set.lock().unwrap() = route_set;
+
                             self.inner
                                 .transition(DialogState::Confirmed(dialog_id.clone()))?;
                             DialogInner::serve_keepalive_options(self.inner.clone());
