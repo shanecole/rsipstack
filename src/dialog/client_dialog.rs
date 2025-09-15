@@ -420,6 +420,7 @@ impl ClientInviteDialog {
                     return Err(crate::Error::DialogError(
                         "invalid request".to_string(),
                         self.id(),
+                        rsip::StatusCode::MethodNotAllowed,
                     ));
                 }
             }
@@ -562,15 +563,20 @@ impl ClientInviteDialog {
                             break;
                         }
                         _ => {
-                            let mut reason = format!("{}", resp.status_code);
-                            if let Some(reason_phrase) = resp.reason_phrase() {
-                                reason = format!("{};{}", reason, reason_phrase);
-                            }
+                            let reason = if let Some(reason_phrase) = resp.reason_phrase() {
+                                format!("{reason_phrase}")
+                            } else {
+                                format!("{}", resp.status_code)
+                            };
                             self.inner.transition(DialogState::Terminated(
                                 self.id(),
-                                TerminatedReason::UasOther(Some(resp.status_code.clone())),
+                                TerminatedReason::UasOther(resp.status_code.clone()),
                             ))?;
-                            return Err(crate::Error::DialogError(reason, self.id()));
+                            return Err(crate::Error::DialogError(
+                                reason,
+                                self.id(),
+                                resp.status_code,
+                            ));
                         }
                     }
                 }

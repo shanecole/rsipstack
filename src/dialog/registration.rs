@@ -488,6 +488,7 @@ impl Registration {
         return Err(crate::Error::DialogError(
             "registration transaction is already terminated".to_string(),
             DialogId::try_from(&tx.original)?,
+            StatusCode::BadRequest,
         ));
     }
 

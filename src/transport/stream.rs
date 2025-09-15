@@ -210,7 +210,10 @@ where
 
     pub async fn close(&self) -> Result<()> {
         let mut write_half = self.write_half.lock().await;
-        write_half.shutdown().await?;
+        write_half
+            .shutdown()
+            .await
+            .map_err(|e| crate::Error::Error(format!("Failed to shutdown write half: {}", e)))?;
         Ok(())
     }
 }

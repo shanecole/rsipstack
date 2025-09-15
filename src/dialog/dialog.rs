@@ -92,8 +92,8 @@ pub enum TerminatedReason {
     UasDecline,
     ProxyError(rsip::StatusCode),
     ProxyAuthRequired,
-    UacOther(Option<rsip::StatusCode>),
-    UasOther(Option<rsip::StatusCode>),
+    UacOther(rsip::StatusCode),
+    UasOther(rsip::StatusCode),
 }
 
 /// SIP Dialog

@@ -593,6 +593,7 @@ impl ServerInviteDialog {
                     return Err(crate::Error::DialogError(
                         "invalid request in confirmed state".to_string(),
                         self.id(),
+                        rsip::StatusCode::MethodNotAllowed,
                     ));
                 }
                 rsip::Method::Bye => return self.handle_bye(tx).await,
@@ -605,6 +606,7 @@ impl ServerInviteDialog {
                     return Err(crate::Error::DialogError(
                         "invalid request".to_string(),
                         self.id(),
+                        rsip::StatusCode::MethodNotAllowed,
                     ));
                 }
             }
@@ -721,6 +723,7 @@ impl TryFrom<&Dialog> for ServerInviteDialog {
             _ => Err(crate::Error::DialogError(
                 "Dialog is not a ServerInviteDialog".to_string(),
                 dlg.id(),
+                rsip::StatusCode::BadRequest,
             )),
         }
     }
