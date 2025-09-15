@@ -51,7 +51,7 @@ use tracing::{debug, info, trace, warn};
 /// dialog.accept(None, Some(answer_sdp))?;
 ///
 /// // Or reject the call
-/// dialog.reject()?;
+/// dialog.reject(None, None)?;
 /// # Ok(())
 /// # }
 /// ```

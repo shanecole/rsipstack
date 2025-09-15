@@ -135,13 +135,13 @@
 //! fn handle_sip_error(error: Error) {
 //!     match error {
 //!         Error::TransportLayerError(msg, addr) => {
-//!             eprintln!("Transport error at {}: {}", addr, msg);
+//!             eprintln!("Transport error at {msg}: {addr}");
 //!         },
 //!         Error::TransactionError(msg, key) => {
-//!             eprintln!("Transaction error {}: {}", key, msg);
+//!             eprintln!("Transaction error {msg}: {key}");
 //!         },
-//!         Error::DialogError(msg, id) => {
-//!             eprintln!("Dialog error {}: {}", id, msg);
+//!         Error::DialogError(msg, id, code) => {
+//!             eprintln!("Dialog error {msg}: {id} (Status code: {code})");
 //!         },
 //!         _ => eprintln!("Other error: {}", error),
 //!     }
