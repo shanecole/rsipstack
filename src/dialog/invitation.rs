@@ -337,7 +337,8 @@ impl DialogLayer {
             .write()
             .unwrap()
             .insert(id.clone(), Dialog::ClientInvite(dialog.clone()));
-        info!("client invite dialog created: {:?}", id);
+        info!(%id, "client invite dialog created");
+
         match dialog.process_invite(tx).await {
             Ok((new_dialog_id, resp)) => {
                 debug!(

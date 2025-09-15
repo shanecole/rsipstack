@@ -562,7 +562,7 @@ async fn process_invite(opt: &MediaSessionOption, dialog: ServerInviteDialog) ->
                                 info!("User answered the call");
                             } else if r == "r" {
                                 info!("User rejected the call");
-                                dialog.reject().ok();
+                                dialog.reject(Some(rsip::StatusCode::BusyHere), Some("Busy here".into())).ok();
                                 rejected = true;
                                 return;
                             } else {

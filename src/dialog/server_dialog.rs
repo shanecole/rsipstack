@@ -277,7 +277,8 @@ impl ServerInviteDialog {
 
     /// Reject the incoming INVITE request
     ///
-    /// Sends a 603 Decline response to reject the incoming INVITE request.
+    /// Sends a reject response to reject the incoming INVITE request.
+    /// Sends a 603 Decline by default, or a custom status code if provided.
     /// This terminates the dialog creation process.
     ///
     /// # Returns
@@ -292,19 +293,24 @@ impl ServerInviteDialog {
     /// # fn example() -> rsipstack::Result<()> {
     /// # let dialog: ServerInviteDialog = todo!();
     /// // Reject the incoming call
-    /// dialog.reject()?;
+    /// dialog.reject(Some(rsip::StatusCode::BusyHere), Some("Busy here".into()))?;
     /// # Ok(())
     /// # }
     /// ```
-    pub fn reject(&self) -> Result<()> {
+    pub fn reject(&self, code: Option<rsip::StatusCode>, reason: Option<String>) -> Result<()> {
         if self.inner.is_terminated() || self.inner.is_confirmed() {
             return Ok(());
         }
-        info!(id=%self.id(), "rejecting dialog");
+        info!(id=%self.id(), ?code, ?reason, "rejecting dialog");
+        let headers = if let Some(reason) = reason {
+            Some(vec![rsip::Header::Other("Reason".into(), reason.into())])
+        } else {
+            None
+        };
         let resp = self.inner.make_response(
             &self.inner.initial_request,
-            rsip::StatusCode::Decline,
-            None,
+            code.unwrap_or(rsip::StatusCode::Decline),
+            headers,
             None,
         );
         self.inner
