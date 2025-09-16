@@ -671,6 +671,10 @@ impl ServerInviteDialog {
                 match msg {
                     SipMessage::Request(req) => match req.method {
                         rsip::Method::Ack => {
+                            if self.inner.is_terminated() {
+                                // dialog already terminated, ignore
+                                break;
+                            }
                             info!(id = %self.id(),"received ack {}", req.uri);
                             match req.contact_header() {
                                 Ok(contact) => {

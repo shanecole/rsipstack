@@ -8,7 +8,7 @@ use super::{
 use crate::{
     dialog::DialogId,
     transport::{SipAddr, TransportEvent, TransportLayer},
-    Error, Result, USER_AGENT,
+    Error, Result, VERSION,
 };
 use rsip::{prelude::HeadersExt, SipMessage};
 use std::{
@@ -544,7 +544,7 @@ impl EndpointBuilder {
     pub fn new() -> Self {
         EndpointBuilder {
             allows: Vec::new(),
-            user_agent: USER_AGENT.to_string(),
+            user_agent: VERSION.to_string(),
             transport_layer: None,
             cancel_token: None,
             timer_interval: None,
