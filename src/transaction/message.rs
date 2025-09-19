@@ -1,6 +1,5 @@
-use crate::{rsip_ext::extract_uri_from_contact, transaction::make_via_branch};
-
 use super::{endpoint::EndpointInner, make_call_id};
+use crate::{rsip_ext::extract_uri_from_contact, transaction::make_via_branch, Result};
 use rsip::{
     header,
     headers::Route,
@@ -240,7 +239,7 @@ impl EndpointInner {
         }
     }
 
-    pub fn make_ack(&self, mut uri: rsip::Uri, resp: &Response) -> crate::Result<Request> {
+    pub fn make_ack(&self, mut uri: rsip::Uri, resp: &Response) -> Result<Request> {
         let mut headers = resp.headers.clone();
         // Check if response to INVITE
         let mut resp_to_invite = false;

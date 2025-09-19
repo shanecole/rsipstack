@@ -295,7 +295,7 @@ impl DialogLayer {
     ///             DialogState::Early(_, resp) => {
     ///                 println!("Ringing: {}", resp.status_code);
     ///             },
-    ///             DialogState::Confirmed(_) => {
+    ///             DialogState::Confirmed(_,_) => {
     ///                 println!("Call established");
     ///             },
     ///             DialogState::Terminated(_, code) => {

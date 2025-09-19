@@ -348,7 +348,7 @@ impl EndpointInner {
                     .read()
                     .unwrap()
                     .get(&key)
-                    .map(|m| m.clone())
+                    .cloned()
                     .flatten();
 
                 if let Some(last_message) = last_message {
@@ -362,7 +362,7 @@ impl EndpointInner {
                     .read()
                     .unwrap()
                     .get(&key)
-                    .map(|m| m.clone())
+                    .cloned()
                     .flatten();
 
                 if let Some(mut last_message) = last_message {
@@ -372,11 +372,8 @@ impl EndpointInner {
                                 if resp.status_code.kind() == rsip::StatusCodeKind::Provisional {
                                     return Ok(());
                                 }
-                                match resp.to_header()?.tag() {
-                                    Ok(Some(tag)) => {
-                                        last_req.to_header_mut().and_then(|h| h.mut_tag(tag)).ok();
-                                    }
-                                    _ => {}
+                                if let Ok(Some(tag)) = resp.to_header()?.tag() {
+                                    last_req.to_header_mut().and_then(|h| h.mut_tag(tag)).ok();
                                 }
                             }
                         }
@@ -393,13 +390,11 @@ impl EndpointInner {
         } else {
             msg
         };
-        match self.transactions.read().unwrap().get(&key) {
-            Some(tu) => {
-                tu.send(TransactionEvent::Received(msg, Some(connection)))
-                    .map_err(|e| Error::TransactionError(e.to_string(), key))?;
-                return Ok(());
-            }
-            None => {}
+
+        if let Some(tu) = self.transactions.read().unwrap().get(&key) {
+            tu.send(TransactionEvent::Received(msg, Some(connection)))
+                .map_err(|e| Error::TransactionError(e.to_string(), key))?;
+            return Ok(());
         }
         // if the transaction is not exist, create a new transaction
         let request = match msg {
@@ -435,7 +430,7 @@ impl EndpointInner {
             Transaction::new_server(key.clone(), request.clone(), self.clone(), Some(connection));
 
         self.incoming_sender.send(tx).ok();
-        return Ok(());
+        Ok(())
     }
 
     pub fn attach_transaction(&self, key: &TransactionKey, tu_sender: TransactionEventSender) {
@@ -482,7 +477,7 @@ impl EndpointInner {
             .cloned()?;
         let rr = rsip::UriWithParamsList(vec![rsip::UriWithParams {
             uri: first_addr.into(),
-            params: vec![rsip::Param::Other("lr".into(), None)].into(),
+            params: vec![rsip::Param::Other("lr".into(), None)],
         }]);
         Ok(rr.into())
     }
@@ -507,10 +502,9 @@ impl EndpointInner {
             transport: first_addr.r#type.unwrap_or_default(),
             uri: first_addr.addr.into(),
             params: vec![
-                branch.unwrap_or_else(|| make_via_branch()),
+                branch.unwrap_or_else(make_via_branch),
                 rsip::Param::Other("rport".into(), None),
-            ]
-            .into(),
+            ],
         };
         Ok(via)
     }

@@ -100,6 +100,10 @@ impl ServerInviteDialog {
         self.inner.id.lock().unwrap().clone()
     }
 
+    pub fn state(&self) -> DialogState {
+        self.inner.state.lock().unwrap().clone()
+    }
+
     /// Get the cancellation token for this dialog
     ///
     /// Returns a reference to the CancellationToken that can be used to
@@ -686,7 +690,11 @@ impl ServerInviteDialog {
                                 }
                                 _ => {}
                             }
-                            self.inner.transition(DialogState::Confirmed(self.id()))?;
+
+                            self.inner.transition(DialogState::Confirmed(
+                                self.id(),
+                                tx.last_response.clone().unwrap_or_default(),
+                            ))?;
                             DialogInner::serve_keepalive_options(self.inner.clone());
                             break;
                         }

@@ -61,7 +61,7 @@ use tracing::{debug, info, warn};
 /// #     from_tag: "from-tag".to_string(),
 /// #     to_tag: "to-tag".to_string(),
 /// # };
-/// let state = DialogState::Confirmed(dialog_id);
+/// let state = DialogState::Confirmed(dialog_id, rsip::Response::default());
 /// if state.is_confirmed() {
 ///     println!("Dialog is established");
 /// }
@@ -73,7 +73,7 @@ pub enum DialogState {
     Trying(DialogId),
     Early(DialogId, rsip::Response),
     WaitAck(DialogId, rsip::Response),
-    Confirmed(DialogId),
+    Confirmed(DialogId, rsip::Response),
     Updated(DialogId, rsip::Request),
     Notify(DialogId, rsip::Request),
     Info(DialogId, rsip::Request),
@@ -198,7 +198,7 @@ impl DialogState {
         )
     }
     pub fn is_confirmed(&self) -> bool {
-        matches!(self, DialogState::Confirmed(_))
+        matches!(self, DialogState::Confirmed(_, _))
     }
     pub fn is_terminated(&self) -> bool {
         matches!(self, DialogState::Terminated(_, _))
@@ -401,12 +401,12 @@ impl DialogInner {
                         }
                     };
 
-                    if status != StatusCode::Trying {
-                        if !to.params.iter().any(|p| matches!(p, Param::Tag(_))) {
-                            to.params.push(rsip::Param::Tag(
-                                self.id.lock().unwrap().to_tag.clone().into(),
-                            ));
-                        }
+                    if status != StatusCode::Trying
+                        && !to.params.iter().any(|p| matches!(p, Param::Tag(_)))
+                    {
+                        to.params.push(rsip::Param::Tag(
+                            self.id.lock().unwrap().to_tag.clone().into(),
+                        ));
                     }
                     resp_headers.push(Header::To(to.into()));
                 }
@@ -636,7 +636,7 @@ impl std::fmt::Display for DialogState {
             DialogState::Trying(id) => write!(f, "{}(Trying)", id),
             DialogState::Early(id, _) => write!(f, "{}(Early)", id),
             DialogState::WaitAck(id, _) => write!(f, "{}(WaitAck)", id),
-            DialogState::Confirmed(id) => write!(f, "{}(Confirmed)", id),
+            DialogState::Confirmed(id, _) => write!(f, "{}(Confirmed)", id),
             DialogState::Updated(id, _) => write!(f, "{}(Updated)", id),
             DialogState::Notify(id, _) => write!(f, "{}(Notify)", id),
             DialogState::Info(id, _) => write!(f, "{}(Info)", id),

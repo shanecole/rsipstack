@@ -12,7 +12,7 @@ use std::{collections::HashMap, sync::Arc};
 use tokio::select;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 pub struct TransportLayerInner {
     pub(crate) cancel_token: CancellationToken,
@@ -95,7 +95,7 @@ impl TransportLayer {
             Ok(listens) => listens.iter().map(|t| t.get_addr().to_owned()).collect(),
             Err(e) => {
                 warn!("Failed to read listens: {:?}", e);
-                return Vec::new();
+                Vec::new()
             }
         }
     }
@@ -157,7 +157,7 @@ impl TransportLayerInner {
         let target = if matches!(target.addr.host, rsip::Host::Domain(_)) {
             let target = rsip::uri::Uri {
                 scheme: Some(rsip::Scheme::Sip),
-                host_with_port: target.addr.clone().into(),
+                host_with_port: target.addr.clone(),
                 ..Default::default()
             };
             let context = rsip_dns::Context::initialize_from(
@@ -188,14 +188,13 @@ impl TransportLayerInner {
             target
         };
 
-        info!(?key, "lookup target: {} -> {}", destination, target);
+        debug!(?key, "lookup target: {} -> {}", destination, target);
         match self.connections.read() {
-            Ok(connections) => match connections.get(&target) {
-                Some(transport) => {
+            Ok(connections) => {
+                if let Some(transport) = connections.get(&target) {
                     return Ok((transport.clone(), target.clone()));
                 }
-                None => {}
-            },
+            }
             Err(e) => {
                 warn!("Failed to read connections: {:?}", e);
                 return Err(crate::Error::Error(format!(
@@ -260,10 +259,8 @@ impl TransportLayerInner {
         let mut first_udp = None;
         for transport in listens.iter() {
             let addr = transport.get_addr();
-            if addr.r#type == Some(rsip::transport::Transport::Udp) {
-                if first_udp.is_none() {
-                    first_udp = Some(transport.clone());
-                }
+            if addr.r#type == Some(rsip::transport::Transport::Udp) && first_udp.is_none() {
+                first_udp = Some(transport.clone());
             }
             if addr == target {
                 return Ok((transport.clone(), target.clone()));
@@ -272,10 +269,10 @@ impl TransportLayerInner {
         if let Some(transport) = first_udp {
             return Ok((transport, target.clone()));
         }
-        return Err(crate::Error::TransportLayerError(
+        Err(crate::Error::TransportLayerError(
             format!("unsupported transport type: {:?}", target.r#type),
             target.to_owned(),
-        ));
+        ))
     }
 
     pub(super) async fn serve_listener(self: Arc<Self>, transport: SipConnection) -> Result<()> {

@@ -1,7 +1,6 @@
 use super::dialog::DialogInnerRef;
 use super::DialogId;
 use crate::dialog::dialog::DialogInner;
-use crate::rsip_ext::RsipResponseExt;
 use crate::transaction::transaction::Transaction;
 use crate::Result;
 use crate::{
@@ -106,6 +105,10 @@ impl ClientInviteDialog {
     /// The DialogId consists of Call-ID, from-tag, and to-tag.
     pub fn id(&self) -> DialogId {
         self.inner.id.lock().unwrap().clone()
+    }
+
+    pub fn state(&self) -> DialogState {
+        self.inner.state.lock().unwrap().clone()
     }
 
     /// Get the cancellation token for this dialog
@@ -558,27 +561,17 @@ impl ClientInviteDialog {
                             *self.inner.route_set.lock().unwrap() = route_set;
 
                             self.inner
-                                .transition(DialogState::Confirmed(dialog_id.clone()))?;
+                                .transition(DialogState::Confirmed(dialog_id.clone(), resp))?;
                             DialogInner::serve_keepalive_options(self.inner.clone());
-                            break;
                         }
                         _ => {
-                            let reason = if let Some(reason_phrase) = resp.reason_phrase() {
-                                format!("{reason_phrase}")
-                            } else {
-                                format!("{}", resp.status_code)
-                            };
                             self.inner.transition(DialogState::Terminated(
                                 self.id(),
                                 TerminatedReason::UasOther(resp.status_code.clone()),
                             ))?;
-                            return Err(crate::Error::DialogError(
-                                reason,
-                                self.id(),
-                                resp.status_code,
-                            ));
                         }
                     }
+                    break;
                 }
             }
         }

@@ -18,7 +18,7 @@ pub enum Error {
     #[error("Endpoint error: {0}")]
     EndpointError(String),
 
-    #[error("Dialog error: {0}: {1}(Status code: {2})")]
+    #[error("Dialog error:{2}({0})")]
     DialogError(String, DialogId, rsip::StatusCode),
 
     #[error("I/O error: {0}")]

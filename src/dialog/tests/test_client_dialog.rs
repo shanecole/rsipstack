@@ -178,16 +178,18 @@ async fn test_client_dialog_state_transitions() -> crate::Result<()> {
 
     client_dialog
         .inner
-        .transition(DialogState::Early(dialog_id.clone(), ringing_resp))?;
+        .transition(DialogState::Early(dialog_id.clone(), ringing_resp.clone()))?;
     let state = client_dialog.inner.state.lock().unwrap().clone();
     assert!(matches!(state, DialogState::Early(_, _)));
 
+    let mut final_resp = ringing_resp.clone();
+    final_resp.status_code = StatusCode::OK;
     // Transition to Confirmed (after receiving 200 OK and sending ACK)
     client_dialog
         .inner
-        .transition(DialogState::Confirmed(dialog_id.clone()))?;
+        .transition(DialogState::Confirmed(dialog_id.clone(), final_resp))?;
     let state = client_dialog.inner.state.lock().unwrap().clone();
-    assert!(matches!(state, DialogState::Confirmed(_)));
+    assert!(matches!(state, DialogState::Confirmed(_, _)));
     assert!(client_dialog.inner.is_confirmed());
 
     Ok(())
@@ -259,11 +261,11 @@ async fn test_client_dialog_termination_scenarios() -> crate::Result<()> {
     let client_dialog_2 = ClientInviteDialog {
         inner: Arc::new(dialog_inner_2),
     };
-
     // Confirm dialog first
-    client_dialog_2
-        .inner
-        .transition(DialogState::Confirmed(dialog_id_2.clone()))?;
+    client_dialog_2.inner.transition(DialogState::Confirmed(
+        dialog_id_2.clone(),
+        Response::default(),
+    ))?;
     assert!(client_dialog_2.inner.is_confirmed());
 
     // Then terminate normally

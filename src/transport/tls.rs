@@ -17,7 +17,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 // TLS configuration
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct TlsConfig {
     // Server certificate in PEM format
     pub cert: Option<Vec<u8>>,
@@ -29,18 +29,6 @@ pub struct TlsConfig {
     pub client_key: Option<Vec<u8>>,
     // Root CA certificates in PEM format
     pub ca_certs: Option<Vec<u8>>,
-}
-
-impl Default for TlsConfig {
-    fn default() -> Self {
-        Self {
-            cert: None,
-            key: None,
-            client_cert: None,
-            client_key: None,
-            ca_certs: None,
-        }
-    }
 }
 
 // TLS Listener Connection Structure
@@ -267,7 +255,7 @@ impl TlsConnection {
         let socket_addr = match &remote_addr.addr.host {
             rsip::host_with_port::Host::Domain(domain) => {
                 let port = remote_addr.addr.port.as_ref().map_or(5061, |p| *p.value());
-                format!("{}:{}", domain.to_string(), port).parse()?
+                format!("{}:{}", domain, port).parse()?
             }
             rsip::host_with_port::Host::IpAddr(ip) => {
                 let port = remote_addr.addr.port.as_ref().map_or(5061, |p| *p.value());

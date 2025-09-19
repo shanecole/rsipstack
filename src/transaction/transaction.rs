@@ -376,13 +376,13 @@ impl Transaction {
             | (&TransactionState::Completed, &TransactionState::Terminated)
             | (&TransactionState::Confirmed, &TransactionState::Terminated) => Ok(()),
             _ => {
-                return Err(Error::TransactionError(
+                Err(Error::TransactionError(
                     format!(
                         "invalid state transition from {} to {}",
                         self.state, target
                     ),
                     self.key.clone(),
-                ));
+                ))
             }
         }
     }
@@ -407,12 +407,10 @@ impl Transaction {
                 }
                 self.transition(TransactionState::Completed).map(|_| ())
             }
-            _ => {
-                return Err(Error::TransactionError(
-                    format!("invalid state for sending CANCEL {:?}", self.state),
-                    self.key.clone(),
-                ));
-            }
+            _ => Err(Error::TransactionError(
+                format!("invalid state for sending CANCEL {:?}", self.state),
+                self.key.clone(),
+            )),
         }
     }
 
@@ -622,7 +620,7 @@ impl Transaction {
         self.last_response.replace(resp.clone());
         self.transition(new_state).ok();
         self.send_ack(connection).await.ok(); // send ACK for client invite
-        return Some(SipMessage::Response(resp));
+        Some(SipMessage::Response(resp))
     }
 
     async fn on_timer(&mut self, timer: TransactionTimer) -> Result<()> {
@@ -794,7 +792,7 @@ impl Transaction {
                                 .waiting_ack
                                 .write()
                                 .as_mut()
-                                .and_then(|wa| Ok(wa.insert(dialog_id, self.key.clone())))
+                                .map(|wa| wa.insert(dialog_id, self.key.clone()))
                                 .ok();
                         }
                         _ => {}
@@ -875,11 +873,9 @@ impl Transaction {
 
         let last_message = {
             match self.transaction_type {
-                TransactionType::ClientInvite => {
-                    self.last_ack.take().map(|r| SipMessage::Request(r))
-                }
+                TransactionType::ClientInvite => self.last_ack.take().map(SipMessage::Request),
                 TransactionType::ServerNonInvite => {
-                    self.last_response.take().map(|r| SipMessage::Response(r))
+                    self.last_response.take().map(SipMessage::Response)
                 }
                 _ => None,
             }

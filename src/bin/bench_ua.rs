@@ -275,7 +275,7 @@ async fn process_dialog_state(
                 },
                 None => {}
             },
-            DialogState::Confirmed(id) => {
+            DialogState::Confirmed(id, _) => {
                 stats
                     .active_calls
                     .lock()
