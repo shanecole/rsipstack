@@ -369,8 +369,17 @@ impl EndpointInner {
                     match last_message {
                         SipMessage::Request(ref mut last_req) => {
                             if last_req.method() == &rsip::Method::Ack {
-                                if resp.status_code.kind() == rsip::StatusCodeKind::Provisional {
-                                    return Ok(());
+                                match resp.status_code.kind() {
+                                    rsip::StatusCodeKind::Provisional => {
+                                        return Ok(());
+                                    }
+                                    rsip::StatusCodeKind::Successful => {
+                                        if last_req.to_header()?.tag().ok().is_none() {
+                                            // don't ack 2xx response when ack is placeholder
+                                            return Ok(());
+                                        }
+                                    }
+                                    _ => {}
                                 }
                                 if let Ok(Some(tag)) = resp.to_header()?.tag() {
                                     last_req.to_header_mut().and_then(|h| h.mut_tag(tag)).ok();

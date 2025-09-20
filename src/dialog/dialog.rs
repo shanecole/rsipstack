@@ -380,9 +380,6 @@ impl DialogInner {
         body: Option<Vec<u8>>,
     ) -> rsip::Response {
         let mut resp_headers = rsip::Headers::default();
-        self.local_contact
-            .as_ref()
-            .map(|c| resp_headers.push(Contact::from(c.clone()).into()));
 
         for header in request.headers.iter() {
             match header {
@@ -430,11 +427,22 @@ impl DialogInner {
             }
         }
 
+        resp_headers.retain(|h| {
+            !matches!(
+                h,
+                Header::Contact(_) | Header::ContentLength(_) | Header::UserAgent(_)
+            )
+        });
+
+        self.local_contact
+            .as_ref()
+            .map(|c| resp_headers.push(Contact::from(c.clone()).into()));
+
         body.as_ref().map(|b| {
             resp_headers.push(Header::ContentLength((b.len() as u32).into()));
         });
 
-        resp_headers.unique_push(Header::UserAgent(
+        resp_headers.push(Header::UserAgent(
             self.endpoint_inner.user_agent.clone().into(),
         ));
 

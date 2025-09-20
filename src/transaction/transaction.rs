@@ -873,7 +873,26 @@ impl Transaction {
 
         let last_message = {
             match self.transaction_type {
-                TransactionType::ClientInvite => self.last_ack.take().map(SipMessage::Request),
+                TransactionType::ClientInvite => {
+                    //
+                    // For client invite, make a placeholder ACK if in proceeding or trying state
+                    if matches!(
+                        self.state,
+                        TransactionState::Proceeding | TransactionState::Trying
+                    ) {
+                        if self.last_ack.is_none() {
+                            if let Some(ref resp) = self.last_response {
+                                if let Ok(ack) = self
+                                    .endpoint_inner
+                                    .make_ack(self.original.uri.clone(), resp)
+                                {
+                                    self.last_ack.replace(ack);
+                                }
+                            }
+                        }
+                    }
+                    self.last_ack.take().map(SipMessage::Request)
+                }
                 TransactionType::ServerNonInvite => {
                     self.last_response.take().map(SipMessage::Response)
                 }
