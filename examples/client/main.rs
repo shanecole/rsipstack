@@ -25,6 +25,7 @@ use crate::play_file::play_echo;
 mod play_file;
 #[derive(Debug, Clone)]
 struct MediaSessionOption {
+    pub random_reject: u32,
     pub auto_answer: bool,
     pub cancel_token: CancellationToken,
     pub external_ip: Option<String>,
@@ -71,6 +72,8 @@ struct Args {
 
     #[arg(long)]
     auto_answer: bool,
+    #[arg(long)]
+    random_reject: u32,
 }
 
 async fn handle_user_input(
@@ -169,6 +172,7 @@ async fn main() -> rsipstack::Result<()> {
         rtp_start_port: args.rtp_start_port,
         echo: args.echo,
         auto_answer: args.auto_answer,
+        random_reject: args.random_reject,
     };
 
     let transport_layer = TransportLayer::new(token.clone());
@@ -510,7 +514,36 @@ async fn process_invite(opt: &MediaSessionOption, dialog: ServerInviteDialog) ->
     let (conn, answer) = build_rtp_conn(opt, ssrc, payload_type).await?;
 
     let (answer_sender, mut answer_receiver) = tokio::sync::mpsc::unbounded_channel();
+    if opt.random_reject > 0 {
+        if rand::random::<u32>() % opt.random_reject == 0 {
+            info!("Randomly rejecting the call");
+            dialog
+                .reject(Some(rsip::StatusCode::BusyHere), Some("Busy here".into()))
+                .ok();
+            return Ok(());
+        }
+    }
+    let mut ts = 0;
+    let mut seq = 1;
+    let peer_addr = format!("{}:{}", peer_addr, peer_port);
     if opt.auto_answer {
+        let headers = vec![rsip::typed::ContentType(MediaType::Sdp(vec![])).into()];
+        dialog.ringing(Some(headers), Some(answer.clone().into()))?;
+        let ringback_token = CancellationToken::new();
+
+        play_audio_file(
+            conn.clone(),
+            ringback_token.clone(),
+            ssrc,
+            "ringback",
+            ts,
+            seq,
+            peer_addr.clone(),
+            payload_type,
+        )
+        .await
+        .ok();
+
         let headers = vec![rsip::typed::ContentType(MediaType::Sdp(vec![])).into()];
         dialog.accept(Some(headers), Some(answer.clone().into()))?;
         answer_sender.send("a".to_string()).expect("send answer");
@@ -524,7 +557,6 @@ async fn process_invite(opt: &MediaSessionOption, dialog: ServerInviteDialog) ->
         dialog.ringing(Some(headers), Some(answer.clone().into()))?;
     }
 
-    let peer_addr = format!("{}:{}", peer_addr, peer_port);
     let rtp_token = dialog.cancel_token().child_token();
     let echo = opt.echo;
     let answered = opt.auto_answer;
@@ -536,8 +568,6 @@ async fn process_invite(opt: &MediaSessionOption, dialog: ServerInviteDialog) ->
                 info!("user input handler finished");
             }
             _ = async {
-                let mut ts = 0;
-                let mut seq = 1;
                 let mut rejected = false;
 
                 println!("\x1b[32mPress 'a' to answer, 'r' to reject, or 'q' to quit.\x1b[0m");
