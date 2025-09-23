@@ -17,6 +17,7 @@ use rsipstack::{
 use std::net::IpAddr;
 use std::{env, sync::Arc, time::Duration};
 use tokio::sync::mpsc::unbounded_channel;
+use tokio::time::timeout;
 use tokio::{select, time::sleep};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info};
@@ -42,7 +43,7 @@ struct Args {
     port: u16,
 
     /// SIP port
-    #[arg(long, default_value = "12000")]
+    #[arg(long, default_value = "32000")]
     rtp_start_port: u16,
 
     #[arg(long, default_value = "false")]
@@ -72,7 +73,7 @@ struct Args {
 
     #[arg(long)]
     auto_answer: bool,
-    #[arg(long)]
+    #[arg(long, default_value = "0")]
     random_reject: u32,
 }
 
@@ -385,7 +386,8 @@ async fn process_dialog(
                         // play example pcmu of handling incoming call
                         //
                         // [A] Ai answer, [R] Reject, [E] Play example pcmu
-                        process_invite(&opt, d).await?;
+                        let opt_clone = opt.clone();
+                        tokio::spawn(async move { process_invite(&opt_clone, d).await.ok() });
                     }
                     Dialog::ClientInvite(_) => {
                         info!("Client invite dialog {}", id);
@@ -530,24 +532,23 @@ async fn process_invite(opt: &MediaSessionOption, dialog: ServerInviteDialog) ->
         let headers = vec![rsip::typed::ContentType(MediaType::Sdp(vec![])).into()];
         dialog.ringing(Some(headers), Some(answer.clone().into()))?;
         let ringback_token = CancellationToken::new();
-
-        play_audio_file(
-            conn.clone(),
-            ringback_token.clone(),
-            ssrc,
-            "ringback",
-            ts,
-            seq,
-            peer_addr.clone(),
-            payload_type,
+        timeout(
+            Duration::from_secs(rand::random::<u64>() % 3u64 + 1),
+            play_audio_file(
+                conn.clone(),
+                ringback_token.clone(),
+                ssrc,
+                "ringback",
+                ts,
+                seq,
+                peer_addr.clone(),
+                payload_type,
+            ),
         )
         .await
         .ok();
 
-        let headers = vec![rsip::typed::ContentType(MediaType::Sdp(vec![])).into()];
-        dialog.accept(Some(headers), Some(answer.clone().into()))?;
-        answer_sender.send("a".to_string()).expect("send answer");
-
+        //answer_sender.send("a".to_string()).expect("send answer");
         info!(
             "Accepted call with answer SDP peer address: {} port: {} payload_type: {}",
             peer_addr, peer_port, payload_type
