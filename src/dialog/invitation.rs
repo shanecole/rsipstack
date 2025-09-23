@@ -376,7 +376,7 @@ impl DialogLayer {
         tx.destination = opt.destination;
 
         let id = DialogId::try_from(&request)?;
-        let dlg_inner = DialogInner::new(
+        let mut dlg_inner = DialogInner::new(
             TransactionRole::Client,
             id.clone(),
             request.clone(),
@@ -386,6 +386,7 @@ impl DialogLayer {
             Some(opt.contact),
             tx.tu_sender.clone(),
         )?;
+        dlg_inner.initial_destination = tx.destination.clone();
 
         let dialog = ClientInviteDialog {
             inner: Arc::new(dlg_inner),

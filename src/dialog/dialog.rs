@@ -12,6 +12,7 @@ use crate::{
         make_via_branch,
         transaction::{Transaction, TransactionEventSender},
     },
+    transport::SipAddr,
     Result,
 };
 use rsip::{
@@ -183,6 +184,7 @@ pub struct DialogInner {
     pub(super) state_sender: DialogStateSender,
     pub(super) tu_sender: TransactionEventSender,
     pub(super) initial_request: Request,
+    pub(super) initial_destination: Option<SipAddr>,
 }
 
 pub type DialogStateReceiver = UnboundedReceiver<DialogState>;
@@ -259,6 +261,7 @@ impl DialogInner {
             tu_sender,
             state: Mutex::new(DialogState::Calling(id)),
             initial_request,
+            initial_destination: None,
             local_contact,
             remote_contact: Mutex::new(None),
         })
@@ -456,21 +459,17 @@ impl DialogInner {
 
     pub(super) async fn do_request(&self, request: Request) -> Result<Option<rsip::Response>> {
         let method = request.method().to_owned();
-        let mut destination = request.route_header().and_then(|r| {
-            r.typed()
-                .ok()
-                .and_then(|r| r.uris().first().map(|u| u.uri.clone()))
-        });
-
-        if destination.is_none() {
-            if let Some(contact) = self.remote_contact.lock().unwrap().as_ref() {
-                destination = contact.uri().ok();
-            }
-        }
+        let destination = self
+            .remote_contact
+            .lock()
+            .unwrap()
+            .as_ref()
+            .and_then(|c| c.uri().ok().as_ref()?.try_into().ok())
+            .or_else(|| self.initial_destination.clone());
 
         let key = TransactionKey::from_request(&request, TransactionRole::Client)?;
         let mut tx = Transaction::new_client(key, request, self.endpoint_inner.clone(), None);
-        tx.destination = destination.as_ref().map(|d| d.try_into().ok()).flatten();
+        tx.destination = destination;
 
         match tx.send().await {
             Ok(_) => {
@@ -576,7 +575,7 @@ impl DialogInner {
             }
             _ => {}
         }
-        info!("transitioning state: {} -> {}", old_state, state);
+        debug!("transitioning state: {} -> {}", old_state, state);
         *old_state = state;
         Ok(())
     }

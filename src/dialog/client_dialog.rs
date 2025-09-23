@@ -10,6 +10,7 @@ use crate::{
     },
     rsip_ext::extract_uri_from_contact,
 };
+use rsip::prelude::HasHeaders;
 use rsip::{
     headers::Route,
     prelude::{HeadersExt, ToTypedHeader, UntypedHeader},
@@ -199,13 +200,21 @@ impl ClientInviteDialog {
         }
         info!(id=%self.id(),"sending cancel request");
         let mut cancel_request = self.inner.initial_request.clone();
+        cancel_request
+            .headers_mut()
+            .retain(|h| !matches!(h, Header::ContentLength(_) | Header::ContentType(_)));
+
         cancel_request.method = rsip::Method::Cancel;
+
+        let mut to = cancel_request.to_header_mut()?.typed()?;
+        to.params.retain(|p| !matches!(p, rsip::Param::Tag(_)));
+        cancel_request.to_header_mut()?.replace(to);
         cancel_request
             .cseq_header_mut()?
             .mut_seq(self.inner.get_local_seq())?
             .mut_method(rsip::Method::Cancel)?;
         cancel_request.body = vec![];
-        cancel_request.to_header_mut()?.mut_tag("".into())?;
+
         self.inner.do_request(cancel_request).await?;
         Ok(())
     }
