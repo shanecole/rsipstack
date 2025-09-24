@@ -205,10 +205,6 @@ impl ClientInviteDialog {
             .retain(|h| !matches!(h, Header::ContentLength(_) | Header::ContentType(_)));
 
         cancel_request.method = rsip::Method::Cancel;
-
-        let mut to = cancel_request.to_header_mut()?.typed()?;
-        to.params.retain(|p| !matches!(p, rsip::Param::Tag(_)));
-        cancel_request.to_header_mut()?.replace(to);
         cancel_request
             .cseq_header_mut()?
             .mut_seq(self.inner.get_local_seq())?
