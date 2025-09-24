@@ -325,8 +325,27 @@ impl DialogInner {
         headers.push(Header::CallId(
             self.id.lock().unwrap().call_id.clone().into(),
         ));
-        headers.push(self.from.clone().into());
-        headers.push(self.to.lock().unwrap().clone().into());
+
+        let to = self
+            .to
+            .lock()
+            .unwrap()
+            .clone()
+            .untyped()
+            .value()
+            .to_string();
+
+        let from = self.from.clone().untyped().value().to_string();
+        match self.role {
+            TransactionRole::Client => {
+                headers.push(Header::From(from.into()));
+                headers.push(Header::To(to.into()));
+            }
+            TransactionRole::Server => {
+                headers.push(Header::From(to.into()));
+                headers.push(Header::To(from.into()));
+            }
+        }
         headers.push(Header::CSeq(cseq_header.into()));
         headers.push(Header::UserAgent(
             self.endpoint_inner.user_agent.clone().into(),

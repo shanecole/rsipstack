@@ -8,7 +8,7 @@ use crate::{Error, Result};
 use rsip::headers::ContentLength;
 use rsip::message::HasHeaders;
 use rsip::prelude::HeadersExt;
-use rsip::{Header, Method, Request, Response, SipMessage, StatusCode};
+use rsip::{Header, Method, Request, Response, SipMessage, StatusCode, StatusCodeKind};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tracing::{debug, info, trace};
 
@@ -161,6 +161,7 @@ pub struct Transaction {
     pub tu_sender: TransactionEventSender,
     pub timer_a: Option<u64>,
     pub timer_b: Option<u64>,
+    pub timer_c: Option<u64>,
     pub timer_d: Option<u64>,
     pub timer_k: Option<u64>, // server invite only
     pub timer_g: Option<u64>, // server invite only
@@ -197,6 +198,7 @@ impl Transaction {
             last_ack: None,
             timer_a: None,
             timer_b: None,
+            timer_c: None,
             timer_d: None,
             timer_k: None,
             timer_g: None,
@@ -414,7 +416,7 @@ impl Transaction {
         }
     }
 
-    async fn send_ack(&mut self, connection: Option<SipConnection>) -> Result<()> {
+    pub async fn send_ack(&mut self, connection: Option<SipConnection>) -> Result<()> {
         if self.transaction_type != TransactionType::ClientInvite {
             return Err(Error::TransactionError(
                 "send_ack is only valid for client invite transactions".to_string(),
@@ -595,7 +597,7 @@ impl Transaction {
             _ => {}
         }
         let new_state = match resp.status_code.kind() {
-            rsip::StatusCodeKind::Provisional => {
+            StatusCodeKind::Provisional => {
                 if resp.status_code == rsip::StatusCode::Trying {
                     TransactionState::Trying
                 } else {
@@ -651,18 +653,18 @@ impl Transaction {
                             .timeout(duration, TransactionTimer::TimerA(key, duration));
                         self.timer_a.replace(timer_a);
                     } else if let TransactionTimer::TimerB(_) = timer {
-                        // Inform TU about timeout
                         let timeout_response = self.endpoint_inner.make_response(
                             &self.original,
                             rsip::StatusCode::RequestTimeout,
                             None,
                         );
                         self.inform_tu_response(timeout_response)?;
+                        self.transition(TransactionState::Terminated)?;
                     }
                 }
             }
             TransactionState::Proceeding => {
-                if let TransactionTimer::TimerB(_) = timer {
+                if let TransactionTimer::TimerC(_) = timer {
                     // Inform TU about timeout
                     let timeout_response = self.endpoint_inner.make_response(
                         &self.original,
@@ -670,6 +672,7 @@ impl Transaction {
                         None,
                     );
                     self.inform_tu_response(timeout_response)?;
+                    self.transition(TransactionState::Terminated)?;
                 }
             }
             TransactionState::Completed => {
@@ -738,7 +741,7 @@ impl Transaction {
                         self.timer_a.replace(timer_a);
                     }
                     self.timer_b.replace(self.endpoint_inner.timers.timeout(
-                        self.endpoint_inner.option.timerb,
+                        self.endpoint_inner.option.t1x64,
                         TransactionTimer::TimerB(self.key.clone()),
                     ));
                 }
@@ -747,17 +750,18 @@ impl Transaction {
                 self.timer_a
                     .take()
                     .map(|id| self.endpoint_inner.timers.cancel(id));
-
-                if matches!(
-                    self.transaction_type,
-                    TransactionType::ClientInvite | TransactionType::ClientNonInvite
-                ) && self.timer_b.is_none()
-                {
-                    let timer_b = self.endpoint_inner.timers.timeout(
-                        self.endpoint_inner.option.timerb,
-                        TransactionTimer::TimerB(self.key.clone()),
-                    );
-                    self.timer_b.replace(timer_b);
+                if matches!(self.transaction_type, TransactionType::ClientInvite) {
+                    self.timer_b
+                        .take()
+                        .map(|id| self.endpoint_inner.timers.cancel(id));
+                    if self.timer_c.is_none() {
+                        // start Timer C for client invite only
+                        let timer_c = self.endpoint_inner.timers.timeout(
+                            self.endpoint_inner.option.timerc,
+                            TransactionTimer::TimerC(self.key.clone()),
+                        );
+                        self.timer_c.replace(timer_c);
+                    }
                 }
             }
             TransactionState::Completed => {
@@ -765,6 +769,9 @@ impl Transaction {
                     .take()
                     .map(|id| self.endpoint_inner.timers.cancel(id));
                 self.timer_b
+                    .take()
+                    .map(|id| self.endpoint_inner.timers.cancel(id));
+                self.timer_c
                     .take()
                     .map(|id| self.endpoint_inner.timers.cancel(id));
 
@@ -837,6 +844,9 @@ impl Transaction {
             .take()
             .map(|id| self.endpoint_inner.timers.cancel(id));
         self.timer_b
+            .take()
+            .map(|id| self.endpoint_inner.timers.cancel(id));
+        self.timer_c
             .take()
             .map(|id| self.endpoint_inner.timers.cancel(id));
         self.timer_d
