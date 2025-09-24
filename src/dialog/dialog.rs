@@ -233,11 +233,6 @@ impl DialogInner {
             to.params.push(rsip::Param::Tag(id.to_tag.clone().into()));
         }
 
-        let (from, to) = match role {
-            TransactionRole::Client => (from.to_string(), to.to_string()),
-            TransactionRole::Server => (to.to_string(), from.to_string()),
-        };
-
         let mut route_set = vec![];
         for h in initial_request.headers.iter() {
             if let Header::RecordRoute(rr) = h {
@@ -249,8 +244,8 @@ impl DialogInner {
             role,
             cancel_token: CancellationToken::new(),
             id: Mutex::new(id.clone()),
-            from,
-            to: Mutex::new(to),
+            from: from.to_string(),
+            to: Mutex::new(to.to_string()),
             local_seq: AtomicU32::new(cseq),
             remote_uri: Mutex::new(remote_uri),
             remote_seq: AtomicU32::new(0),
