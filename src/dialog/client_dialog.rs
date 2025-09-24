@@ -204,13 +204,16 @@ impl ClientInviteDialog {
             .headers_mut()
             .retain(|h| !matches!(h, Header::ContentLength(_) | Header::ContentType(_)));
 
+        cancel_request
+            .to_header_mut()?
+            .mut_tag(self.id().to_tag.clone().into())?; // ensure to-tag has tag param
+
         cancel_request.method = rsip::Method::Cancel;
         cancel_request
             .cseq_header_mut()?
             .mut_seq(self.inner.get_local_seq())?
             .mut_method(rsip::Method::Cancel)?;
         cancel_request.body = vec![];
-
         self.inner.do_request(cancel_request).await?;
         Ok(())
     }
@@ -492,6 +495,10 @@ impl ClientInviteDialog {
                             continue;
                         }
                         StatusCode::Ringing | StatusCode::SessionProgress => {
+                            match resp.to_header()?.tag() {
+                                Ok(Some(tag)) => self.inner.update_remote_tag(tag.value())?,
+                                _ => {}
+                            }
                             self.inner.transition(DialogState::Early(self.id(), resp))?;
                             continue;
                         }
@@ -515,6 +522,7 @@ impl ClientInviteDialog {
                                 )
                                 .await?;
                                 tx.send().await?;
+                                self.inner.update_remote_tag("").ok();
                                 continue;
                             } else {
                                 info!(id=%self.id(),"received 407 response without auth option");

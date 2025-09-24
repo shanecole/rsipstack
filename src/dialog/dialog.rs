@@ -175,8 +175,8 @@ pub struct DialogInner {
     pub remote_seq: AtomicU32,
     pub remote_uri: Mutex<rsip::Uri>,
 
-    pub from: String,
-    pub to: Mutex<String>,
+    pub from: rsip::typed::From,
+    pub to: Mutex<rsip::typed::To>,
 
     pub credential: Option<Credential>,
     pub route_set: Mutex<Vec<Route>>,
@@ -244,8 +244,8 @@ impl DialogInner {
             role,
             cancel_token: CancellationToken::new(),
             id: Mutex::new(id.clone()),
-            from: from.to_string(),
-            to: Mutex::new(to.to_string()),
+            from: from,
+            to: Mutex::new(to),
             local_seq: AtomicU32::new(cseq),
             remote_uri: Mutex::new(remote_uri),
             remote_seq: AtomicU32::new(0),
@@ -280,9 +280,8 @@ impl DialogInner {
 
     pub fn update_remote_tag(&self, tag: &str) -> Result<()> {
         self.id.lock().unwrap().to_tag = tag.to_string();
-        let to: rsip::headers::untyped::To = self.to.lock().unwrap().clone().into();
-        *self.to.lock().unwrap() = to.typed()?.with_tag(tag.to_string().into()).to_string();
-        info!("updating remote tag to: {}", self.to.lock().unwrap());
+        let mut to = self.to.lock().unwrap();
+        *to = to.clone().with_tag(tag.into());
         Ok(())
     }
 
@@ -326,8 +325,8 @@ impl DialogInner {
         headers.push(Header::CallId(
             self.id.lock().unwrap().call_id.clone().into(),
         ));
-        headers.push(Header::From(self.from.clone().into()));
-        headers.push(Header::To(self.to.lock().unwrap().clone().into()));
+        headers.push(self.from.clone().into());
+        headers.push(self.to.lock().unwrap().clone().into());
         headers.push(Header::CSeq(cseq_header.into()));
         headers.push(Header::UserAgent(
             self.endpoint_inner.user_agent.clone().into(),
@@ -656,14 +655,14 @@ impl Dialog {
         }
     }
 
-    pub fn from(&self) -> &str {
+    pub fn from(&self) -> &rsip::typed::From {
         match self {
             Dialog::ServerInvite(d) => &d.inner.from,
             Dialog::ClientInvite(d) => &d.inner.from,
         }
     }
 
-    pub fn to(&self) -> String {
+    pub fn to(&self) -> rsip::typed::To {
         match self {
             Dialog::ServerInvite(d) => d.inner.to.lock().unwrap().clone(),
             Dialog::ClientInvite(d) => d.inner.to.lock().unwrap().clone(),
