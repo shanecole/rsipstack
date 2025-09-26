@@ -133,8 +133,39 @@ pub struct InviteOption {
     pub headers: Option<Vec<rsip::Header>>,
 }
 
-pub(super) struct DialogGuardForUnconfirmed<'a> {
+pub struct DialogGuard {
     pub dialog_layer_inner: DialogLayerInnerRef,
+    pub id: DialogId,
+}
+
+impl DialogGuard {
+    pub fn new(dialog_layer: &Arc<DialogLayer>, id: DialogId) -> Self {
+        Self {
+            dialog_layer_inner: dialog_layer.inner.clone(),
+            id,
+        }
+    }
+}
+
+impl Drop for DialogGuard {
+    fn drop(&mut self) {
+        let dlg = match self.dialog_layer_inner.dialogs.write() {
+            Ok(mut dialogs) => match dialogs.remove(&self.id) {
+                Some(dlg) => dlg,
+                None => return,
+            },
+            _ => return,
+        };
+        let _ = tokio::spawn(async move {
+            if let Err(e) = dlg.hangup().await {
+                info!(id=%dlg.id(), "failed to hangup dialog: {}", e);
+            }
+        });
+    }
+}
+
+pub(super) struct DialogGuardForUnconfirmed<'a> {
+    pub dialog_layer_inner: &'a DialogLayerInnerRef,
     pub id: &'a DialogId,
 }
 
@@ -373,7 +404,7 @@ impl DialogLayer {
         info!(%id, "client invite dialog created");
 
         let _guard = DialogGuardForUnconfirmed {
-            dialog_layer_inner: self.inner.clone(),
+            dialog_layer_inner: &self.inner,
             id: &id,
         };
 
