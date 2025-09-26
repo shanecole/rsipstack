@@ -5,7 +5,7 @@ use super::{
     dialog_layer::DialogLayer,
 };
 use crate::{
-    dialog::{dialog::Dialog, DialogId},
+    dialog::{dialog::Dialog, dialog_layer::DialogLayerInnerRef, DialogId},
     transaction::{
         key::{TransactionKey, TransactionRole},
         make_tag,
@@ -16,7 +16,7 @@ use crate::{
 };
 use rsip::{Request, Response};
 use std::sync::Arc;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 /// INVITE Request Options
 ///
@@ -131,6 +131,40 @@ pub struct InviteOption {
     pub contact: rsip::Uri,
     pub credential: Option<Credential>,
     pub headers: Option<Vec<rsip::Header>>,
+}
+
+pub(super) struct DialogGuardForUnconfirmed<'a> {
+    pub dialog_layer_inner: DialogLayerInnerRef,
+    pub id: &'a DialogId,
+}
+
+impl<'a> Drop for DialogGuardForUnconfirmed<'a> {
+    fn drop(&mut self) {
+        // If the dialog is still unconfirmed, we should try to cancel it
+        match self.dialog_layer_inner.dialogs.write() {
+            Ok(mut dialogs) => {
+                if let Some(dlg) = dialogs.get(self.id) {
+                    if !dlg.can_cancel() {
+                        return;
+                    }
+                    match dialogs.remove(self.id) {
+                        Some(dlg) => {
+                            info!(%self.id, "unconfirmed dialog dropped, cancelling it");
+                            let _ = tokio::spawn(async move {
+                                if let Err(e) = dlg.hangup().await {
+                                    info!(id=%dlg.id(), "failed to hangup unconfirmed dialog: {}", e);
+                                }
+                            });
+                        }
+                        None => {}
+                    }
+                }
+            }
+            Err(e) => {
+                warn!(%self.id, "failed to acquire write lock on dialogs: {}", e);
+            }
+        }
+    }
 }
 
 impl DialogLayer {
@@ -330,7 +364,6 @@ impl DialogLayer {
         state_sender: DialogStateSender,
     ) -> Result<(ClientInviteDialog, Option<Response>)> {
         let (dialog, tx) = self.create_client_invite_dialog(opt, state_sender)?;
-
         let id = dialog.id();
         self.inner
             .dialogs
@@ -338,6 +371,11 @@ impl DialogLayer {
             .unwrap()
             .insert(id.clone(), Dialog::ClientInvite(dialog.clone()));
         info!(%id, "client invite dialog created");
+
+        let _guard = DialogGuardForUnconfirmed {
+            dialog_layer_inner: self.inner.clone(),
+            id: &id,
+        };
 
         match dialog.process_invite(tx).await {
             Ok((new_dialog_id, resp)) => {

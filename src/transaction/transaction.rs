@@ -185,7 +185,7 @@ impl Transaction {
         } else {
             TransactionState::Nothing
         };
-        info!(%key, %state, "transaction created");
+        trace!(%key, %state, "transaction created");
         let tx = Self {
             transaction_type,
             endpoint_inner,
@@ -917,6 +917,6 @@ impl Transaction {
 impl Drop for Transaction {
     fn drop(&mut self) {
         self.cleanup();
-        info!(key=%self.key, state=%self.state, "transaction dropped");
+        trace!(key=%self.key, state=%self.state, "transaction dropped");
     }
 }

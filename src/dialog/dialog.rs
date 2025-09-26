@@ -731,4 +731,11 @@ impl Dialog {
             Dialog::ClientInvite(d) => d.hangup().await,
         }
     }
+
+    pub fn can_cancel(&self) -> bool {
+        match self {
+            Dialog::ServerInvite(d) => d.inner.can_cancel(),
+            Dialog::ClientInvite(d) => d.inner.can_cancel(),
+        }
+    }
 }
