@@ -358,7 +358,7 @@ impl Registration {
             });
         }
 
-        let form = rsip::typed::From {
+        let from = rsip::typed::From {
             display_name: None,
             uri: to.uri.clone(),
             params: vec![],
@@ -396,7 +396,7 @@ impl Registration {
             rsip::Method::Register,
             server,
             via,
-            form,
+            from,
             to,
             self.last_seq,
         );

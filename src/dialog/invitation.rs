@@ -247,7 +247,7 @@ impl DialogLayer {
         };
         let recipient = to.uri.clone();
 
-        let form = rsip::typed::From {
+        let from = rsip::typed::From {
             display_name: None,
             uri: opt.caller.clone(),
             params: vec![],
@@ -257,7 +257,7 @@ impl DialogLayer {
         let via = self.endpoint.get_via(None, None)?;
         let mut request =
             self.endpoint
-                .make_request(rsip::Method::Invite, recipient, via, form, to, last_seq);
+                .make_request(rsip::Method::Invite, recipient, via, from, to, last_seq);
 
         let contact = rsip::typed::Contact {
             display_name: None,
