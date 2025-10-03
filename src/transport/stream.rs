@@ -62,31 +62,37 @@ impl Decoder for SipCodec {
             return Ok(Some(SipCodecType::KeepaliveResponse));
         }
 
-        if let Some(end_pos) = src
-            .windows(KEEPALIVE_REQUEST.len())
-            .position(|window| window == KEEPALIVE_REQUEST)
-        {
-            let msg_end = end_pos + KEEPALIVE_REQUEST.len();
-            let msg_data = &src[..msg_end];
-            match SipMessage::try_from(msg_data) {
-                Ok(msg) => {
-                    src.advance(msg_end);
-                    Ok(Some(SipCodecType::Message(msg)))
-                }
-                Err(e) => {
-                    src.advance(msg_end);
-                    Err(crate::Error::Error(format!(
-                        "Failed to parse SIP message: {}",
-                        e
-                    )))
+        if let Some(headers_end) = src.windows(4).position(|w| w == b"\r\n\r\n") {
+            let headers = &src[..headers_end + 4]; // include CRLFCRLF
+
+            // --- Inline get_content_length logic ---
+            let headers_str = std::str::from_utf8(headers)
+                .map_err(|e| crate::Error::Error(format!("Invalid UTF-8 in headers: {}", e)))?;
+            let mut content_length = 0;
+            for line in headers_str.lines() {
+                if let Some(rest) = line.strip_prefix("Content-Length:") {
+                    content_length = rest
+                        .trim()
+                        .parse::<usize>()
+                        .map_err(|e| crate::Error::Error(format!("Invalid Content-Length: {}", e)))?;
+                    break;
                 }
             }
-        } else {
-            if src.len() > MAX_SIP_MESSAGE_SIZE {
-                return Err(crate::Error::Error("SIP message too large".to_string()));
+            // --- End inline Content-Length logic ---
+
+            let total_len = headers_end + 4 + content_length;
+
+            if src.len() >= total_len {
+                let msg_data = src.split_to(total_len); // consume full message
+                let msg = SipMessage::try_from(&msg_data[..])?;
+                return Ok(Some(SipCodecType::Message(msg)));
             }
-            Ok(None)
         }
+
+        if src.len() > MAX_SIP_MESSAGE_SIZE {
+            return Err(crate::Error::Error("SIP message too large".to_string()));
+        }
+        Ok(None)
     }
 }
 
@@ -194,7 +200,8 @@ where
                             }
                             Err(e) => {
                                 warn!("Error decoding message from {}: {:?}", remote_addr, e);
-                                // Continue processing despite decode errors
+                                buffer.clear(); // reset buffer so we don't loop forever on bad data
+                                break;          // or `return Err(e.into())` to close the connection
                             }
                         }
                     }
