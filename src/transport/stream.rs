@@ -15,6 +15,8 @@ use tokio_util::codec::{Decoder, Encoder};
 use tracing::{debug, info, warn};
 
 pub(super) const MAX_SIP_MESSAGE_SIZE: usize = 65535;
+const CL_FULL_NAME: &[u8] = b"content-length";
+const CL_SHORT_NAME: &[u8] = b"l";
 
 pub struct SipCodec {}
 
@@ -65,20 +67,57 @@ impl Decoder for SipCodec {
         if let Some(headers_end) = src.windows(4).position(|w| w == b"\r\n\r\n") {
             let headers = &src[..headers_end + 4]; // include CRLFCRLF
 
-            // --- Inline get_content_length logic ---
-            let headers_str = std::str::from_utf8(headers)
-                .map_err(|e| crate::Error::Error(format!("Invalid UTF-8 in headers: {}", e)))?;
-            let mut content_length = 0;
-            for line in headers_str.lines() {
-                if let Some(rest) = line.strip_prefix("Content-Length:") {
-                    content_length = rest
-                        .trim()
-                        .parse::<usize>()
-                        .map_err(|e| crate::Error::Error(format!("Invalid Content-Length: {}", e)))?;
-                    break;
+            // Parse Content-Length as u32 without UTF-8 conversion
+            let mut content_length: usize = 0;
+            let mut start = 0;
+            while start < headers.len() {
+                // find end of line
+                let mut end = start;
+                while end < headers.len() && headers[end] != b'\n' {
+                    end += 1;
                 }
+
+                let mut line = &headers[start..end];
+                if let Some(&b'\r') = line.last() {
+                    line = &line[..line.len().saturating_sub(1)];
+                }
+
+                if let Some(colon) = line.iter().position(|&b| b == b':') {
+                    let header = &line[..colon];
+                    let is_cl = if header.len() == CL_FULL_NAME.len()
+                        && header
+                            .iter()
+                            .zip(CL_FULL_NAME.iter())
+                            .all(|(&a, &b)| a.to_ascii_lowercase() == b)
+                    {
+                        true
+                    } else if header.len() == CL_SHORT_NAME.len()
+                        && header
+                            .iter()
+                            .zip(CL_SHORT_NAME.iter())
+                            .all(|(&a, &b)| a.to_ascii_lowercase() == b)
+                    {
+                        true
+                    } else {
+                        false
+                    };
+
+                    if is_cl {
+                        // parse value
+                        let value_buf = &line[colon + 1..];
+                        content_length = std::str::from_utf8(value_buf)
+                            .map_err(|_| crate::Error::Error("Invalid Content-Length".to_string()))?
+                            .trim()
+                            .parse()
+                            .map_err(|_| {
+                                crate::Error::Error("Invalid Content-Length value".to_string())
+                            })?;
+                        break;
+                    }
+                }
+
+                start = if end < headers.len() { end + 1 } else { end };
             }
-            // --- End inline Content-Length logic ---
 
             let total_len = headers_end + 4 + content_length;
 
@@ -169,8 +208,8 @@ where
                     buffer.extend_from_slice(&read_buf[0..n]);
 
                     loop {
-                        match codec.decode(&mut buffer) {
-                            Ok(Some(msg)) => match msg {
+                        match codec.decode(&mut buffer)? {
+                            Some(msg) => match msg {
                                 SipCodecType::Message(sip_msg) => {
                                     debug!("Received message from {}: {}", remote_addr, sip_msg);
                                     let remote_socket_addr = remote_addr.get_socketaddr()?;
@@ -194,14 +233,9 @@ where
                                 }
                                 SipCodecType::KeepaliveResponse => {}
                             },
-                            Ok(None) => {
+                            None => {
                                 // Need more data
                                 break;
-                            }
-                            Err(e) => {
-                                warn!("Error decoding message from {}: {:?}", remote_addr, e);
-                                buffer.clear(); // reset buffer so we don't loop forever on bad data
-                                break;          // or `return Err(e.into())` to close the connection
                             }
                         }
                     }

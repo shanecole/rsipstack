@@ -155,9 +155,20 @@ impl TransportLayerInner {
     ) -> Result<(SipConnection, SipAddr)> {
         let target = outbound.unwrap_or(destination);
         let target = if matches!(target.addr.host, rsip::Host::Domain(_)) {
+            let params = target
+                .r#type
+                .filter(|&t| !matches!(t, rsip::Transport::Udp))
+                .map(rsip::Param::Transport)
+                .into_iter()
+                .collect();
+            let scheme = target.r#type.map(|t| match t {
+                rsip::Transport::Tls | rsip::Transport::Wss => rsip::Scheme::Sips,
+                _ => rsip::Scheme::Sip,
+            });
             let target = rsip::uri::Uri {
-                scheme: Some(rsip::Scheme::Sip),
+                scheme,
                 host_with_port: target.addr.clone(),
+                params,
                 ..Default::default()
             };
             let context = rsip_dns::Context::initialize_from(
