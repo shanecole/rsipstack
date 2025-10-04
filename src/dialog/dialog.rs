@@ -361,9 +361,11 @@ impl DialogInner {
         }
         headers.push(Header::MaxForwards(70.into()));
 
-        body.as_ref().map(|b| {
-            headers.push(Header::ContentLength((b.len() as u32).into()));
-        });
+        headers.push(Header::ContentLength(
+            body.as_ref()
+                .map_or(0u32, |b| b.len() as u32)
+                .into(),
+        ));
 
         let req = rsip::Request {
             method,
