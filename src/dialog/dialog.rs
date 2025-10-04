@@ -454,9 +454,11 @@ impl DialogInner {
             .as_ref()
             .map(|c| resp_headers.push(Contact::from(c.clone()).into()));
 
-        body.as_ref().map(|b| {
-            resp_headers.push(Header::ContentLength((b.len() as u32).into()));
-        });
+        resp_headers.push(Header::ContentLength(
+            body.as_ref()
+                .map_or(0u32, |b| b.len() as u32)
+                .into(),
+        ));
 
         resp_headers.push(Header::UserAgent(
             self.endpoint_inner.user_agent.clone().into(),
