@@ -283,18 +283,16 @@ impl TlsConnection {
 
         let connection = Self {
             inner: TlsConnectionInner::Client(Arc::new(StreamConnectionInner::new(
-                local_addr,
+                local_addr.clone(),
                 remote_addr.clone(),
                 read_half,
                 write_half,
             ))),
             cancel_token,
         };
-
         info!(
             "Created TLS client connection: {} -> {}",
-            connection.get_addr(),
-            remote_addr
+            local_addr, remote_addr
         );
 
         Ok(connection)
@@ -378,8 +376,8 @@ impl TlsConnection {
 impl StreamConnection for TlsConnection {
     fn get_addr(&self) -> &SipAddr {
         match &self.inner {
-            TlsConnectionInner::Client(inner) => &inner.local_addr,
-            TlsConnectionInner::Server(inner) => &inner.local_addr,
+            TlsConnectionInner::Client(inner) => &inner.remote_addr,
+            TlsConnectionInner::Server(inner) => &inner.remote_addr,
         }
     }
 

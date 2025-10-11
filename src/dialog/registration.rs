@@ -7,7 +7,7 @@ use crate::{
     transaction::{
         endpoint::EndpointInnerRef,
         key::{TransactionKey, TransactionRole},
-        make_tag,
+        make_call_id, make_tag,
         transaction::Transaction,
     },
     transport::SipAddr,
@@ -119,6 +119,7 @@ pub struct Registration {
     pub allow: rsip::headers::Allow,
     /// Public address detected by the server (IP and port)
     pub public_address: Option<rsip::HostWithPort>,
+    pub call_id: rsip::headers::CallId,
 }
 
 impl Registration {
@@ -158,6 +159,7 @@ impl Registration {
     /// # }
     /// ```
     pub fn new(endpoint: EndpointInnerRef, credential: Option<Credential>) -> Self {
+        let call_id = make_call_id(endpoint.option.callid_suffix.as_deref());
         Self {
             last_seq: 0,
             endpoint,
@@ -165,6 +167,7 @@ impl Registration {
             contact: None,
             allow: Default::default(),
             public_address: None,
+            call_id,
         }
     }
 
@@ -401,6 +404,8 @@ impl Registration {
             self.last_seq,
         );
 
+        // Thanks to https://github.com/restsend/rsipstack/issues/32
+        request.headers.unique_push(self.call_id.clone().into());
         request.headers.unique_push(contact.into());
         request.headers.unique_push(self.allow.clone().into());
         if let Some(expires) = expires {
