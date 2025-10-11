@@ -328,6 +328,7 @@ impl TransportLayerInner {
                 }
             }
             info!(addr=%transport.get_addr(), "transport serve_loop exited");
+            transport.close().await.ok();
             sender_clone.send(TransportEvent::Closed(transport)).ok();
         });
     }

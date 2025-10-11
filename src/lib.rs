@@ -88,10 +88,8 @@
 //!     callee: rsip::Uri::try_from("sip:bob@example.com")?,
 //!     contact: rsip::Uri::try_from("sip:alice@myhost.com:5060")?,
 //!     content_type: Some("application/sdp".to_string()),
-//!     destination: None,
 //!     offer: Some(sdp_body),
-//!     credential: None,
-//!     headers: None,
+//!     ..Default::default()
 //! };
 //!
 //! let (dialog, response) = dialog_layer.do_invite(invite_option, state_sender).await?;

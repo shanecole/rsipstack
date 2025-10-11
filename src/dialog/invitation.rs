@@ -47,11 +47,9 @@ use tracing::{debug, info, warn};
 ///     caller: "sip:alice@example.com".try_into()?,
 ///     callee: "sip:bob@example.com".try_into()?,
 ///     content_type: Some("application/sdp".to_string()),
-///     destination: None,
 ///     offer: Some(sdp_offer_bytes),
 ///     contact: "sip:alice@192.168.1.100:5060".try_into()?,
-///     credential: None,
-///     headers: None,
+///     ..Default::default()
 /// };
 /// # Ok(())
 /// # }
@@ -85,11 +83,11 @@ use tracing::{debug, info, warn};
 ///     caller: "sip:alice@example.com".try_into()?,
 ///     callee: "sip:bob@example.com".try_into()?,
 ///     content_type: Some("application/sdp".to_string()),
-///     destination: None,
 ///     offer: Some(sdp_bytes),
 ///     contact: "sip:alice@192.168.1.100:5060".try_into()?,
 ///     credential: Some(auth_credential),
 ///     headers: Some(custom_headers),
+///     ..Default::default()
 /// };
 /// # Ok(())
 /// # }
@@ -111,18 +109,18 @@ use tracing::{debug, info, warn};
 /// let invite_option = InviteOption {
 ///     caller: "sip:alice@example.com".try_into()?,
 ///     callee: "sip:bob@example.com".try_into()?,
-///     content_type: None, // Will default to "application/sdp"
-///     destination: None,
 ///     offer: Some(sdp_bytes),
 ///     contact: "sip:alice@192.168.1.100:5060".try_into()?,
 ///     credential: Some(credential),
-///     headers: None,
+///     ..Default::default()
 /// };
 /// # Ok(())
 /// # }
 /// ```
 #[derive(Default, Clone)]
 pub struct InviteOption {
+    pub caller_display_name: Option<String>,
+    pub caller_params: Vec<rsip::uri::Param>,
     pub caller: rsip::Uri,
     pub callee: rsip::Uri,
     pub destination: Option<SipAddr>,
@@ -248,9 +246,9 @@ impl DialogLayer {
         let recipient = to.uri.clone();
 
         let from = rsip::typed::From {
-            display_name: None,
+            display_name: opt.caller_display_name.clone(),
             uri: opt.caller.clone(),
-            params: vec![],
+            params: opt.caller_params.clone(),
         }
         .with_tag(make_tag());
 

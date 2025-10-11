@@ -249,12 +249,9 @@ async fn main() -> rsipstack::Result<()> {
                 let invite_option = InviteOption {
                     callee: callee.try_into().expect("callee"),
                     caller: contact.clone(),
-                    content_type: None,
-                    offer: None,
                     contact: contact.clone(),
                     credential: Some(credential.clone()),
-                    headers: None,
-                    destination: None,
+                    ..Default::default()
                 };
 
                 match make_call(dialog_layer, invite_option, opt, state_sender).await {
