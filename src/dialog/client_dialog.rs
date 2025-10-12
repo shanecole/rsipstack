@@ -571,6 +571,7 @@ impl ClientInviteDialog {
                                     route_set.push(Route::from(record_route.value()));
                                 }
                             }
+                            route_set.reverse();
                             *self.inner.route_set.lock().unwrap() = route_set;
 
                             self.inner

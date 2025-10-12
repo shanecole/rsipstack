@@ -7,8 +7,9 @@ use crate::dialog::{
     dialog::{DialogInner, DialogState, TerminatedReason},
     DialogId,
 };
+use crate::rsip_ext::destination_from_request;
 use crate::transaction::{endpoint::EndpointBuilder, key::TransactionRole};
-use crate::transport::TransportLayer;
+use crate::transport::{SipAddr, TransportLayer};
 use rsip::{headers::*, Request, Response, StatusCode, Uri};
 use std::sync::Arc;
 use tokio::sync::mpsc::unbounded_channel;
@@ -278,6 +279,92 @@ async fn test_client_dialog_termination_scenarios() -> crate::Result<()> {
         state,
         DialogState::Terminated(_, TerminatedReason::UacBye)
     ));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_make_request_preserves_remote_target_and_route_order() -> crate::Result<()> {
+    let endpoint = create_test_endpoint().await?;
+    let (state_sender, _) = unbounded_channel();
+
+    let dialog_id = DialogId {
+        call_id: "route-order-call".to_string(),
+        from_tag: "from-tag".to_string(),
+        to_tag: "to-tag".to_string(),
+    };
+
+    let invite_req = create_invite_request("from-tag", "to-tag", "route-order-call");
+    let (tu_sender, _tu_receiver) = unbounded_channel();
+
+    let dialog_inner = DialogInner::new(
+        TransactionRole::Client,
+        dialog_id,
+        invite_req,
+        endpoint.inner.clone(),
+        state_sender,
+        None,
+        Some(Uri::try_from("sip:alice@alice.example.com:5060")?),
+        tu_sender,
+    )?;
+
+    let client_dialog = ClientInviteDialog {
+        inner: Arc::new(dialog_inner),
+    };
+
+    let remote_target = Uri::try_from("sip:uas@192.0.2.55:5080;transport=tcp")?;
+    *client_dialog.inner.remote_uri.lock().unwrap() = remote_target.clone();
+
+    {
+        let mut route_set = client_dialog.inner.route_set.lock().unwrap();
+        *route_set = vec![
+            Route::from("<sip:proxy2.example.com:5070;transport=tcp;lr>"),
+            Route::from("<sip:proxy1.example.com:5060;transport=tcp;lr>"),
+        ];
+    }
+
+    let outbound_addr =
+        SipAddr::try_from(&Uri::try_from("sip:uac.example.com:5060;transport=tcp")?)?;
+    let request = client_dialog.inner.make_request(
+        rsip::Method::Bye,
+        None,
+        Some(outbound_addr),
+        None,
+        None,
+        None,
+    )?;
+
+    assert_eq!(
+        request.uri, remote_target,
+        "Request-URI must stay the remote target"
+    );
+
+    let routes: Vec<String> = request
+        .headers
+        .iter()
+        .filter_map(|header| match header {
+            Header::Route(route) => Some(route.value().to_string()),
+            _ => None,
+        })
+        .collect();
+
+    assert_eq!(
+        routes,
+        vec![
+            "<sip:proxy2.example.com:5070;transport=tcp;lr>".to_string(),
+            "<sip:proxy1.example.com:5060;transport=tcp;lr>".to_string()
+        ],
+        "Route headers must match the stored route set order"
+    );
+
+    let destination = destination_from_request(&request)
+        .expect("route-enabled request should resolve to a destination");
+    let expected_destination =
+        SipAddr::try_from(&Uri::try_from("sip:proxy2.example.com:5070;transport=tcp")?)?;
+    assert_eq!(
+        destination, expected_destination,
+        "First Route entry must determine the transport destination"
+    );
 
     Ok(())
 }

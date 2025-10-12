@@ -5,7 +5,7 @@ use super::{
     DialogId,
 };
 use crate::{
-    rsip_ext::extract_uri_from_contact,
+    rsip_ext::{destination_from_request, extract_uri_from_contact},
     transaction::{
         endpoint::EndpointInnerRef,
         key::{TransactionKey, TransactionRole},
@@ -472,13 +472,8 @@ impl DialogInner {
 
     pub(super) async fn do_request(&self, request: Request) -> Result<Option<rsip::Response>> {
         let method = request.method().to_owned();
-        let destination = self
-            .remote_contact
-            .lock()
-            .unwrap()
-            .as_ref()
-            .and_then(|c| c.uri().ok().as_ref()?.try_into().ok())
-            .or_else(|| self.initial_destination.clone());
+        let destination =
+            destination_from_request(&request).or_else(|| self.initial_destination.clone());
 
         let key = TransactionKey::from_request(&request, TransactionRole::Client)?;
         let mut tx = Transaction::new_client(key, request, self.endpoint_inner.clone(), None);

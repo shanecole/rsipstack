@@ -291,7 +291,6 @@ impl EndpointInner {
                     route_set.push(Header::Route(Route::from(record_route.value())));
                 }
             }
-
             route_set.reverse();
             headers.extend(route_set);
         }
