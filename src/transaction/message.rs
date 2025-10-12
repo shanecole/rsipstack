@@ -312,7 +312,7 @@ impl EndpointInner {
                 cseq.mut_method(rsip::Method::Ack).ok();
             }
         });
-        headers.push(Header::ContentLength( ContentLength::default() )); // 0 because of vec![] below
+        headers.push(Header::ContentLength(ContentLength::default())); // 0 because of vec![] below
         headers.unique_push(Header::UserAgent(self.user_agent.clone().into()));
         Ok(rsip::Request {
             method: rsip::Method::Ack,
