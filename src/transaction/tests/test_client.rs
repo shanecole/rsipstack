@@ -133,6 +133,18 @@ Content-Length: 0\r\n\r\n";
     let expected_uri = Uri::try_from("sip:uas@192.0.2.55:5080;transport=tcp")?;
     assert_eq!(ack.uri, expected_uri, "ACK must target the remote Contact");
 
+    // Check Content-Length
+    let content_length: String = ack
+        .headers
+        .iter()
+        .filter_map(|header| match header {
+            Header::ContentLength(content_length) => Some(content_length.value().to_string()),
+            _ => None,
+        })
+        .next()
+        .expect("ACK must include a Content-Length header");
+
+    assert_eq!(content_length, "0", "Content-Length of ACK must be 0");
     let routes: Vec<String> = ack
         .headers
         .iter()
