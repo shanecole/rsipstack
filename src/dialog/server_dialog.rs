@@ -680,17 +680,6 @@ impl ServerInviteDialog {
                                 break;
                             }
                             info!(id = %self.id(),"received ack {}", req.uri);
-                            match req.contact_header() {
-                                Ok(contact) => {
-                                    self.inner
-                                        .remote_contact
-                                        .lock()
-                                        .unwrap()
-                                        .replace(contact.clone());
-                                }
-                                _ => {}
-                            }
-
                             self.inner.transition(DialogState::Confirmed(
                                 self.id(),
                                 tx.last_response.clone().unwrap_or_default(),

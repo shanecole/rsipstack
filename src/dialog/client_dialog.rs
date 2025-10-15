@@ -12,7 +12,6 @@ use crate::{
 };
 use rsip::prelude::HasHeaders;
 use rsip::{
-    headers::Route,
     prelude::{HeadersExt, ToTypedHeader, UntypedHeader},
     Header,
 };
@@ -563,17 +562,6 @@ impl ClientInviteDialog {
                                 uri
                             };
                             *self.inner.remote_uri.lock().unwrap() = uri;
-
-                            // update route set from Record-Route header
-                            let mut route_set = Vec::new();
-                            for header in resp.headers.iter() {
-                                if let Header::RecordRoute(record_route) = header {
-                                    route_set.push(Route::from(record_route.value()));
-                                }
-                            }
-                            route_set.reverse();
-                            *self.inner.route_set.lock().unwrap() = route_set;
-
                             self.inner
                                 .transition(DialogState::Confirmed(dialog_id.clone(), resp))?;
                             DialogInner::serve_keepalive_options(self.inner.clone());

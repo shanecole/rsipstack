@@ -149,7 +149,7 @@ impl DialogLayer {
         tx: &Transaction,
         state_sender: DialogStateSender,
         credential: Option<Credential>,
-        contact: Option<rsip::Uri>,
+        local_contact: Option<rsip::Uri>,
     ) -> Result<ServerInviteDialog> {
         let mut id = DialogId::try_from(&tx.original)?;
         if !id.to_tag.is_empty() {
@@ -174,7 +174,7 @@ impl DialogLayer {
             self.endpoint.clone(),
             state_sender,
             credential,
-            contact,
+            local_contact,
             tx.tu_sender.clone(),
         )?;
 
@@ -186,7 +186,7 @@ impl DialogLayer {
             .write()
             .unwrap()
             .insert(id.clone(), Dialog::ServerInvite(dialog.clone()));
-        info!("server invite dialog created: {id}");
+        info!(%id, "server invite dialog created");
         Ok(dialog)
     }
 

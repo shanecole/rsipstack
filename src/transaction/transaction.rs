@@ -2,7 +2,6 @@ use super::endpoint::EndpointInnerRef;
 use super::key::TransactionKey;
 use super::{SipConnection, TransactionState, TransactionTimer, TransactionType};
 use crate::dialog::DialogId;
-use crate::rsip_ext::destination_from_request;
 use crate::transaction::make_tag;
 use crate::transport::SipAddr;
 use crate::{Error, Result};
@@ -454,11 +453,6 @@ impl Transaction {
         } else {
             ack.to_owned().into()
         };
-        if let SipMessage::Request(ref req) = ack {
-            if let Some(destination) = destination_from_request(req) {
-                self.destination = Some(destination);
-            }
-        }
         match ack.clone() {
             SipMessage::Request(ack) => self.last_ack.replace(ack),
             _ => None,

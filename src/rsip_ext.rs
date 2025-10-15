@@ -1,4 +1,4 @@
-use crate::transport::{SipAddr, SipConnection};
+use crate::transport::SipConnection;
 use crate::{Error, Result};
 use rsip::{
     message::HasHeaders,
@@ -114,24 +114,6 @@ fn apply_tokenizer_params(uri: &mut rsip::Uri, tokenizer: &CustomContactTokenize
             ));
         }
     }
-}
-
-pub fn destination_from_request(request: &rsip::Request) -> Option<SipAddr> {
-    request
-        .headers
-        .iter()
-        .find_map(|header| match header {
-            rsip::Header::Route(route) => {
-                let uri_str = route.value().to_string();
-                let trimmed = uri_str.trim();
-                let without_brackets = trimmed.trim_matches(['<', '>']);
-                rsip::Uri::try_from(without_brackets)
-                    .ok()
-                    .and_then(|uri| SipAddr::try_from(&uri).ok())
-            }
-            _ => None,
-        })
-        .or_else(|| SipAddr::try_from(&request.uri).ok())
 }
 
 use nom::{

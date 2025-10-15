@@ -5,7 +5,7 @@ use super::{
     DialogId,
 };
 use crate::{
-    rsip_ext::{destination_from_request, extract_uri_from_contact},
+    rsip_ext::extract_uri_from_contact,
     transaction::{
         endpoint::EndpointInnerRef,
         key::{TransactionKey, TransactionRole},
@@ -239,6 +239,7 @@ impl DialogInner {
                 route_set.push(Route::from(rr.value()));
             }
         }
+        route_set.reverse();
 
         Ok(Self {
             role,
@@ -472,8 +473,40 @@ impl DialogInner {
 
     pub(super) async fn do_request(&self, request: Request) -> Result<Option<rsip::Response>> {
         let method = request.method().to_owned();
-        let destination =
-            destination_from_request(&request).or_else(|| self.initial_destination.clone());
+        // request destination determination
+        // Route header first, then remote contact, then initial request destination
+        let mut destination = None;
+        for h in request.headers.iter() {
+            if let Header::Route(route) = h {
+                let dest = route
+                    .typed()
+                    .ok()
+                    .map(|r| {
+                        r.uris()
+                            .first()
+                            .map(|u| SipAddr::try_from(&u.uri).ok())
+                            .flatten()
+                    })
+                    .flatten();
+                if dest.is_some() {
+                    destination = dest;
+                    break;
+                }
+            }
+        }
+
+        if destination.is_none() {
+            destination = self
+                .remote_contact
+                .lock()
+                .unwrap()
+                .as_ref()
+                .map(|c| extract_uri_from_contact(c.value()).ok())
+                .flatten()
+                .map(|u| SipAddr::try_from(&u).ok())
+                .flatten()
+                .or_else(|| self.initial_destination.clone());
+        }
 
         let key = TransactionKey::from_request(&request, TransactionRole::Client)?;
         let mut tx = Transaction::new_client(key, request, self.endpoint_inner.clone(), None);
@@ -682,6 +715,7 @@ impl Dialog {
             Dialog::ClientInvite(d) => d.inner.to.lock().unwrap().clone(),
         }
     }
+
     pub fn remote_contact(&self) -> Option<rsip::Uri> {
         match self {
             Dialog::ServerInvite(d) => d
@@ -690,7 +724,7 @@ impl Dialog {
                 .lock()
                 .unwrap()
                 .as_ref()
-                .map(|c| c.uri().ok())
+                .map(|c| extract_uri_from_contact(c.value()).ok())
                 .flatten(),
             Dialog::ClientInvite(d) => d
                 .inner
@@ -698,7 +732,7 @@ impl Dialog {
                 .lock()
                 .unwrap()
                 .as_ref()
-                .map(|c| c.uri().ok())
+                .map(|c| extract_uri_from_contact(c.value()).ok())
                 .flatten(),
         }
     }
