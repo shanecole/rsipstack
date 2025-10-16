@@ -1,7 +1,7 @@
 use super::{connection::TransportSender, SipAddr, SipConnection};
 use crate::{
     transport::{
-        connection::{KEEPALIVE_REQUEST, KEEPALIVE_RESPONSE},
+        connection::{KEEPALIVE_REQUEST, KEEPALIVE_RESPONSE, MAX_UDP_BUF_SIZE},
         TransportEvent,
     },
     Result,
@@ -63,7 +63,7 @@ impl UdpConnection {
     }
 
     pub async fn serve_loop(&self, sender: TransportSender) -> Result<()> {
-        let mut buf = vec![0u8; 2048];
+        let mut buf = vec![0u8; MAX_UDP_BUF_SIZE];
         loop {
             let (len, addr) = tokio::select! {
                 // Check for cancellation on each iteration

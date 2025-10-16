@@ -64,6 +64,7 @@ pub type TransportSender = UnboundedSender<TransportEvent>;
 
 pub const KEEPALIVE_REQUEST: &[u8] = b"\r\n\r\n";
 pub const KEEPALIVE_RESPONSE: &[u8] = b"\r\n";
+pub const MAX_UDP_BUF_SIZE: usize = 8192;
 
 /// SIP Connection
 ///
