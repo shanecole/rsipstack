@@ -1,9 +1,20 @@
-use crate::transport::SipConnection;
+use crate::transport::{SipAddr, SipConnection};
 use crate::{Error, Result};
+use nom::{
+    branch::alt,
+    bytes::complete::{is_not, take_until},
+    character::complete::{char, multispace0},
+    combinator::{map, opt, rest},
+    multi::separated_list0,
+    sequence::{delimited, preceded},
+    IResult,
+};
+use rsip::prelude::ToTypedHeader;
 use rsip::{
     message::HasHeaders,
     prelude::{HeadersExt, UntypedHeader},
 };
+
 pub trait RsipResponseExt {
     fn reason_phrase(&self) -> Option<&str>;
     fn via_received(&self) -> Option<rsip::HostWithPort>;
@@ -116,15 +127,25 @@ fn apply_tokenizer_params(uri: &mut rsip::Uri, tokenizer: &CustomContactTokenize
     }
 }
 
-use nom::{
-    branch::alt,
-    bytes::complete::{is_not, take_until},
-    character::complete::{char, multispace0},
-    combinator::{map, opt, rest},
-    multi::separated_list0,
-    sequence::{delimited, preceded},
-    IResult,
-};
+pub fn destination_from_request(request: &rsip::Request) -> Option<SipAddr> {
+    request
+        .headers
+        .iter()
+        .find_map(|header| match header {
+            rsip::Header::Route(route) => route
+                .typed()
+                .ok()
+                .map(|r| {
+                    r.uris()
+                        .first()
+                        .map(|u| SipAddr::try_from(&u.uri).ok())
+                        .flatten()
+                })
+                .flatten(),
+            _ => None,
+        })
+        .or_else(|| SipAddr::try_from(&request.uri).ok())
+}
 
 #[derive(Debug)]
 pub(crate) struct CustomContactTokenizer<'a> {
