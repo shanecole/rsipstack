@@ -5,13 +5,14 @@ use super::{
     DialogId,
 };
 use crate::{
-    rsip_ext::{destination_from_request, extract_uri_from_contact},
+    rsip_ext::extract_uri_from_contact,
     transaction::{
         endpoint::EndpointInnerRef,
         key::{TransactionKey, TransactionRole},
         make_via_branch,
         transaction::{Transaction, TransactionEventSender},
     },
+    transport::SipAddr,
     Result,
 };
 use rsip::{
@@ -473,10 +474,11 @@ impl DialogInner {
         let key = TransactionKey::from_request(&request, TransactionRole::Client)?;
         let mut tx = Transaction::new_client(key, request, self.endpoint_inner.clone(), None);
 
-        // request destination determination
-        // Route header first, then remote contact(request uri)
-        tx.destination = destination_from_request(&tx.original);
-
+        if let Some(route) = tx.original.route_header() {
+            if let Some(first_route) = route.typed().ok().and_then(|r| r.uris().first().cloned()) {
+                tx.destination = SipAddr::try_from(&first_route.uri).ok();
+            }
+        }
         match tx.send().await {
             Ok(_) => {
                 info!(

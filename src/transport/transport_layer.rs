@@ -31,10 +31,7 @@ impl DefaultDomainResolver {
         let host = match &target.addr.host {
             rsip::Host::Domain(domain) => domain,
             _ => {
-                return Err(crate::Error::DnsResolutionError(format!(
-                    "Not a domain: {}",
-                    target.addr
-                )));
+                return Err(crate::Error::DnsResolutionError(target.addr.to_string()));
             }
         };
         let port = target.addr.port.unwrap_or(5060.into());
@@ -49,10 +46,7 @@ impl DefaultDomainResolver {
                 },
             });
         }
-        Err(crate::Error::DnsResolutionError(format!(
-            "DNS resolution error: {}",
-            target.addr
-        )))
+        Err(crate::Error::DnsResolutionError(target.addr.to_string()))
     }
 
     #[cfg(feature = "rsip-dns")]
@@ -90,10 +84,7 @@ impl DefaultDomainResolver {
                     u16::from(result.port),
                 )),
             }),
-            None => Err(crate::Error::DnsResolutionError(format!(
-                "DNS resolution error: {}",
-                target.addr
-            ))),
+            None => Err(crate::Error::DnsResolutionError(target.addr.to_string())),
         }
     }
 }

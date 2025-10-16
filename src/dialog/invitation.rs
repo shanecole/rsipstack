@@ -14,7 +14,10 @@ use crate::{
     transport::SipAddr,
     Result,
 };
-use rsip::{Request, Response};
+use rsip::{
+    prelude::{HeadersExt, ToTypedHeader},
+    Request, Response,
+};
 use std::sync::Arc;
 use tracing::{debug, info, warn};
 
@@ -433,7 +436,18 @@ impl DialogLayer {
         ));
         let key = TransactionKey::from_request(&request, TransactionRole::Client)?;
         let mut tx = Transaction::new_client(key, request.clone(), self.endpoint.clone(), None);
-        tx.destination = opt.destination;
+
+        if opt.destination.is_some() {
+            tx.destination = opt.destination;
+        } else {
+            if let Some(route) = tx.original.route_header() {
+                if let Some(first_route) =
+                    route.typed().ok().and_then(|r| r.uris().first().cloned())
+                {
+                    tx.destination = SipAddr::try_from(&first_route.uri).ok();
+                }
+            }
+        }
 
         let id = DialogId::try_from(&request)?;
         let dlg_inner = DialogInner::new(
