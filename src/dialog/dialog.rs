@@ -12,7 +12,6 @@ use crate::{
         make_via_branch,
         transaction::{Transaction, TransactionEventSender},
     },
-    transport::SipAddr,
     Result,
 };
 use rsip::{
@@ -184,7 +183,6 @@ pub struct DialogInner {
     pub(super) state_sender: DialogStateSender,
     pub(super) tu_sender: TransactionEventSender,
     pub(super) initial_request: Request,
-    pub(super) initial_destination: Option<SipAddr>,
 }
 
 pub type DialogStateReceiver = UnboundedReceiver<DialogState>;
@@ -257,7 +255,6 @@ impl DialogInner {
             tu_sender,
             state: Mutex::new(DialogState::Calling(id)),
             initial_request,
-            initial_destination: None,
             local_contact,
             remote_contact: Mutex::new(None),
         })

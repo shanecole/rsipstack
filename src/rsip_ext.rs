@@ -7,7 +7,7 @@ use nom::{
     combinator::{map, opt, rest},
     multi::separated_list0,
     sequence::{delimited, preceded},
-    IResult,
+    IResult, Parser,
 };
 use rsip::prelude::ToTypedHeader;
 use rsip::{
@@ -188,17 +188,18 @@ fn custom_contact_tokenize<'a>(input: &'a str) -> IResult<&'a str, CustomContact
     alt((
         custom_contact_with_brackets,
         custom_contact_without_brackets,
-    ))(input)
+    ))
+    .parse(input)
 }
 
 fn custom_contact_with_brackets<'a>(
     input: &'a str,
 ) -> IResult<&'a str, CustomContactTokenizer<'a>> {
     let (input, _) = multispace0(input)?;
-    let (input, _) = opt(take_until("<"))(input)?;
-    let (input, _) = char('<')(input)?;
-    let (input, uri) = take_until(">")(input)?;
-    let (input, _) = char('>')(input)?;
+    let (input, _) = opt(take_until("<")).parse(input)?;
+    let (input, _) = char('<').parse(input)?;
+    let (input, uri) = take_until(">").parse(input)?;
+    let (input, _) = char('>').parse(input)?;
 
     let uri = uri.trim();
     let params = custom_contact_parse_params(uri);
@@ -209,7 +210,7 @@ fn custom_contact_with_brackets<'a>(
 fn custom_contact_without_brackets<'a>(
     input: &'a str,
 ) -> IResult<&'a str, CustomContactTokenizer<'a>> {
-    let (input, uri) = map(rest, |s: &str| s.trim())(input)?;
+    let (input, uri) = map(rest, |s: &str| s.trim()).parse(input)?;
     let params = custom_contact_parse_params(uri);
     Ok((input, CustomContactTokenizer { uri, params }))
 }
@@ -222,7 +223,7 @@ fn custom_contact_parse_params<'a>(uri: &'a str) -> Vec<CustomContactParamToken<
             return Vec::new();
         }
 
-        match separated_list0(char(';'), custom_contact_param)(params_str) {
+        match separated_list0(char(';'), custom_contact_param).parse(params_str) {
             Ok((_, params)) => params.into_iter().filter(|p| !p.name.is_empty()).collect(),
             Err(_) => Vec::new(),
         }
@@ -233,14 +234,15 @@ fn custom_contact_parse_params<'a>(uri: &'a str) -> Vec<CustomContactParamToken<
 
 fn custom_contact_param<'a>(input: &'a str) -> IResult<&'a str, CustomContactParamToken<'a>> {
     let (input, _) = multispace0(input)?;
-    let (input, name) = map(is_not("=; \t\r\n?"), |v: &str| v.trim())(input)?;
+    let (input, name) = map(is_not("=; \t\r\n?"), |v: &str| v.trim()).parse(input)?;
     let (input, value) = opt(preceded(
         char('='),
         alt((
             delimited(char('"'), take_until("\""), char('"')),
             map(is_not("; \t\r\n?"), |v: &str| v.trim()),
         )),
-    ))(input)?;
+    ))
+    .parse(input)?;
 
     Ok((input, CustomContactParamToken { name, value }))
 }

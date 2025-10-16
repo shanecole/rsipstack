@@ -199,6 +199,16 @@ impl DialogLayer {
         self.inner.dialogs.read().unwrap().len()
     }
 
+    pub fn all_dialog_ids(&self) -> Vec<DialogId> {
+        self.inner
+            .dialogs
+            .read()
+            .unwrap()
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>()
+    }
+
     pub fn get_dialog(&self, id: &DialogId) -> Option<Dialog> {
         match self.inner.dialogs.read() {
             Ok(dialogs) => match dialogs.get(id) {

@@ -171,24 +171,17 @@ impl<'a> Drop for DialogGuardForUnconfirmed<'a> {
     fn drop(&mut self) {
         // If the dialog is still unconfirmed, we should try to cancel it
         match self.dialog_layer_inner.dialogs.write() {
-            Ok(mut dialogs) => {
-                if let Some(dlg) = dialogs.get(self.id) {
-                    if !dlg.can_cancel() {
-                        return;
-                    }
-                    match dialogs.remove(self.id) {
-                        Some(dlg) => {
-                            info!(%self.id, "unconfirmed dialog dropped, cancelling it");
-                            let _ = tokio::spawn(async move {
-                                if let Err(e) = dlg.hangup().await {
-                                    info!(id=%dlg.id(), "failed to hangup unconfirmed dialog: {}", e);
-                                }
-                            });
+            Ok(mut dialogs) => match dialogs.remove(self.id) {
+                Some(dlg) => {
+                    info!(%self.id, "unconfirmed dialog dropped, cancelling it");
+                    let _ = tokio::spawn(async move {
+                        if let Err(e) = dlg.hangup().await {
+                            info!(id=%dlg.id(), "failed to hangup unconfirmed dialog: {}", e);
                         }
-                        None => {}
-                    }
+                    });
                 }
-            }
+                None => {}
+            },
             Err(e) => {
                 warn!(%self.id, "failed to acquire write lock on dialogs: {}", e);
             }
@@ -443,7 +436,7 @@ impl DialogLayer {
         tx.destination = opt.destination;
 
         let id = DialogId::try_from(&request)?;
-        let mut dlg_inner = DialogInner::new(
+        let dlg_inner = DialogInner::new(
             TransactionRole::Client,
             id.clone(),
             request.clone(),
@@ -453,7 +446,6 @@ impl DialogLayer {
             Some(opt.contact),
             tx.tu_sender.clone(),
         )?;
-        dlg_inner.initial_destination = tx.destination.clone();
 
         let dialog = ClientInviteDialog {
             inner: Arc::new(dlg_inner),
