@@ -248,11 +248,19 @@ impl Transaction {
                 ));
             }
         }
+
         if self.connection.is_none() {
             let target_uri = match &self.destination {
                 Some(addr) => addr,
-                None => &SipAddr::try_from(&self.original.uri)?,
+                None => {
+                    if let Some(locator) = self.endpoint_inner.locator.as_ref() {
+                        &locator.locate(&self.original.uri).await?
+                    } else {
+                        &SipAddr::try_from(&self.original.uri)?
+                    }
+                }
             };
+
             let (connection, resolved_addr) = self
                 .endpoint_inner
                 .transport_layer

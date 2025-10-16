@@ -10,6 +10,7 @@ use crate::{
     transport::{SipAddr, TransportEvent, TransportLayer},
     Error, Result, VERSION,
 };
+use async_trait::async_trait;
 use rsip::{prelude::HeadersExt, SipMessage};
 use std::{
     collections::HashMap,
@@ -26,6 +27,11 @@ use tracing::{debug, info, trace, warn};
 pub trait MessageInspector: Send + Sync {
     fn before_send(&self, msg: SipMessage) -> SipMessage;
     fn after_received(&self, msg: SipMessage) -> SipMessage;
+}
+
+#[async_trait]
+pub trait TargetLocator: Send + Sync {
+    async fn locate(&self, uri: &rsip::Uri) -> Result<SipAddr>;
 }
 
 pub struct EndpointOption {
@@ -103,6 +109,7 @@ pub struct EndpointInner {
     cancel_token: CancellationToken,
     timer_interval: Duration,
     pub(super) inspector: Option<Box<dyn MessageInspector>>,
+    pub(super) locator: Option<Box<dyn TargetLocator>>,
     pub option: EndpointOption,
 }
 pub type EndpointInnerRef = Arc<EndpointInner>;
@@ -133,6 +140,7 @@ pub struct EndpointBuilder {
     timer_interval: Option<Duration>,
     option: Option<EndpointOption>,
     inspector: Option<Box<dyn MessageInspector>>,
+    target_locator: Option<Box<dyn TargetLocator>>,
 }
 
 /// SIP Endpoint
@@ -199,6 +207,7 @@ impl EndpointInner {
         allows: Vec<rsip::Method>,
         option: Option<EndpointOption>,
         inspector: Option<Box<dyn MessageInspector>>,
+        locator: Option<Box<dyn TargetLocator>>,
     ) -> Arc<Self> {
         let (incoming_sender, incoming_receiver) = unbounded_channel();
         Arc::new(EndpointInner {
@@ -215,6 +224,7 @@ impl EndpointInner {
             incoming_receiver: Mutex::new(Some(incoming_receiver)),
             option: option.unwrap_or_default(),
             inspector,
+            locator,
         })
     }
 
@@ -553,6 +563,7 @@ impl EndpointBuilder {
             timer_interval: None,
             option: None,
             inspector: None,
+            target_locator: None,
         }
     }
     pub fn with_option(&mut self, option: EndpointOption) -> &mut Self {
@@ -586,6 +597,10 @@ impl EndpointBuilder {
         self.inspector = Some(inspector);
         self
     }
+    pub fn with_target_locator(&mut self, locator: Box<dyn TargetLocator>) -> &mut Self {
+        self.target_locator = Some(locator);
+        self
+    }
     pub fn build(&mut self) -> Endpoint {
         let cancel_token = self.cancel_token.take().unwrap_or_default();
 
@@ -599,6 +614,7 @@ impl EndpointBuilder {
         let timer_interval = self.timer_interval.to_owned();
         let option = self.option.take();
         let inspector = self.inspector.take();
+        let locator = self.target_locator.take();
 
         let core = EndpointInner::new(
             user_agent,
@@ -608,6 +624,7 @@ impl EndpointBuilder {
             allows,
             option,
             inspector,
+            locator,
         );
 
         Endpoint { inner: core }
