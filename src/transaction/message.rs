@@ -1,9 +1,9 @@
 use super::{endpoint::EndpointInner, make_call_id};
-use crate::{rsip_ext::extract_uri_from_contact, transaction::make_via_branch, Result};
+use crate::{rsip_ext::RsipResponseExt, transaction::make_via_branch, Result};
 use rsip::{
     header,
     headers::{ContentLength, Route},
-    prelude::{HeadersExt, ToTypedHeader, UntypedHeader},
+    prelude::{ToTypedHeader, UntypedHeader},
     Error, Header, Request, Response, StatusCode,
 };
 
@@ -241,59 +241,30 @@ impl EndpointInner {
         }
     }
 
-    pub fn make_ack(&self, mut uri: rsip::Uri, resp: &Response) -> Result<Request> {
+    pub fn make_ack(&self, resp: &Response) -> Result<Request> {
         let mut headers = resp.headers.clone();
-        // Check if response to INVITE
-        let mut resp_to_invite = false;
-        if let Ok(cseq) = resp.cseq_header() {
-            if let Ok(rsip::Method::Invite) = cseq.method() {
-                resp_to_invite = true;
+        let request_uri = resp.remote_uri()?;
+
+        if let Ok(top_most_via) = header!(
+            headers.iter_mut(),
+            Header::Via,
+            Error::missing_header("Via")
+        ) {
+            if let Ok(mut typed_via) = top_most_via.typed() {
+                typed_via.params.clear();
+                typed_via.params.push(make_via_branch());
+                *top_most_via = typed_via.into();
             }
         }
-
-        // For 200 OK responses to INVITE, this creates an ACK with:
-        // 1. Request-URI from Contact header
-        // 2. Route headers from Record-Route headers
-        // 3. New Via branch (creates new transaction)
-        //
-        // **FIXME**: This duplicates logic in `client_dialog.rs` - should be refactored
-        if resp_to_invite && resp.status_code.kind() == rsip::StatusCodeKind::Successful {
-            if let Ok(top_most_via) = header!(
-                headers.iter_mut(),
-                Header::Via,
-                Error::missing_header("Via")
-            ) {
-                if let Ok(mut typed_via) = top_most_via.typed() {
-                    for param in typed_via.params.iter_mut() {
-                        if let rsip::Param::Branch(_) = param {
-                            *param = make_via_branch();
-                        }
-                    }
-                    *top_most_via = typed_via.into();
-                }
+        // update route set from Record-Route header
+        let mut route_set = Vec::new();
+        for header in resp.headers.iter() {
+            if let Header::RecordRoute(record_route) = header {
+                route_set.push(Header::Route(Route::from(record_route.value())));
             }
-
-            let contact = resp.contact_header()?;
-
-            let contact_uri = if let Ok(typed_contact) = contact.typed() {
-                typed_contact.uri
-            } else {
-                let mut uri = extract_uri_from_contact(contact.value())?;
-                uri.headers.clear();
-                uri
-            };
-            uri = contact_uri;
-
-            // update route set from Record-Route header
-            let mut route_set = Vec::new();
-            for header in resp.headers.iter() {
-                if let Header::RecordRoute(record_route) = header {
-                    route_set.push(Header::Route(Route::from(record_route.value())));
-                }
-            }
-            route_set.reverse();
-            headers.extend(route_set);
         }
+        route_set.reverse();
+        headers.extend(route_set);
 
         headers.retain(|h| {
             matches!(
@@ -316,7 +287,7 @@ impl EndpointInner {
         headers.unique_push(Header::UserAgent(self.user_agent.clone().into()));
         Ok(rsip::Request {
             method: rsip::Method::Ack,
-            uri,
+            uri: request_uri,
             headers: headers.into(),
             body: vec![],
             version: rsip::Version::V2,
