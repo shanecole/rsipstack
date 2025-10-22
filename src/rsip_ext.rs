@@ -128,23 +128,25 @@ fn apply_tokenizer_params(uri: &mut rsip::Uri, tokenizer: &CustomContactTokenize
 }
 
 pub fn destination_from_request(request: &rsip::Request) -> Option<SipAddr> {
-    request
-        .headers
-        .iter()
-        .find_map(|header| match header {
-            rsip::Header::Route(route) => route
-                .typed()
-                .ok()
-                .map(|r| {
-                    r.uris()
-                        .first()
-                        .map(|u| SipAddr::try_from(&u.uri).ok())
-                        .flatten()
-                })
-                .flatten(),
-            _ => None,
-        })
-        .or_else(|| SipAddr::try_from(&request.uri).ok())
+    let headers = request.headers();
+    for header in headers.iter() {
+        if let rsip::Header::Route(route) = header {
+            if let Ok(typed_route) = route.typed() {
+                if let Some(first_uri) = typed_route.uris().first() {
+                    return SipAddr::try_from(&first_uri.uri).ok();
+                }
+            }
+        }
+    }
+
+    for param in request.uri.params.iter() {
+        if let rsip::Param::Other(name, _) = param {
+            if name.value().eq_ignore_ascii_case("ob") {
+                return None;
+            }
+        }
+    }
+    SipAddr::try_from(&request.uri).ok()
 }
 
 #[derive(Debug)]
