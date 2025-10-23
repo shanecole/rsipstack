@@ -165,3 +165,136 @@ Content-Length: 0\r\n\r\n";
 
     Ok(())
 }
+
+#[tokio::test]
+async fn test_client_invite_sends_ack_for_non_2xx() -> Result<()> {
+    use tokio::time::timeout;
+
+    // Initialize tracing for debugging
+    let _ = tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::DEBUG)
+        .with_test_writer()
+        .try_init();
+
+    let endpoint = super::create_test_endpoint(Some("127.0.0.1:0")).await?;
+    let server_addr = endpoint
+        .get_addrs()
+        .get(0)
+        .expect("must have connection")
+        .to_owned();
+    info!("server addr: {}", server_addr);
+
+    // Start endpoint serving to process incoming messages
+    let endpoint_inner = endpoint.inner.clone();
+    tokio::spawn(async move {
+        endpoint_inner.serve().await.ok();
+    });
+
+    // Create a mock peer that will send a non-2xx response
+    let peer_server = UdpConnection::create_connection("127.0.0.1:0".parse()?, None, None).await?;
+    let peer_addr = peer_server.get_addr().clone();
+    info!("peer addr: {}", peer_addr);
+
+    let (sender, mut receiver) = unbounded_channel();
+    tokio::spawn(async move {
+        peer_server.serve_loop(sender).await.ok();
+    });
+
+    let peer_server_loop = async {
+        let mut received_invite = false;
+        let mut received_ack = false;
+
+        loop {
+            if let Ok(Some(event)) = timeout(Duration::from_secs(5), receiver.recv()).await {
+                match event {
+                    TransportEvent::Incoming(msg, connection, _) => {
+                        match msg {
+                            SipMessage::Request(req) => {
+                                info!("peer received request: {}", req.method);
+                                if req.method == rsip::Method::Invite {
+                                    received_invite = true;
+                                    // Send 486 Busy Here response
+                                    let response = rsip::Response {
+                                        status_code: rsip::StatusCode::BusyHere,
+                                        headers: req.headers.clone(),
+                                        version: rsip::Version::V2,
+                                        body: vec![],
+                                    };
+                                    info!("peer sending 486 Busy Here");
+                                    connection.send(response.into(), None).await.ok();
+                                } else if req.method == rsip::Method::Ack {
+                                    info!("peer received ACK - test success!");
+                                    received_ack = true;
+                                    break;
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    _ => {}
+                }
+            } else {
+                break;
+            }
+        }
+
+        (received_invite, received_ack)
+    };
+
+    let client_loop = async {
+        // Create INVITE request
+        let invite_req = rsip::Request {
+            method: rsip::Method::Invite,
+            uri: Uri::try_from("sip:bob@example.com").unwrap(),
+            version: rsip::Version::V2,
+            headers: rsip::Headers::from(vec![
+                Via::new("SIP/2.0/UDP test.example.com:5060;branch=z9hG4bKtest-ack").into(),
+                From::new("sip:alice@example.com")
+                    .with_tag("from-tag".into())
+                    .unwrap()
+                    .into(),
+                To::new("sip:bob@example.com").into(),
+                CallId::new("test-call-id@example.com").into(),
+                CSeq::new("1 INVITE").into(),
+                MaxForwards::new("70").into(),
+            ]),
+            body: vec![],
+        };
+
+        let key = TransactionKey::from_request(&invite_req, TransactionRole::Client)?;
+
+        let mut client_tx =
+            Transaction::new_client(key, invite_req.clone(), endpoint.inner.clone(), None);
+
+        // Set destination to peer
+        client_tx.destination = Some(peer_addr);
+
+        info!("client sending INVITE");
+        client_tx.send().await?;
+
+        // Wait for response
+        if let Ok(Some(msg)) = timeout(Duration::from_secs(5), client_tx.receive()).await {
+            if let rsip::SipMessage::Response(resp) = msg {
+                info!("client received response: {}", resp.status_code);
+                assert_eq!(resp.status_code, rsip::StatusCode::BusyHere);
+            }
+        }
+
+        // Give some time for ACK to be sent
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        Result::<()>::Ok(())
+    };
+
+    let (peer_result, client_result) = tokio::join!(peer_server_loop, client_loop);
+    client_result?;
+
+    let (received_invite, received_ack) = peer_result;
+    assert!(received_invite, "Peer should have received INVITE");
+    assert!(
+        received_ack,
+        "Peer should have received ACK for non-2xx response"
+    );
+
+    Ok(())
+}
