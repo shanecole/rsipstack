@@ -445,7 +445,9 @@ impl Transaction {
         let ack = match self.last_ack.clone() {
             Some(ack) => ack,
             None => match self.last_response {
-                Some(ref resp) => self.endpoint_inner.make_ack(resp)?,
+                Some(ref resp) => self
+                    .endpoint_inner
+                    .make_ack(resp, self.destination.as_ref())?,
                 None => {
                     return Err(Error::TransactionError(
                         "no last response found to send ACK".to_string(),
@@ -903,7 +905,10 @@ impl Transaction {
                     ) {
                         if self.last_ack.is_none() {
                             if let Some(ref resp) = self.last_response {
-                                if let Ok(ack) = self.endpoint_inner.make_ack(resp) {
+                                if let Ok(ack) = self
+                                    .endpoint_inner
+                                    .make_ack(resp, self.destination.as_ref())
+                                {
                                     self.last_ack.replace(ack);
                                 }
                             }

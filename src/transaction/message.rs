@@ -1,5 +1,5 @@
 use super::{endpoint::EndpointInner, make_call_id};
-use crate::{rsip_ext::RsipResponseExt, transaction::make_via_branch, Result};
+use crate::{rsip_ext::RsipResponseExt, transaction::make_via_branch, transport::SipAddr, Result};
 use rsip::{
     header,
     headers::{ContentLength, Route},
@@ -241,19 +241,22 @@ impl EndpointInner {
         }
     }
 
-    pub fn make_ack(&self, resp: &Response) -> Result<Request> {
+    pub fn make_ack(&self, resp: &Response, destination: Option<&SipAddr>) -> Result<Request> {
         let mut headers = resp.headers.clone();
-        let request_uri = resp.remote_uri()?;
+        let request_uri = resp.remote_uri(destination)?;
 
-        if let Ok(top_most_via) = header!(
-            headers.iter_mut(),
-            Header::Via,
-            Error::missing_header("Via")
-        ) {
-            if let Ok(mut typed_via) = top_most_via.typed() {
-                typed_via.params.clear();
-                typed_via.params.push(make_via_branch());
-                *top_most_via = typed_via.into();
+        if matches!(resp.status_code.kind(), rsip::StatusCodeKind::Successful) {
+            //For non-2xx final responses (3xx–6xx), the ACK stays within the original INVITE client transaction.
+            if let Ok(top_most_via) = header!(
+                headers.iter_mut(),
+                Header::Via,
+                Error::missing_header("Via")
+            ) {
+                if let Ok(mut typed_via) = top_most_via.typed() {
+                    typed_via.params.clear();
+                    typed_via.params.push(make_via_branch());
+                    *top_most_via = typed_via.into();
+                }
             }
         }
         // update route set from Record-Route header
