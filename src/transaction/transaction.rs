@@ -283,7 +283,7 @@ impl Transaction {
             .headers_mut()
             .unique_push(content_length_header);
 
-        let message = if let Some(ref inspector) = self.endpoint_inner.inspector {
+        let message = if let Some(ref inspector) = self.endpoint_inner.message_inspector {
             inspector.before_send(self.original.to_owned().into())
         } else {
             self.original.to_owned().into()
@@ -350,7 +350,7 @@ impl Transaction {
             self.key.clone(),
         ))?;
 
-        let response = if let Some(ref inspector) = self.endpoint_inner.inspector {
+        let response = if let Some(ref inspector) = self.endpoint_inner.message_inspector {
             inspector.before_send(response.clone().to_owned().into())
         } else {
             response.to_owned().into()
@@ -408,7 +408,8 @@ impl Transaction {
         match self.state {
             TransactionState::Calling | TransactionState::Trying | TransactionState::Proceeding => {
                 if let Some(connection) = &self.connection {
-                    let cancel = if let Some(ref inspector) = self.endpoint_inner.inspector {
+                    let cancel = if let Some(ref inspector) = self.endpoint_inner.message_inspector
+                    {
                         inspector.before_send(cancel.to_owned().into())
                     } else {
                         cancel.to_owned().into()
@@ -457,7 +458,7 @@ impl Transaction {
             },
         };
 
-        let ack = if let Some(ref inspector) = self.endpoint_inner.inspector {
+        let ack = if let Some(ref inspector) = self.endpoint_inner.message_inspector {
             inspector.before_send(ack.to_owned().into())
         } else {
             ack.to_owned().into()
@@ -487,7 +488,7 @@ impl Transaction {
                             self.on_received_response(resp, connection).await
                         }
                     } {
-                        if let Some(ref inspector) = self.endpoint_inner.inspector {
+                        if let Some(ref inspector) = self.endpoint_inner.message_inspector {
                             return Some(inspector.after_received(msg));
                         }
                         return Some(msg);
@@ -553,11 +554,12 @@ impl Transaction {
                             .endpoint_inner
                             .make_response(&req, StatusCode::OK, None);
 
-                        let resp = if let Some(ref inspector) = self.endpoint_inner.inspector {
-                            inspector.before_send(resp.into())
-                        } else {
-                            resp.into()
-                        };
+                        let resp =
+                            if let Some(ref inspector) = self.endpoint_inner.message_inspector {
+                                inspector.before_send(resp.into())
+                            } else {
+                                resp.into()
+                            };
 
                         connection.send(resp, self.destination.as_ref()).await.ok();
                     }
@@ -570,11 +572,12 @@ impl Transaction {
                             StatusCode::CallTransactionDoesNotExist,
                             None,
                         );
-                        let resp = if let Some(ref inspector) = self.endpoint_inner.inspector {
-                            inspector.before_send(resp.into())
-                        } else {
-                            resp.into()
-                        };
+                        let resp =
+                            if let Some(ref inspector) = self.endpoint_inner.message_inspector {
+                                inspector.before_send(resp.into())
+                            } else {
+                                resp.into()
+                            };
                         connection.send(resp, self.destination.as_ref()).await.ok();
                     }
                 }
@@ -648,12 +651,13 @@ impl Transaction {
                     if let TransactionTimer::TimerA(key, duration) = timer {
                         // Resend the INVITE request
                         if let Some(connection) = &self.connection {
-                            let retry_message =
-                                if let Some(ref inspector) = self.endpoint_inner.inspector {
-                                    inspector.before_send(self.original.to_owned().into())
-                                } else {
-                                    self.original.to_owned().into()
-                                };
+                            let retry_message = if let Some(ref inspector) =
+                                self.endpoint_inner.message_inspector
+                            {
+                                inspector.before_send(self.original.to_owned().into())
+                            } else {
+                                self.original.to_owned().into()
+                            };
                             connection
                                 .send(retry_message, self.destination.as_ref())
                                 .await?;
@@ -691,12 +695,13 @@ impl Transaction {
                     // resend the response
                     if let Some(last_response) = &self.last_response {
                         if let Some(connection) = &self.connection {
-                            let last_response =
-                                if let Some(ref inspector) = self.endpoint_inner.inspector {
-                                    inspector.before_send(last_response.to_owned().into())
-                                } else {
-                                    last_response.to_owned().into()
-                                };
+                            let last_response = if let Some(ref inspector) =
+                                self.endpoint_inner.message_inspector
+                            {
+                                inspector.before_send(last_response.to_owned().into())
+                            } else {
+                                last_response.to_owned().into()
+                            };
                             connection
                                 .send(last_response, self.destination.as_ref())
                                 .await?;

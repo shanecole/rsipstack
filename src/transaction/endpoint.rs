@@ -34,6 +34,11 @@ pub trait TargetLocator: Send + Sync {
     async fn locate(&self, uri: &rsip::Uri) -> Result<SipAddr>;
 }
 
+#[async_trait]
+pub trait TransportEventInspector: Send + Sync {
+    async fn handle(&self, event: &TransportEvent);
+}
+
 pub struct EndpointOption {
     pub t1: Duration,
     pub t4: Duration,
@@ -104,8 +109,9 @@ pub struct EndpointInner {
     incoming_receiver: Mutex<Option<TransactionReceiver>>,
     cancel_token: CancellationToken,
     timer_interval: Duration,
-    pub(super) inspector: Option<Box<dyn MessageInspector>>,
+    pub(super) message_inspector: Option<Box<dyn MessageInspector>>,
     pub(super) locator: Option<Box<dyn TargetLocator>>,
+    pub(super) transport_inspector: Option<Box<dyn TransportEventInspector>>,
     pub option: EndpointOption,
 }
 pub type EndpointInnerRef = Arc<EndpointInner>;
@@ -135,8 +141,9 @@ pub struct EndpointBuilder {
     cancel_token: Option<CancellationToken>,
     timer_interval: Option<Duration>,
     option: Option<EndpointOption>,
-    inspector: Option<Box<dyn MessageInspector>>,
+    message_inspector: Option<Box<dyn MessageInspector>>,
     target_locator: Option<Box<dyn TargetLocator>>,
+    transport_inspector: Option<Box<dyn TransportEventInspector>>,
 }
 
 /// SIP Endpoint
@@ -202,8 +209,9 @@ impl EndpointInner {
         timer_interval: Option<Duration>,
         allows: Vec<rsip::Method>,
         option: Option<EndpointOption>,
-        inspector: Option<Box<dyn MessageInspector>>,
+        message_inspector: Option<Box<dyn MessageInspector>>,
         locator: Option<Box<dyn TargetLocator>>,
+        transport_inspector: Option<Box<dyn TransportEventInspector>>,
     ) -> Arc<Self> {
         let (incoming_sender, incoming_receiver) = unbounded_channel();
         Arc::new(EndpointInner {
@@ -219,8 +227,9 @@ impl EndpointInner {
             incoming_sender,
             incoming_receiver: Mutex::new(Some(incoming_receiver)),
             option: option.unwrap_or_default(),
-            inspector,
+            message_inspector,
             locator,
+            transport_inspector,
         })
     }
 
@@ -257,6 +266,10 @@ impl EndpointInner {
         };
 
         while let Some(event) = transport_rx.recv().await {
+            if let Some(transport_inspector) = &self.transport_inspector {
+                transport_inspector.handle(&event).await;
+            }
+
             match event {
                 TransportEvent::Incoming(msg, connection, from) => {
                     match self.on_received_message(msg, connection).await {
@@ -400,7 +413,7 @@ impl EndpointInner {
             }
         };
 
-        let msg = if let Some(inspector) = &self.inspector {
+        let msg = if let Some(inspector) = &self.message_inspector {
             inspector.after_received(msg)
         } else {
             msg
@@ -429,7 +442,7 @@ impl EndpointInner {
                     rsip::StatusCode::CallTransactionDoesNotExist,
                     None,
                 );
-                let resp = if let Some(ref inspector) = self.inspector {
+                let resp = if let Some(ref inspector) = self.message_inspector {
                     inspector.before_send(resp.into())
                 } else {
                     resp.into()
@@ -558,8 +571,9 @@ impl EndpointBuilder {
             cancel_token: None,
             timer_interval: None,
             option: None,
-            inspector: None,
+            message_inspector: None,
             target_locator: None,
+            transport_inspector: None,
         }
     }
     pub fn with_option(&mut self, option: EndpointOption) -> &mut Self {
@@ -590,13 +604,22 @@ impl EndpointBuilder {
         self
     }
     pub fn with_inspector(&mut self, inspector: Box<dyn MessageInspector>) -> &mut Self {
-        self.inspector = Some(inspector);
+        self.message_inspector = Some(inspector);
         self
     }
     pub fn with_target_locator(&mut self, locator: Box<dyn TargetLocator>) -> &mut Self {
         self.target_locator = Some(locator);
         self
     }
+
+    pub fn with_transport_inspector(
+        &mut self,
+        inspector: Box<dyn TransportEventInspector>,
+    ) -> &mut Self {
+        self.transport_inspector = Some(inspector);
+        self
+    }
+
     pub fn build(&mut self) -> Endpoint {
         let cancel_token = self.cancel_token.take().unwrap_or_default();
 
@@ -609,8 +632,9 @@ impl EndpointBuilder {
         let user_agent = self.user_agent.to_owned();
         let timer_interval = self.timer_interval.to_owned();
         let option = self.option.take();
-        let inspector = self.inspector.take();
+        let message_inspector = self.message_inspector.take();
         let locator = self.target_locator.take();
+        let transport_inspector = self.transport_inspector.take();
 
         let core = EndpointInner::new(
             user_agent,
@@ -619,8 +643,9 @@ impl EndpointBuilder {
             timer_interval,
             allows,
             option,
-            inspector,
+            message_inspector,
             locator,
+            transport_inspector,
         );
 
         Endpoint { inner: core }
