@@ -269,10 +269,10 @@ impl DialogLayer {
                 .unwrap_or("application/sdp".to_string())
                 .into(),
         ));
-        // can override default headers
+        // can't override default headers
         if let Some(headers) = opt.headers.as_ref() {
             for header in headers {
-                request.headers.unique_push(header.clone());
+                request.headers.push(header.clone());
             }
         }
         Ok(request)
@@ -465,13 +465,5 @@ impl DialogLayer {
             inner: Arc::new(dlg_inner),
         };
         Ok((dialog, tx))
-    }
-
-    pub fn confirm_client_dialog(&self, dialog: ClientInviteDialog) {
-        self.inner
-            .dialogs
-            .write()
-            .unwrap()
-            .insert(dialog.id(), Dialog::ClientInvite(dialog));
     }
 }

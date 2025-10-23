@@ -46,7 +46,7 @@ pub type TransactionEventSender = UnboundedSender<TransactionEvent>;
 ///     TransactionEvent::Respond(response) => {
 ///         // Send response
 ///     },
-///     TransactionEvent::Terminate => {
+///     TransactionEvent::Terminate(key) => {
 ///         // Clean up transaction
 ///     }
 /// }
@@ -56,7 +56,7 @@ pub enum TransactionEvent {
     Received(SipMessage, Option<SipConnection>),
     Timer(TransactionTimer),
     Respond(Response),
-    Terminate,
+    Terminate(TransactionKey),
 }
 
 /// SIP Transaction
@@ -250,7 +250,7 @@ impl Transaction {
         let content_length_header = Header::ContentLength(ContentLength::from(self.original.body().len() as u32));
         self.original.headers_mut().unique_push(content_length_header);
 
-        let message = if let Some(ref inspector) = self.endpoint_inner.inspector {
+        let message = if let Some(ref inspector) = self.endpoint_inner.message_inspector {
             inspector.before_send(self.original.to_owned().into())
         } else {
             self.original.to_owned().into()
@@ -302,7 +302,7 @@ impl Transaction {
 
         let connection = self.connection.as_ref().ok_or(Error::TransactionError("no connection found".to_string(), self.key.clone()))?;
 
-        let response = if let Some(ref inspector) = self.endpoint_inner.inspector {
+        let response = if let Some(ref inspector) = self.endpoint_inner.message_inspector {
             inspector.before_send(response.clone().to_owned().into())
         } else {
             response.to_owned().into()
@@ -357,7 +357,7 @@ impl Transaction {
         match self.state {
             TransactionState::Calling | TransactionState::Trying | TransactionState::Proceeding => {
                 if let Some(connection) = &self.connection {
-                    let cancel = if let Some(ref inspector) = self.endpoint_inner.inspector {
+                    let cancel = if let Some(ref inspector) = self.endpoint_inner.message_inspector {
                         inspector.before_send(cancel.to_owned().into())
                     } else {
                         cancel.to_owned().into()
@@ -385,14 +385,18 @@ impl Transaction {
         let ack = match self.last_ack.clone() {
             Some(ack) => ack,
             None => match self.last_response {
-                Some(ref resp) => self.endpoint_inner.make_ack(self.original.uri.clone(), resp)?,
+                Some(ref resp) => self.endpoint_inner.make_ack(resp, self.destination.as_ref())?,
                 None => {
                     return Err(Error::TransactionError("no last response found to send ACK".to_string(), self.key.clone()));
                 }
             },
         };
 
-        let ack = if let Some(ref inspector) = self.endpoint_inner.inspector { inspector.before_send(ack.to_owned().into()) } else { ack.to_owned().into() };
+        let ack = if let Some(ref inspector) = self.endpoint_inner.message_inspector {
+            inspector.before_send(ack.to_owned().into())
+        } else {
+            ack.to_owned().into()
+        };
         if let SipMessage::Request(ref req) = ack {
             // Only update destination for 2xx responses - they use end-to-end ACK with Contact
             // For non-2xx, keep using the original INVITE destination (hop-by-hop ACK)
@@ -427,7 +431,7 @@ impl Transaction {
                         SipMessage::Request(req) => self.on_received_request(req, connection).await,
                         SipMessage::Response(resp) => self.on_received_response(resp, connection).await,
                     } {
-                        if let Some(ref inspector) = self.endpoint_inner.inspector {
+                        if let Some(ref inspector) = self.endpoint_inner.message_inspector {
                             return Some(inspector.after_received(msg));
                         }
                         return Some(msg);
@@ -439,8 +443,8 @@ impl Transaction {
                 TransactionEvent::Respond(response) => {
                     self.respond(response).await.ok();
                 }
-                TransactionEvent::Terminate => {
-                    info!("received terminate event");
+                TransactionEvent::Terminate(key) => {
+                    info!(%key, "received terminate event");
                     return None;
                 }
             }
@@ -478,7 +482,7 @@ impl Transaction {
                     if let Some(connection) = &self.connection {
                         let resp = self.endpoint_inner.make_response(&req, StatusCode::Other(200, "Cancelling".into()), None);
 
-                        let resp = if let Some(ref inspector) = self.endpoint_inner.inspector { inspector.before_send(resp.into()) } else { resp.into() };
+                        let resp = if let Some(ref inspector) = self.endpoint_inner.message_inspector { inspector.before_send(resp.into()) } else { resp.into() };
 
                         connection.send(resp, self.destination.as_ref()).await.ok();
                     }
@@ -487,7 +491,7 @@ impl Transaction {
                 _ => {
                     if let Some(connection) = &self.connection {
                         let resp = self.endpoint_inner.make_response(&req, StatusCode::CallTransactionDoesNotExist, None);
-                        let resp = if let Some(ref inspector) = self.endpoint_inner.inspector { inspector.before_send(resp.into()) } else { resp.into() };
+                        let resp = if let Some(ref inspector) = self.endpoint_inner.message_inspector { inspector.before_send(resp.into()) } else { resp.into() };
                         connection.send(resp, self.destination.as_ref()).await.ok();
                     }
                 }
@@ -568,7 +572,7 @@ impl Transaction {
                     if let TransactionTimer::TimerA(key, duration) = timer {
                         // Resend the INVITE request
                         if let Some(connection) = &self.connection {
-                            let retry_message = if let Some(ref inspector) = self.endpoint_inner.inspector {
+                            let retry_message = if let Some(ref inspector) = self.endpoint_inner.message_inspector {
                                 inspector.before_send(self.original.to_owned().into())
                             } else {
                                 self.original.to_owned().into()
@@ -582,7 +586,6 @@ impl Transaction {
                     } else if let TransactionTimer::TimerB(_) = timer {
                         let timeout_response = self.endpoint_inner.make_response(&self.original, rsip::StatusCode::RequestTimeout, None);
                         self.inform_tu_response(timeout_response)?;
-                        self.transition(TransactionState::Terminated)?;
                     }
                 }
             }
@@ -591,7 +594,6 @@ impl Transaction {
                     // Inform TU about timeout
                     let timeout_response = self.endpoint_inner.make_response(&self.original, rsip::StatusCode::RequestTimeout, None);
                     self.inform_tu_response(timeout_response)?;
-                    self.transition(TransactionState::Terminated)?;
                 }
             }
             TransactionState::Completed => {
@@ -599,7 +601,7 @@ impl Transaction {
                     // resend the response
                     if let Some(last_response) = &self.last_response {
                         if let Some(connection) = &self.connection {
-                            let last_response = if let Some(ref inspector) = self.endpoint_inner.inspector {
+                            let last_response = if let Some(ref inspector) = self.endpoint_inner.message_inspector {
                                 inspector.before_send(last_response.to_owned().into())
                             } else {
                                 last_response.to_owned().into()
@@ -690,7 +692,8 @@ impl Transaction {
             }
             TransactionState::Terminated => {
                 self.cleanup();
-                self.tu_sender.send(TransactionEvent::Terminate).ok(); // tell TU to terminate
+                self.tu_sender.send(TransactionEvent::Terminate(self.key.clone())).ok();
+                // tell TU to terminate
             }
         }
         debug!(
@@ -733,7 +736,7 @@ impl Transaction {
                     if matches!(self.state, TransactionState::Proceeding | TransactionState::Trying) {
                         if self.last_ack.is_none() {
                             if let Some(ref resp) = self.last_response {
-                                if let Ok(ack) = self.endpoint_inner.make_ack(self.original.uri.clone(), resp) {
+                                if let Ok(ack) = self.endpoint_inner.make_ack(resp, self.destination.as_ref()) {
                                     self.last_ack.replace(ack);
                                 }
                             }

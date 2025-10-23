@@ -291,14 +291,12 @@ async fn process_incoming_request(
                 ack_tx.send().await?;
             }
             rsip::Method::Options => {
-                if tx.endpoint_inner.option.ignore_out_of_dialog_option {
-                    info!(
-                        "ignoring out of dialog OPTIONS request: {:?}",
-                        tx.original.method
-                    );
-                    continue;
-                }
-                tx.reply(rsip::StatusCode::NotAcceptable).await?;
+                info!(
+                    "ignoring out of dialog OPTIONS request: {:?}",
+                    tx.original.method
+                );
+                // do nothing for OPTIONS, may be a attack from scanner
+                // tx.reply(rsip::StatusCode::NotAcceptable).await?;
             }
             _ => {
                 tx.reply(rsip::StatusCode::NotAcceptable).await?;

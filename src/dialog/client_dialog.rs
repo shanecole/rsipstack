@@ -1,20 +1,14 @@
 use super::dialog::DialogInnerRef;
 use super::DialogId;
-use crate::dialog::dialog::DialogInner;
+use crate::dialog::{
+    authenticate::handle_client_authenticate,
+    dialog::{DialogState, TerminatedReason},
+};
+use crate::rsip_ext::RsipResponseExt;
 use crate::transaction::transaction::Transaction;
 use crate::Result;
-use crate::{
-    dialog::{
-        authenticate::handle_client_authenticate,
-        dialog::{DialogState, TerminatedReason},
-    },
-    rsip_ext::extract_uri_from_contact,
-};
 use rsip::prelude::HasHeaders;
-use rsip::{
-    prelude::{HeadersExt, ToTypedHeader, UntypedHeader},
-    Header,
-};
+use rsip::{prelude::HeadersExt, Header};
 use rsip::{Response, SipMessage, StatusCode};
 use std::sync::atomic::Ordering;
 use tokio_util::sync::CancellationToken;
@@ -553,18 +547,10 @@ impl ClientInviteDialog {
                                 .unwrap()
                                 .replace(contact.clone());
 
-                            // update remote uri
-                            let uri = if let Ok(typed_contact) = contact.typed() {
-                                typed_contact.uri
-                            } else {
-                                let mut uri = extract_uri_from_contact(contact.value())?;
-                                uri.headers.clear();
-                                uri
-                            };
-                            *self.inner.remote_uri.lock().unwrap() = uri;
+                            *self.inner.remote_uri.lock().unwrap() =
+                                resp.remote_uri(tx.destination.as_ref())?;
                             self.inner
                                 .transition(DialogState::Confirmed(dialog_id.clone(), resp))?;
-                            DialogInner::serve_keepalive_options(self.inner.clone());
                         }
                         _ => {
                             self.inner.transition(DialogState::Terminated(

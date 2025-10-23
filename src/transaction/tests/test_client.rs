@@ -1,6 +1,7 @@
 use crate::transaction::key::{TransactionKey, TransactionRole};
 use crate::transaction::transaction::Transaction;
 use crate::transport::udp::UdpConnection;
+use crate::transport::SipAddr;
 use crate::{transport::TransportEvent, Result};
 use rsip::{headers::*, Header, Response, SipMessage, Uri};
 use std::convert::TryFrom;
@@ -127,8 +128,7 @@ Content-Length: 0\r\n\r\n";
 
     let response = Response::try_from(raw_response)?;
 
-    let original_uri = Uri::try_from("sip:uas@192.0.2.55")?;
-    let ack = endpoint.inner.make_ack(original_uri, &response)?;
+    let ack = endpoint.inner.make_ack(&response, None)?;
 
     let expected_uri = Uri::try_from("sip:uas@192.0.2.55:5080;transport=tcp")?;
     assert_eq!(ack.uri, expected_uri, "ACK must target the remote Contact");
@@ -296,5 +296,30 @@ async fn test_client_invite_sends_ack_for_non_2xx() -> Result<()> {
         "Peer should have received ACK for non-2xx response"
     );
 
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_make_ack_uses_contact_with_ob() -> Result<()> {
+    let endpoint = super::create_test_endpoint(None).await?;
+
+    let raw_response = "SIP/2.0 200 OK\r\n\
+Via: SIP/2.0/TCP uac.example.com:5060;branch=z9hG4bK1;rport=15060;received=1.2.3.4;\r\n\
+From: <sip:alice@example.com>;tag=from-tag\r\n\
+To: <sip:bob@example.com>;tag=to-tag\r\n\
+Call-ID: callid@example.com\r\n\
+CSeq: 1 INVITE\r\n\
+Contact: <sip:uas@192.0.2.55:5080;ob>\r\n\
+Content-Length: 0\r\n\r\n";
+
+    let response = Response::try_from(raw_response)?;
+    let dest = SipAddr {
+        r#type: Some(rsip::transport::Transport::Tcp),
+        addr: "1.2.3.4:15060".try_into()?,
+    };
+    let ack = endpoint.inner.make_ack(&response, Some(&dest))?;
+    let expected_uri = Uri::try_from("sip:uas@1.2.3.4:15060;transport=tcp")?;
+    assert_eq!(ack.uri, expected_uri, "ACK must target the remote Contact");
+>>>>>>> origin/main
     Ok(())
 }

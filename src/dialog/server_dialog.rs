@@ -1,6 +1,5 @@
 use super::dialog::{Dialog, DialogInnerRef, DialogState, TerminatedReason};
 use super::DialogId;
-use crate::dialog::dialog::DialogInner;
 use crate::transport::SipConnection;
 use crate::{
     transaction::transaction::{Transaction, TransactionEvent},
@@ -684,7 +683,6 @@ impl ServerInviteDialog {
                                 self.id(),
                                 tx.last_response.clone().unwrap_or_default(),
                             ))?;
-                            DialogInner::serve_keepalive_options(self.inner.clone());
                             break;
                         }
                         rsip::Method::Cancel => {
