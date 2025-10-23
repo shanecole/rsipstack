@@ -46,7 +46,7 @@ pub type TransactionEventSender = UnboundedSender<TransactionEvent>;
 ///     TransactionEvent::Respond(response) => {
 ///         // Send response
 ///     },
-///     TransactionEvent::Terminate => {
+///     TransactionEvent::Terminate(key) => {
 ///         // Clean up transaction
 ///     }
 /// }
@@ -56,7 +56,7 @@ pub enum TransactionEvent {
     Received(SipMessage, Option<SipConnection>),
     Timer(TransactionTimer),
     Respond(Response),
-    Terminate,
+    Terminate(TransactionKey),
 }
 
 /// SIP Transaction
@@ -499,8 +499,8 @@ impl Transaction {
                 TransactionEvent::Respond(response) => {
                     self.respond(response).await.ok();
                 }
-                TransactionEvent::Terminate => {
-                    info!("received terminate event");
+                TransactionEvent::Terminate(key) => {
+                    info!(%key, "received terminate event");
                     return None;
                 }
             }
@@ -672,7 +672,6 @@ impl Transaction {
                             None,
                         );
                         self.inform_tu_response(timeout_response)?;
-                        self.transition(TransactionState::Terminated)?;
                     }
                 }
             }
@@ -685,7 +684,6 @@ impl Transaction {
                         None,
                     );
                     self.inform_tu_response(timeout_response)?;
-                    self.transition(TransactionState::Terminated)?;
                 }
             }
             TransactionState::Completed => {
@@ -841,7 +839,9 @@ impl Transaction {
             }
             TransactionState::Terminated => {
                 self.cleanup();
-                self.tu_sender.send(TransactionEvent::Terminate).ok(); // tell TU to terminate
+                self.tu_sender
+                    .send(TransactionEvent::Terminate(self.key.clone()))
+                    .ok(); // tell TU to terminate
             }
         }
         debug!(

@@ -1,6 +1,5 @@
 use super::dialog::DialogInnerRef;
 use super::DialogId;
-use crate::dialog::dialog::DialogInner;
 use crate::dialog::{
     authenticate::handle_client_authenticate,
     dialog::{DialogState, TerminatedReason},
@@ -552,7 +551,6 @@ impl ClientInviteDialog {
                                 resp.remote_uri(tx.destination.as_ref())?;
                             self.inner
                                 .transition(DialogState::Confirmed(dialog_id.clone(), resp))?;
-                            DialogInner::serve_keepalive_options(self.inner.clone());
                         }
                         _ => {
                             self.inner.transition(DialogState::Terminated(

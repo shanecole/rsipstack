@@ -39,9 +39,7 @@ pub struct EndpointOption {
     pub t4: Duration,
     pub t1x64: Duration,
     pub timerc: Duration,
-    pub ignore_out_of_dialog_option: bool,
     pub callid_suffix: Option<String>,
-    pub dialog_keepalive_duration: Option<Duration>,
 }
 
 impl Default for EndpointOption {
@@ -51,9 +49,7 @@ impl Default for EndpointOption {
             t4: Duration::from_secs(4),
             t1x64: Duration::from_millis(64 * 500),
             timerc: Duration::from_secs(180),
-            ignore_out_of_dialog_option: true,
             callid_suffix: None,
-            dialog_keepalive_duration: Some(Duration::from_secs(60)),
         }
     }
 }

@@ -19,16 +19,13 @@ use rsip::{
     headers::Route,
     prelude::{HeadersExt, ToTypedHeader, UntypedHeader},
     typed::{CSeq, Contact, Via},
-    Header, Param, Request, Response, SipMessage, StatusCode, StatusCodeKind,
+    Header, Param, Request, Response, SipMessage, StatusCode,
 };
 use std::sync::{
     atomic::{AtomicU32, Ordering},
     Arc, Mutex,
 };
-use tokio::{
-    sync::mpsc::{UnboundedReceiver, UnboundedSender},
-    time::interval,
-};
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
@@ -180,6 +177,7 @@ pub struct DialogInner {
 
     pub credential: Option<Credential>,
     pub route_set: Mutex<Vec<Route>>,
+
     pub(super) endpoint_inner: EndpointInnerRef,
     pub(super) state_sender: DialogStateSender,
     pub(super) tu_sender: TransactionEventSender,
@@ -586,61 +584,6 @@ impl DialogInner {
         debug!("transitioning state: {} -> {}", old_state, state);
         *old_state = state;
         Ok(())
-    }
-
-    pub(super) fn serve_keepalive_options(dlg_inner: Arc<Self>) {
-        let keepalive = match dlg_inner.endpoint_inner.option.dialog_keepalive_duration {
-            Some(k) => k,
-            None => return,
-        };
-        let token = dlg_inner.cancel_token.child_token();
-        let dlg_ref = dlg_inner.clone();
-
-        tokio::spawn(async move {
-            let mut ticker = interval(keepalive);
-            // skip first tick, which will be reached immediately
-            ticker.tick().await;
-            let keepalive_loop = async {
-                loop {
-                    ticker.tick().await;
-                    if !dlg_ref.is_confirmed() {
-                        return Ok(());
-                    }
-                    let options = dlg_ref.make_request(
-                        rsip::Method::Options,
-                        None,
-                        None,
-                        None,
-                        None,
-                        None,
-                    )?;
-                    let id = dlg_ref.id.lock().unwrap().clone();
-                    match dlg_ref.do_request(options).await {
-                        Ok(Some(resp)) => match resp.status_code.kind() {
-                            StatusCodeKind::Provisional | StatusCodeKind::Successful => {
-                                continue;
-                            }
-                            _ => {
-                                info!(%id, status = %resp.status_code, "keepalive options failed");
-                            }
-                        },
-                        Ok(None) => {
-                            continue;
-                        }
-                        Err(_) => {}
-                    }
-                    dlg_ref
-                        .transition(DialogState::Terminated(id, TerminatedReason::Timeout))
-                        .ok();
-                    break;
-                }
-                Ok::<(), crate::Error>(())
-            };
-            tokio::select! {
-                _ = token.cancelled() => {}
-                _ = keepalive_loop =>{}
-            };
-        });
     }
 }
 
