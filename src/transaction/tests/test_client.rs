@@ -12,11 +12,7 @@ use tracing::info;
 #[tokio::test]
 async fn test_client_transaction() -> Result<()> {
     let endpoint = super::create_test_endpoint(Some("127.0.0.1:0")).await?;
-    let server_addr = endpoint
-        .get_addrs()
-        .get(0)
-        .expect("must has connection")
-        .to_owned();
+    let server_addr = endpoint.get_addrs().get(0).expect("must has connection").to_owned();
     info!("server addr: {}", server_addr);
 
     let peer_server = UdpConnection::create_connection("127.0.0.1:0".parse()?, None, None).await?;
@@ -86,8 +82,7 @@ async fn test_client_transaction() -> Result<()> {
             body: Default::default(),
         };
 
-        let key = TransactionKey::from_request(&register_req, TransactionRole::Client)
-            .expect("client_transaction");
+        let key = TransactionKey::from_request(&register_req, TransactionRole::Client).expect("client_transaction");
         let mut tx = Transaction::new_client(key, register_req, endpoint.inner.clone(), None);
         tx.send().await.expect("send request");
 
@@ -128,7 +123,7 @@ Content-Length: 0\r\n\r\n";
 
     let response = Response::try_from(raw_response)?;
 
-    let ack = endpoint.inner.make_ack(&response, None)?;
+    let ack = endpoint.inner.make_ack(&response, None, None)?;
 
     let expected_uri = Uri::try_from("sip:uas@192.0.2.55:5080;transport=tcp")?;
     assert_eq!(ack.uri, expected_uri, "ACK must target the remote Contact");
@@ -156,10 +151,7 @@ Content-Length: 0\r\n\r\n";
 
     assert_eq!(
         routes,
-        vec![
-            "<sip:proxy2.example.com:5070;transport=tcp;lr>".to_string(),
-            "<sip:proxy1.example.com:5060;transport=tcp;lr>".to_string()
-        ],
+        vec!["<sip:proxy2.example.com:5070;transport=tcp;lr>".to_string(), "<sip:proxy1.example.com:5060;transport=tcp;lr>".to_string()],
         "ACK Route headers must follow the reversed Record-Route order"
     );
 
@@ -171,17 +163,10 @@ async fn test_client_invite_sends_ack_for_non_2xx() -> Result<()> {
     use tokio::time::timeout;
 
     // Initialize tracing for debugging
-    let _ = tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::DEBUG)
-        .with_test_writer()
-        .try_init();
+    let _ = tracing_subscriber::fmt().with_max_level(tracing::Level::DEBUG).with_test_writer().try_init();
 
     let endpoint = super::create_test_endpoint(Some("127.0.0.1:0")).await?;
-    let server_addr = endpoint
-        .get_addrs()
-        .get(0)
-        .expect("must have connection")
-        .to_owned();
+    let server_addr = endpoint.get_addrs().get(0).expect("must have connection").to_owned();
     info!("server addr: {}", server_addr);
 
     // Start endpoint serving to process incoming messages
@@ -249,10 +234,7 @@ async fn test_client_invite_sends_ack_for_non_2xx() -> Result<()> {
             version: rsip::Version::V2,
             headers: rsip::Headers::from(vec![
                 Via::new("SIP/2.0/UDP test.example.com:5060;branch=z9hG4bKtest-ack").into(),
-                From::new("sip:alice@example.com")
-                    .with_tag("from-tag".into())
-                    .unwrap()
-                    .into(),
+                From::new("sip:alice@example.com").with_tag("from-tag".into()).unwrap().into(),
                 To::new("sip:bob@example.com").into(),
                 CallId::new("test-call-id@example.com").into(),
                 CSeq::new("1 INVITE").into(),
@@ -263,8 +245,7 @@ async fn test_client_invite_sends_ack_for_non_2xx() -> Result<()> {
 
         let key = TransactionKey::from_request(&invite_req, TransactionRole::Client)?;
 
-        let mut client_tx =
-            Transaction::new_client(key, invite_req.clone(), endpoint.inner.clone(), None);
+        let mut client_tx = Transaction::new_client(key, invite_req.clone(), endpoint.inner.clone(), None);
 
         // Set destination to peer
         client_tx.destination = Some(peer_addr);
@@ -291,10 +272,7 @@ async fn test_client_invite_sends_ack_for_non_2xx() -> Result<()> {
 
     let (received_invite, received_ack) = peer_result;
     assert!(received_invite, "Peer should have received INVITE");
-    assert!(
-        received_ack,
-        "Peer should have received ACK for non-2xx response"
-    );
+    assert!(received_ack, "Peer should have received ACK for non-2xx response");
 
     Ok(())
 }
@@ -317,9 +295,8 @@ Content-Length: 0\r\n\r\n";
         r#type: Some(rsip::transport::Transport::Tcp),
         addr: "1.2.3.4:15060".try_into()?,
     };
-    let ack = endpoint.inner.make_ack(&response, Some(&dest))?;
+    let ack = endpoint.inner.make_ack(&response, None, Some(&dest))?;
     let expected_uri = Uri::try_from("sip:uas@1.2.3.4:15060;transport=tcp")?;
     assert_eq!(ack.uri, expected_uri, "ACK must target the remote Contact");
->>>>>>> origin/main
     Ok(())
 }
