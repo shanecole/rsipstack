@@ -171,22 +171,22 @@ pub struct EndpointBuilder {
 ///     let endpoint = EndpointBuilder::new()
 ///         .with_user_agent("MyApp/1.0")
 ///         .build();
-///     
+///
 ///     // Get incoming transactions
 ///     let mut incoming = endpoint.incoming_transactions().expect("incoming_transactions");
-///     
+///
 ///     // Start the endpoint
 ///     let endpoint_inner = endpoint.inner.clone();
 ///     tokio::spawn(async move {
 ///          endpoint_inner.serve().await.ok();
 ///     });
-///     
+///
 ///     // Process incoming transactions
 ///     while let Some(transaction) = incoming.recv().await {
 ///         // Handle transaction
 ///         break; // Exit for example
 ///     }
-///     
+///
 ///     Ok(())
 /// }
 /// ```
@@ -251,14 +251,7 @@ impl EndpointInner {
     async fn process_transport_layer(self: Arc<Self>) -> Result<()> {
         self.transport_layer.serve_listens().await.ok();
 
-        let mut transport_rx = match self
-            .transport_layer
-            .inner
-            .transport_rx
-            .lock()
-            .unwrap()
-            .take()
-        {
+        let mut transport_rx = match self.transport_layer.inner.transport_rx.lock().unwrap().take() {
             Some(rx) => rx,
             None => {
                 return Err(Error::EndpointError("transport_rx not set".to_string()));
@@ -271,14 +264,12 @@ impl EndpointInner {
             }
 
             match event {
-                TransportEvent::Incoming(msg, connection, from) => {
-                    match self.on_received_message(msg, connection).await {
-                        Ok(()) => {}
-                        Err(e) => {
-                            warn!(addr=%from,"on_received_message error: {}", e);
-                        }
+                TransportEvent::Incoming(msg, connection, from) => match self.on_received_message(msg, connection).await {
+                    Ok(()) => {}
+                    Err(e) => {
+                        warn!(addr=%from,"on_received_message error: {}", e);
                     }
-                }
+                },
                 TransportEvent::New(t) => {
                     info!(addr=%t.get_addr(), "new connection");
                 }
@@ -297,24 +288,14 @@ impl EndpointInner {
                 match t {
                     TransactionTimer::TimerCleanup(key) => {
                         trace!(%key, "TimerCleanup");
-                        self.transactions
-                            .write()
-                            .as_mut()
-                            .map(|ts| ts.remove(&key))
-                            .ok();
-                        self.finished_transactions
-                            .write()
-                            .as_mut()
-                            .map(|t| t.remove(&key))
-                            .ok();
+                        self.transactions.write().as_mut().map(|ts| ts.remove(&key)).ok();
+                        self.finished_transactions.write().as_mut().map(|t| t.remove(&key)).ok();
                         continue;
                     }
                     _ => {}
                 }
 
-                if let Ok(Some(tu)) =
-                    { self.transactions.read().as_ref().map(|ts| ts.get(&t.key())) }
-                {
+                if let Ok(Some(tu)) = { self.transactions.read().as_ref().map(|ts| ts.get(&t.key())) } {
                     match tu.send(TransactionEvent::Timer(t)) {
                         Ok(_) => {}
                         Err(error::SendError(t)) => match t {
@@ -331,28 +312,17 @@ impl EndpointInner {
     }
 
     // receive message from transport layer
-    pub async fn on_received_message(
-        self: &Arc<Self>,
-        msg: SipMessage,
-        connection: SipConnection,
-    ) -> Result<()> {
+    pub async fn on_received_message(self: &Arc<Self>, msg: SipMessage, connection: SipConnection) -> Result<()> {
         let mut key = match &msg {
-            SipMessage::Request(req) => {
-                TransactionKey::from_request(req, super::key::TransactionRole::Server)?
-            }
-            SipMessage::Response(resp) => {
-                TransactionKey::from_response(resp, super::key::TransactionRole::Client)?
-            }
+            SipMessage::Request(req) => TransactionKey::from_request(req, super::key::TransactionRole::Server)?,
+            SipMessage::Response(resp) => TransactionKey::from_response(resp, super::key::TransactionRole::Client)?,
         };
         match &msg {
             SipMessage::Request(req) => {
                 match req.method() {
                     rsip::Method::Ack => match DialogId::try_from(req) {
                         Ok(dialog_id) => {
-                            let tx_key = self
-                                .waiting_ack
-                                .read()
-                                .map(|wa| wa.get(&dialog_id).cloned());
+                            let tx_key = self.waiting_ack.read().map(|wa| wa.get(&dialog_id).cloned());
                             if let Ok(Some(tx_key)) = tx_key {
                                 key = tx_key;
                             }
@@ -362,13 +332,7 @@ impl EndpointInner {
                     _ => {}
                 }
                 // check is the termination of an existing transaction
-                let last_message = self
-                    .finished_transactions
-                    .read()
-                    .unwrap()
-                    .get(&key)
-                    .cloned()
-                    .flatten();
+                let last_message = self.finished_transactions.read().unwrap().get(&key).cloned().flatten();
 
                 if let Some(last_message) = last_message {
                     connection.send(last_message, None).await?;
@@ -376,13 +340,7 @@ impl EndpointInner {
                 }
             }
             SipMessage::Response(resp) => {
-                let last_message = self
-                    .finished_transactions
-                    .read()
-                    .unwrap()
-                    .get(&key)
-                    .cloned()
-                    .flatten();
+                let last_message = self.finished_transactions.read().unwrap().get(&key).cloned().flatten();
 
                 if let Some(mut last_message) = last_message {
                     match last_message {
@@ -413,15 +371,10 @@ impl EndpointInner {
             }
         };
 
-        let msg = if let Some(inspector) = &self.message_inspector {
-            inspector.after_received(msg)
-        } else {
-            msg
-        };
+        let msg = if let Some(inspector) = &self.message_inspector { inspector.after_received(msg) } else { msg };
 
         if let Some(tu) = self.transactions.read().unwrap().get(&key) {
-            tu.send(TransactionEvent::Received(msg, Some(connection)))
-                .map_err(|e| Error::TransactionError(e.to_string(), key))?;
+            tu.send(TransactionEvent::Received(msg, Some(connection))).map_err(|e| Error::TransactionError(e.to_string(), key))?;
             return Ok(());
         }
         // if the transaction is not exist, create a new transaction
@@ -437,16 +390,8 @@ impl EndpointInner {
 
         match request.method {
             rsip::Method::Cancel => {
-                let resp = self.make_response(
-                    &request,
-                    rsip::StatusCode::CallTransactionDoesNotExist,
-                    None,
-                );
-                let resp = if let Some(ref inspector) = self.message_inspector {
-                    inspector.before_send(resp.into())
-                } else {
-                    resp.into()
-                };
+                let resp = self.make_response(&request, rsip::StatusCode::CallTransactionDoesNotExist, None);
+                let resp = if let Some(ref inspector) = self.message_inspector { inspector.before_send(resp.into()) } else { resp.into() };
                 connection.send(resp, None).await?;
                 return Ok(());
             }
@@ -454,8 +399,7 @@ impl EndpointInner {
             _ => {}
         }
 
-        let tx =
-            Transaction::new_server(key.clone(), request.clone(), self.clone(), Some(connection));
+        let tx = Transaction::new_server(key.clone(), request.clone(), self.clone(), Some(connection));
 
         self.incoming_sender.send(tx).ok();
         Ok(())
@@ -463,20 +407,12 @@ impl EndpointInner {
 
     pub fn attach_transaction(&self, key: &TransactionKey, tu_sender: TransactionEventSender) {
         trace!(%key, "attach transaction");
-        self.transactions
-            .write()
-            .as_mut()
-            .map(|ts| ts.insert(key.clone(), tu_sender))
-            .ok();
+        self.transactions.write().as_mut().map(|ts| ts.insert(key.clone(), tu_sender)).ok();
     }
 
     pub fn detach_transaction(&self, key: &TransactionKey, last_message: Option<SipMessage>) {
         trace!(%key, "detach transaction");
-        self.transactions
-            .write()
-            .as_mut()
-            .map(|ts| ts.remove(key))
-            .ok();
+        self.transactions.write().as_mut().map(|ts| ts.remove(key)).ok();
 
         if let Some(msg) = last_message {
             self.timers.timeout(
@@ -484,11 +420,7 @@ impl EndpointInner {
                 TransactionTimer::TimerCleanup(key.clone()), // maybe use TimerK ???
             );
 
-            self.finished_transactions
-                .write()
-                .as_mut()
-                .map(|ft| ft.insert(key.clone(), Some(msg)))
-                .ok();
+            self.finished_transactions.write().as_mut().map(|ft| ft.insert(key.clone(), Some(msg))).ok();
         }
     }
 
@@ -497,12 +429,7 @@ impl EndpointInner {
     }
 
     pub fn get_record_route(&self) -> Result<rsip::typed::RecordRoute> {
-        let first_addr = self
-            .transport_layer
-            .get_addrs()
-            .first()
-            .ok_or(Error::EndpointError("not sipaddrs".to_string()))
-            .cloned()?;
+        let first_addr = self.transport_layer.get_addrs().first().ok_or(Error::EndpointError("not sipaddrs".to_string())).cloned()?;
         let rr = rsip::UriWithParamsList(vec![rsip::UriWithParams {
             uri: first_addr.into(),
             params: vec![rsip::Param::Other("lr".into(), None)],
@@ -510,49 +437,34 @@ impl EndpointInner {
         Ok(rr.into())
     }
 
-    pub fn get_via(
-        &self,
-        addr: Option<crate::transport::SipAddr>,
-        branch: Option<rsip::Param>,
-    ) -> Result<rsip::typed::Via> {
+    pub fn get_via(&self, addr: Option<crate::transport::SipAddr>, branch: Option<rsip::Param>) -> Result<rsip::typed::Via> {
         let first_addr = match addr {
             Some(addr) => addr,
-            None => self
-                .transport_layer
-                .get_addrs()
-                .first()
-                .ok_or(Error::EndpointError("not sipaddrs".to_string()))
-                .cloned()?,
+            None => self.transport_layer.get_addrs().first().ok_or(Error::EndpointError("not sipaddrs".to_string())).cloned()?,
         };
+
+        let transport = first_addr.r#type.unwrap_or_default();
+        let mut params = vec![branch.unwrap_or_else(make_via_branch)];
+
+        // Only add rport for UDP (RFC 3581 - used for NAT traversal)
+        // TCP connections are already bidirectional, so rport is not needed
+        if transport == rsip::Transport::Udp {
+            params.push(rsip::Param::Other("rport".into(), None));
+        }
 
         let via = rsip::typed::Via {
             version: rsip::Version::V2,
-            transport: first_addr.r#type.unwrap_or_default(),
+            transport,
             uri: first_addr.addr.into(),
-            params: vec![
-                branch.unwrap_or_else(make_via_branch),
-                rsip::Param::Other("rport".into(), None),
-            ],
+            params,
         };
         Ok(via)
     }
 
     pub fn get_stats(&self) -> EndpointStats {
-        let waiting_ack = self
-            .waiting_ack
-            .read()
-            .map(|wa| wa.len())
-            .unwrap_or_default();
-        let running_transactions = self
-            .transactions
-            .read()
-            .map(|ts| ts.len())
-            .unwrap_or_default();
-        let finished_transactions = self
-            .finished_transactions
-            .read()
-            .map(|ft| ft.len())
-            .unwrap_or_default();
+        let waiting_ack = self.waiting_ack.read().map(|wa| wa.len()).unwrap_or_default();
+        let running_transactions = self.transactions.read().map(|ts| ts.len()).unwrap_or_default();
+        let finished_transactions = self.finished_transactions.read().map(|ft| ft.len()).unwrap_or_default();
 
         EndpointStats {
             running_transactions,
@@ -612,10 +524,7 @@ impl EndpointBuilder {
         self
     }
 
-    pub fn with_transport_inspector(
-        &mut self,
-        inspector: Box<dyn TransportEventInspector>,
-    ) -> &mut Self {
+    pub fn with_transport_inspector(&mut self, inspector: Box<dyn TransportEventInspector>) -> &mut Self {
         self.transport_inspector = Some(inspector);
         self
     }
@@ -623,10 +532,7 @@ impl EndpointBuilder {
     pub fn build(&mut self) -> Endpoint {
         let cancel_token = self.cancel_token.take().unwrap_or_default();
 
-        let transport_layer = self
-            .transport_layer
-            .take()
-            .unwrap_or(TransportLayer::new(cancel_token.child_token()));
+        let transport_layer = self.transport_layer.take().unwrap_or(TransportLayer::new(cancel_token.child_token()));
 
         let allows = self.allows.to_owned();
         let user_agent = self.user_agent.to_owned();
@@ -636,17 +542,7 @@ impl EndpointBuilder {
         let locator = self.target_locator.take();
         let transport_inspector = self.transport_inspector.take();
 
-        let core = EndpointInner::new(
-            user_agent,
-            transport_layer,
-            cancel_token,
-            timer_interval,
-            allows,
-            option,
-            message_inspector,
-            locator,
-            transport_inspector,
-        );
+        let core = EndpointInner::new(user_agent, transport_layer, cancel_token, timer_interval, allows, option, message_inspector, locator, transport_inspector);
 
         Endpoint { inner: core }
     }
@@ -674,12 +570,7 @@ impl Endpoint {
     // get incoming requests from the endpoint
     // don't call repeat!
     pub fn incoming_transactions(&self) -> Result<TransactionReceiver> {
-        self.inner
-            .incoming_receiver
-            .lock()
-            .unwrap()
-            .take()
-            .ok_or_else(|| Error::EndpointError("incoming recevier taken".to_string()))
+        self.inner.incoming_receiver.lock().unwrap().take().ok_or_else(|| Error::EndpointError("incoming recevier taken".to_string()))
     }
 
     pub fn get_addrs(&self) -> Vec<SipAddr> {
