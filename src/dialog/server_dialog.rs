@@ -691,6 +691,7 @@ impl ServerInviteDialog {
                                 self.id(),
                                 TerminatedReason::UacCancel,
                             ))?;
+                            break;
                         }
                         _ => {}
                     },

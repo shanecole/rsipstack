@@ -235,12 +235,6 @@ impl DialogLayer {
     }
 
     pub fn new_dialog_state_channel(&self) -> (DialogStateSender, DialogStateReceiver) {
-        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-        let receiver = DialogStateReceiver {
-            dialog_layer_inner: self.inner.clone(),
-            receiver: rx,
-            dialog_id: None,
-        };
-        (tx, receiver)
+        tokio::sync::mpsc::unbounded_channel()
     }
 }

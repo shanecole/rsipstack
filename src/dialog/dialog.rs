@@ -5,7 +5,6 @@ use super::{
     DialogId,
 };
 use crate::{
-    dialog::dialog_layer::DialogLayerInnerRef,
     rsip_ext::extract_uri_from_contact,
     transaction::{
         endpoint::EndpointInnerRef,
@@ -185,55 +184,46 @@ pub struct DialogInner {
     pub(super) initial_request: Request,
 }
 
-pub struct DialogStateReceiver {
-    pub(super) dialog_layer_inner: DialogLayerInnerRef,
-    pub(super) receiver: UnboundedReceiver<DialogState>,
-    pub(super) dialog_id: Option<DialogId>,
-}
+// pub struct DialogStateReceiver {
+//     pub(super) dialog_layer_inner: DialogLayerInnerRef,
+//     pub(super) receiver: UnboundedReceiver<DialogState>,
+//     pub(super) dialog_id: Option<DialogId>,
+// }
 
-impl DialogStateReceiver {
-    pub async fn recv(&mut self) -> Option<DialogState> {
-        let state = self.receiver.recv().await;
-        if let Some(ref s) = state {
-            if let Some(id) = &self.dialog_id {
-                if id != s.id() {
-                    match self.dialog_layer_inner.dialogs.write().as_mut() {
-                        Ok(dialogs) => {
-                            dialogs.remove(id);
-                        }
-                        Err(_) => {}
-                    }
-                }
-            }
-            self.dialog_id = Some(s.id().clone());
-        }
-        state
-    }
-}
+// impl DialogStateReceiver {
+//     pub async fn recv(&mut self) -> Option<DialogState> {
+//         let state = self.receiver.recv().await;
+//         if let Some(ref s) = state {
+//             self.dialog_id = Some(s.id().clone());
+//         }
+//         state
+//     }
+// }
 
-impl Drop for DialogStateReceiver {
-    fn drop(&mut self) {
-        let id = match self.dialog_id.take() {
-            Some(id) => id,
-            None => return,
-        };
+// impl Drop for DialogStateReceiver {
+//     fn drop(&mut self) {
+//         let id = match self.dialog_id.take() {
+//             Some(id) => id,
+//             None => return,
+//         };
 
-        match self.dialog_layer_inner.dialogs.write().as_mut() {
-            Ok(dialogs) => {
-                if let Some(dialog) = dialogs.remove(&id) {
-                    info!(%id, "dialog removed on state receiver drop");
-                    tokio::spawn(async move {
-                        if let Err(e) = dialog.hangup().await {
-                            warn!(%id, "error hanging up dialog on drop: {}", e);
-                        }
-                    });
-                }
-            }
-            Err(_) => {}
-        }
-    }
-}
+//         match self.dialog_layer_inner.dialogs.write().as_mut() {
+//             Ok(dialogs) => {
+//                 if let Some(dialog) = dialogs.remove(&id) {
+//                     info!(%id, "dialog removed on state receiver drop");
+//                     tokio::spawn(async move {
+//                         if let Err(e) = dialog.hangup().await {
+//                             warn!(%id, "error hanging up dialog on drop: {}", e);
+//                         }
+//                     });
+//                 }
+//             }
+//             Err(_) => {}
+//         }
+//     }
+// }
 
+pub type DialogStateReceiver = UnboundedReceiver<DialogState>;
 pub type DialogStateSender = UnboundedSender<DialogState>;
 
 pub(super) type DialogInnerRef = Arc<DialogInner>;
