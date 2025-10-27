@@ -5,7 +5,7 @@ use super::{
     dialog_layer::DialogLayer,
 };
 use crate::{
-    dialog::{dialog::Dialog, dialog_layer::DialogLayerInnerRef, DialogId},
+    dialog::{dialog::Dialog, DialogId},
     transaction::{
         key::{TransactionKey, TransactionRole},
         make_tag,
@@ -19,7 +19,7 @@ use rsip::{
     Request, Response,
 };
 use std::sync::Arc;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 /// INVITE Request Options
 ///
@@ -132,64 +132,6 @@ pub struct InviteOption {
     pub contact: rsip::Uri,
     pub credential: Option<Credential>,
     pub headers: Option<Vec<rsip::Header>>,
-}
-
-pub struct DialogGuard {
-    pub dialog_layer_inner: DialogLayerInnerRef,
-    pub id: DialogId,
-}
-
-impl DialogGuard {
-    pub fn new(dialog_layer: &Arc<DialogLayer>, id: DialogId) -> Self {
-        Self {
-            dialog_layer_inner: dialog_layer.inner.clone(),
-            id,
-        }
-    }
-}
-
-impl Drop for DialogGuard {
-    fn drop(&mut self) {
-        let dlg = match self.dialog_layer_inner.dialogs.write() {
-            Ok(mut dialogs) => match dialogs.remove(&self.id) {
-                Some(dlg) => dlg,
-                None => return,
-            },
-            _ => return,
-        };
-        let _ = tokio::spawn(async move {
-            if let Err(e) = dlg.hangup().await {
-                info!(id=%dlg.id(), "failed to hangup dialog: {}", e);
-            }
-        });
-    }
-}
-
-pub(super) struct DialogGuardForUnconfirmed<'a> {
-    pub dialog_layer_inner: &'a DialogLayerInnerRef,
-    pub id: &'a DialogId,
-}
-
-impl<'a> Drop for DialogGuardForUnconfirmed<'a> {
-    fn drop(&mut self) {
-        // If the dialog is still unconfirmed, we should try to cancel it
-        match self.dialog_layer_inner.dialogs.write() {
-            Ok(mut dialogs) => match dialogs.remove(self.id) {
-                Some(dlg) => {
-                    info!(%self.id, "unconfirmed dialog dropped, cancelling it");
-                    let _ = tokio::spawn(async move {
-                        if let Err(e) = dlg.hangup().await {
-                            info!(id=%dlg.id(), "failed to hangup unconfirmed dialog: {}", e);
-                        }
-                    });
-                }
-                None => {}
-            },
-            Err(e) => {
-                warn!(%self.id, "failed to acquire write lock on dialogs: {}", e);
-            }
-        }
-    }
 }
 
 impl DialogLayer {
@@ -396,12 +338,6 @@ impl DialogLayer {
             .unwrap()
             .insert(id.clone(), Dialog::ClientInvite(dialog.clone()));
         info!(%id, "client invite dialog created");
-
-        let _guard = DialogGuardForUnconfirmed {
-            dialog_layer_inner: &self.inner,
-            id: &id,
-        };
-
         match dialog.process_invite(tx).await {
             Ok((new_dialog_id, resp)) => {
                 debug!(
