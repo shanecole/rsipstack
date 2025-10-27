@@ -170,9 +170,18 @@ pub struct Transaction {
 }
 
 impl Transaction {
-    fn new(transaction_type: TransactionType, key: TransactionKey, original: Request, connection: Option<SipConnection>, endpoint_inner: EndpointInnerRef) -> Self {
+    fn new(
+        transaction_type: TransactionType,
+        key: TransactionKey,
+        original: Request,
+        connection: Option<SipConnection>,
+        endpoint_inner: EndpointInnerRef,
+    ) -> Self {
         let (tu_sender, tu_receiver) = unbounded_channel();
-        let state = if matches!(transaction_type, TransactionType::ServerInvite | TransactionType::ServerNonInvite) {
+        let state = if matches!(
+            transaction_type,
+            TransactionType::ServerInvite | TransactionType::ServerNonInvite
+        ) {
             TransactionState::Trying
         } else {
             TransactionState::Nothing
@@ -198,11 +207,17 @@ impl Transaction {
             tu_sender,
             is_cleaned_up: false,
         };
-        tx.endpoint_inner.attach_transaction(&tx.key, tx.tu_sender.clone());
+        tx.endpoint_inner
+            .attach_transaction(&tx.key, tx.tu_sender.clone());
         tx
     }
 
-    pub fn new_client(key: TransactionKey, original: Request, endpoint_inner: EndpointInnerRef, connection: Option<SipConnection>) -> Self {
+    pub fn new_client(
+        key: TransactionKey,
+        original: Request,
+        endpoint_inner: EndpointInnerRef,
+        connection: Option<SipConnection>,
+    ) -> Self {
         let tx_type = match original.method {
             Method::Invite => TransactionType::ClientInvite,
             _ => TransactionType::ClientNonInvite,
@@ -210,7 +225,12 @@ impl Transaction {
         Transaction::new(tx_type, key, original, connection, endpoint_inner)
     }
 
-    pub fn new_server(key: TransactionKey, original: Request, endpoint_inner: EndpointInnerRef, connection: Option<SipConnection>) -> Self {
+    pub fn new_server(
+        key: TransactionKey,
+        original: Request,
+        endpoint_inner: EndpointInnerRef,
+        connection: Option<SipConnection>,
+    ) -> Self {
         let tx_type = match original.method {
             Method::Invite | Method::Ack => TransactionType::ServerInvite,
             _ => TransactionType::ServerNonInvite,
@@ -222,7 +242,10 @@ impl Transaction {
         match self.transaction_type {
             TransactionType::ClientInvite | TransactionType::ClientNonInvite => {}
             _ => {
-                return Err(Error::TransactionError("send is only valid for client transactions".to_string(), self.key.clone()));
+                return Err(Error::TransactionError(
+                    "send is only valid for client transactions".to_string(),
+                    self.key.clone(),
+                ));
             }
         }
 
@@ -238,7 +261,11 @@ impl Transaction {
                 }
             };
 
-            let (connection, resolved_addr) = self.endpoint_inner.transport_layer.lookup(target_uri, Some(&self.key)).await?;
+            let (connection, resolved_addr) = self
+                .endpoint_inner
+                .transport_layer
+                .lookup(target_uri, Some(&self.key))
+                .await?;
             // For UDP, we need to store the resolved destination address
             if !connection.is_reliable() {
                 self.destination.replace(resolved_addr);
@@ -246,9 +273,15 @@ impl Transaction {
             self.connection.replace(connection);
         }
 
-        let connection = self.connection.as_ref().ok_or(Error::TransactionError("no connection found".to_string(), self.key.clone()))?;
-        let content_length_header = Header::ContentLength(ContentLength::from(self.original.body().len() as u32));
-        self.original.headers_mut().unique_push(content_length_header);
+        let connection = self.connection.as_ref().ok_or(Error::TransactionError(
+            "no connection found".to_string(),
+            self.key.clone(),
+        ))?;
+        let content_length_header =
+            Header::ContentLength(ContentLength::from(self.original.body().len() as u32));
+        self.original
+            .headers_mut()
+            .unique_push(content_length_header);
 
         let message = if let Some(ref inspector) = self.endpoint_inner.message_inspector {
             inspector.before_send(self.original.to_owned().into())
@@ -265,17 +298,26 @@ impl Transaction {
         }
     }
 
-    pub async fn reply_with(&mut self, status_code: StatusCode, headers: Vec<rsip::Header>, body: Option<Vec<u8>>) -> Result<()> {
+    pub async fn reply_with(
+        &mut self,
+        status_code: StatusCode,
+        headers: Vec<rsip::Header>,
+        body: Option<Vec<u8>>,
+    ) -> Result<()> {
         match status_code.kind() {
             rsip::StatusCodeKind::Provisional => {}
             _ => {
                 let to = self.original.to_header()?;
                 if to.tag()?.is_none() {
-                    self.original.headers.unique_push(to.clone().with_tag(make_tag())?.into());
+                    self.original
+                        .headers
+                        .unique_push(to.clone().with_tag(make_tag())?.into());
                 }
             }
         }
-        let mut resp = self.endpoint_inner.make_response(&self.original, status_code, body);
+        let mut resp = self
+            .endpoint_inner
+            .make_response(&self.original, status_code, body);
         resp.headers.extend(headers);
         self.respond(resp).await
     }
@@ -288,7 +330,10 @@ impl Transaction {
         match self.transaction_type {
             TransactionType::ServerInvite | TransactionType::ServerNonInvite => {}
             _ => {
-                return Err(Error::TransactionError("respond is only valid for server transactions".to_string(), self.key.clone()));
+                return Err(Error::TransactionError(
+                    "respond is only valid for server transactions".to_string(),
+                    self.key.clone(),
+                ));
             }
         }
 
@@ -305,7 +350,10 @@ impl Transaction {
         // check an transition to new state
         self.can_transition(&new_state)?;
 
-        let connection = self.connection.as_ref().ok_or(Error::TransactionError("no connection found".to_string(), self.key.clone()))?;
+        let connection = self.connection.as_ref().ok_or(Error::TransactionError(
+            "no connection found".to_string(),
+            self.key.clone(),
+        ))?;
 
         let response = if let Some(ref inspector) = self.endpoint_inner.message_inspector {
             inspector.before_send(response.clone().to_owned().into())
@@ -361,13 +409,17 @@ impl Transaction {
     }
     pub async fn send_cancel(&mut self, cancel: Request) -> Result<()> {
         if self.transaction_type != TransactionType::ClientInvite {
-            return Err(Error::TransactionError("send_cancel is only valid for client invite transactions".to_string(), self.key.clone()));
+            return Err(Error::TransactionError(
+                "send_cancel is only valid for client invite transactions".to_string(),
+                self.key.clone(),
+            ));
         }
 
         match self.state {
             TransactionState::Calling | TransactionState::Trying | TransactionState::Proceeding => {
                 if let Some(connection) = &self.connection {
-                    let cancel = if let Some(ref inspector) = self.endpoint_inner.message_inspector {
+                    let cancel = if let Some(ref inspector) = self.endpoint_inner.message_inspector
+                    {
                         inspector.before_send(cancel.to_owned().into())
                     } else {
                         cancel.to_owned().into()
@@ -380,27 +432,43 @@ impl Transaction {
                 }
                 self.transition(TransactionState::Completed).map(|_| ())
             }
-            _ => Err(Error::TransactionError(format!("invalid state for sending CANCEL {:?}", self.state), self.key.clone())),
+            _ => Err(Error::TransactionError(
+                format!("invalid state for sending CANCEL {:?}", self.state),
+                self.key.clone(),
+            )),
         }
     }
 
     pub async fn send_ack(&mut self, connection: Option<SipConnection>) -> Result<()> {
         if self.transaction_type != TransactionType::ClientInvite {
-            return Err(Error::TransactionError("send_ack is only valid for client invite transactions".to_string(), self.key.clone()));
+            return Err(Error::TransactionError(
+                "send_ack is only valid for client invite transactions".to_string(),
+                self.key.clone(),
+            ));
         }
 
         match self.state {
             TransactionState::Completed => {} // must be in completed state, to send ACK
             _ => {
-                return Err(Error::TransactionError(format!("invalid state for sending ACK {:?}", self.state), self.key.clone()));
+                return Err(Error::TransactionError(
+                    format!("invalid state for sending ACK {:?}", self.state),
+                    self.key.clone(),
+                ));
             }
         }
         let ack = match self.last_ack.clone() {
             Some(ack) => ack,
             None => match self.last_response {
-                Some(ref resp) => self.endpoint_inner.make_ack(resp, Some(&self.original.uri), self.destination.as_ref())?,
+                Some(ref resp) => self.endpoint_inner.make_ack(
+                    resp,
+                    Some(&self.original.uri),
+                    self.destination.as_ref(),
+                )?,
                 None => {
-                    return Err(Error::TransactionError("no last response found to send ACK".to_string(), self.key.clone()));
+                    return Err(Error::TransactionError(
+                        "no last response found to send ACK".to_string(),
+                        self.key.clone(),
+                    ));
                 }
             },
         };
@@ -430,7 +498,10 @@ impl Transaction {
             debug!("ACK sent successfully");
         } else {
             debug!("No connection available to send ACK - ACK not sent!");
-            return Err(Error::TransactionError("no connection available to send ACK".to_string(), self.key.clone()));
+            return Err(Error::TransactionError(
+                "no connection available to send ACK".to_string(),
+                self.key.clone(),
+            ));
         }
         // client send ack and transition to Terminated
         self.transition(TransactionState::Terminated).map(|_| ())
@@ -442,7 +513,9 @@ impl Transaction {
                 TransactionEvent::Received(msg, connection) => {
                     if let Some(msg) = match msg {
                         SipMessage::Request(req) => self.on_received_request(req, connection).await,
-                        SipMessage::Response(resp) => self.on_received_response(resp, connection).await,
+                        SipMessage::Response(resp) => {
+                            self.on_received_response(resp, connection).await
+                        }
                     } {
                         if let Some(ref inspector) = self.endpoint_inner.message_inspector {
                             return Some(inspector.after_received(msg));
@@ -466,7 +539,9 @@ impl Transaction {
     }
 
     pub async fn send_trying(&mut self) -> Result<()> {
-        let response = self.endpoint_inner.make_response(&self.original, rsip::StatusCode::Trying, None);
+        let response =
+            self.endpoint_inner
+                .make_response(&self.original, rsip::StatusCode::Trying, None);
         self.respond(response).await
     }
 
@@ -484,7 +559,12 @@ impl Transaction {
 
         // Check if this is a network I/O error that indicates a broken connection
         let error_str = error.to_string().to_lowercase();
-        let is_connection_error = error_str.contains("broken pipe") || error_str.contains("connection reset") || error_str.contains("connection refused") || error_str.contains("connection closed") || error_str.contains("not connected") || error_str.contains("connection aborted");
+        let is_connection_error = error_str.contains("broken pipe")
+            || error_str.contains("connection reset")
+            || error_str.contains("connection refused")
+            || error_str.contains("connection closed")
+            || error_str.contains("not connected")
+            || error_str.contains("connection aborted");
 
         if is_connection_error {
             // Remove the broken connection from the transport layer
@@ -497,10 +577,19 @@ impl Transaction {
 
 impl Transaction {
     fn inform_tu_response(&mut self, response: Response) -> Result<()> {
-        self.tu_sender.send(TransactionEvent::Received(SipMessage::Response(response), None)).map_err(|e| Error::TransactionError(e.to_string(), self.key.clone()))
+        self.tu_sender
+            .send(TransactionEvent::Received(
+                SipMessage::Response(response),
+                None,
+            ))
+            .map_err(|e| Error::TransactionError(e.to_string(), self.key.clone()))
     }
 
-    async fn on_received_request(&mut self, req: Request, connection: Option<SipConnection>) -> Option<SipMessage> {
+    async fn on_received_request(
+        &mut self,
+        req: Request,
+        connection: Option<SipConnection>,
+    ) -> Option<SipMessage> {
         match self.transaction_type {
             TransactionType::ClientInvite | TransactionType::ClientNonInvite => return None,
             _ => {}
@@ -511,11 +600,22 @@ impl Transaction {
         }
         if req.method == Method::Cancel {
             match self.state {
-                TransactionState::Proceeding | TransactionState::Trying | TransactionState::Completed => {
+                TransactionState::Proceeding
+                | TransactionState::Trying
+                | TransactionState::Completed => {
                     if let Some(connection) = &self.connection {
-                        let resp = self.endpoint_inner.make_response(&req, StatusCode::Other(200, "Cancelling".into()), None);
+                        let resp = self.endpoint_inner.make_response(
+                            &req,
+                            StatusCode::Other(200, "Cancelling".into()),
+                            None,
+                        );
 
-                        let resp = if let Some(ref inspector) = self.endpoint_inner.message_inspector { inspector.before_send(resp.into()) } else { resp.into() };
+                        let resp =
+                            if let Some(ref inspector) = self.endpoint_inner.message_inspector {
+                                inspector.before_send(resp.into())
+                            } else {
+                                resp.into()
+                            };
 
                         if let Err(e) = connection.send(resp, self.destination.as_ref()).await {
                             self.handle_connection_send_error(&e, connection);
@@ -525,8 +625,17 @@ impl Transaction {
                 }
                 _ => {
                     if let Some(connection) = &self.connection {
-                        let resp = self.endpoint_inner.make_response(&req, StatusCode::CallTransactionDoesNotExist, None);
-                        let resp = if let Some(ref inspector) = self.endpoint_inner.message_inspector { inspector.before_send(resp.into()) } else { resp.into() };
+                        let resp = self.endpoint_inner.make_response(
+                            &req,
+                            StatusCode::CallTransactionDoesNotExist,
+                            None,
+                        );
+                        let resp =
+                            if let Some(ref inspector) = self.endpoint_inner.message_inspector {
+                                inspector.before_send(resp.into())
+                            } else {
+                                resp.into()
+                            };
                         if let Err(e) = connection.send(resp, self.destination.as_ref()).await {
                             self.handle_connection_send_error(&e, connection);
                         }
@@ -554,7 +663,11 @@ impl Transaction {
         None
     }
 
-    async fn on_received_response(&mut self, resp: Response, connection: Option<SipConnection>) -> Option<SipMessage> {
+    async fn on_received_response(
+        &mut self,
+        resp: Response,
+        connection: Option<SipConnection>,
+    ) -> Option<SipMessage> {
         match self.transaction_type {
             TransactionType::ServerInvite | TransactionType::ServerNonInvite => return None,
             _ => {}
@@ -585,7 +698,9 @@ impl Transaction {
         // Check if we need to send ACK before moving new_state
         // RFC 3261: Only auto-send ACK for non-2xx final responses
         // For 2xx responses, ACK is a separate transaction sent by TU
-        let should_send_ack = self.transaction_type == TransactionType::ClientInvite && new_state == TransactionState::Completed && resp.status_code.kind() != StatusCodeKind::Successful;
+        let should_send_ack = self.transaction_type == TransactionType::ClientInvite
+            && new_state == TransactionState::Completed
+            && resp.status_code.kind() != StatusCodeKind::Successful;
 
         self.last_response.replace(resp.clone());
         self.transition(new_state).ok();
@@ -596,7 +711,10 @@ impl Transaction {
             // Don't send ACK for locally generated responses (connection will be None)
             let ack_connection = connection.or_else(|| self.connection.clone());
             if let Some(conn) = ack_connection {
-                debug!("Sending ACK for non-2xx response (status={}), connection available", resp.status_code);
+                debug!(
+                    "Sending ACK for non-2xx response (status={}), connection available",
+                    resp.status_code
+                );
                 if let Err(e) = self.send_ack(Some(conn)).await {
                     // Log error but don't fail - the response should still be delivered to TU
                     debug!("Failed to send ACK for non-2xx response: {}", e);
@@ -612,26 +730,41 @@ impl Transaction {
     async fn on_timer(&mut self, timer: TransactionTimer) -> Result<()> {
         match self.state {
             TransactionState::Calling | TransactionState::Trying => {
-                if matches!(self.transaction_type, TransactionType::ClientInvite | TransactionType::ClientNonInvite) {
+                if matches!(
+                    self.transaction_type,
+                    TransactionType::ClientInvite | TransactionType::ClientNonInvite
+                ) {
                     if let TransactionTimer::TimerA(key, duration) = timer {
                         // Resend the INVITE request
                         if let Some(connection) = &self.connection {
-                            let retry_message = if let Some(ref inspector) = self.endpoint_inner.message_inspector {
+                            let retry_message = if let Some(ref inspector) =
+                                self.endpoint_inner.message_inspector
+                            {
                                 inspector.before_send(self.original.to_owned().into())
                             } else {
                                 self.original.to_owned().into()
                             };
-                            if let Err(e) = connection.send(retry_message, self.destination.as_ref()).await {
+                            if let Err(e) = connection
+                                .send(retry_message, self.destination.as_ref())
+                                .await
+                            {
                                 self.handle_connection_send_error(&e, connection);
                                 return Err(e);
                             }
                         }
                         // Restart Timer A with an upper limit
                         let duration = (duration * 2).min(self.endpoint_inner.option.t1x64);
-                        let timer_a = self.endpoint_inner.timers.timeout(duration, TransactionTimer::TimerA(key, duration));
+                        let timer_a = self
+                            .endpoint_inner
+                            .timers
+                            .timeout(duration, TransactionTimer::TimerA(key, duration));
                         self.timer_a.replace(timer_a);
                     } else if let TransactionTimer::TimerB(_) = timer {
-                        let timeout_response = self.endpoint_inner.make_response(&self.original, rsip::StatusCode::RequestTimeout, None);
+                        let timeout_response = self.endpoint_inner.make_response(
+                            &self.original,
+                            rsip::StatusCode::RequestTimeout,
+                            None,
+                        );
                         self.inform_tu_response(timeout_response)?;
                     }
                 }
@@ -639,7 +772,11 @@ impl Transaction {
             TransactionState::Proceeding => {
                 if let TransactionTimer::TimerC(_) = timer {
                     // Inform TU about timeout
-                    let timeout_response = self.endpoint_inner.make_response(&self.original, rsip::StatusCode::RequestTimeout, None);
+                    let timeout_response = self.endpoint_inner.make_response(
+                        &self.original,
+                        rsip::StatusCode::RequestTimeout,
+                        None,
+                    );
                     self.inform_tu_response(timeout_response)?;
                 }
             }
@@ -648,12 +785,17 @@ impl Transaction {
                     // resend the response
                     if let Some(last_response) = &self.last_response {
                         if let Some(connection) = &self.connection {
-                            let last_response = if let Some(ref inspector) = self.endpoint_inner.message_inspector {
+                            let last_response = if let Some(ref inspector) =
+                                self.endpoint_inner.message_inspector
+                            {
                                 inspector.before_send(last_response.to_owned().into())
                             } else {
                                 last_response.to_owned().into()
                             };
-                            if let Err(e) = connection.send(last_response, self.destination.as_ref()).await {
+                            if let Err(e) = connection
+                                .send(last_response, self.destination.as_ref())
+                                .await
+                            {
                                 self.handle_connection_send_error(&e, connection);
                                 return Err(e);
                             }
@@ -661,7 +803,10 @@ impl Transaction {
                     }
                     // restart Timer G with an upper limit
                     let duration = (duration * 2).min(self.endpoint_inner.option.t1x64);
-                    let timer_g = self.endpoint_inner.timers.timeout(duration, TransactionTimer::TimerG(key, duration));
+                    let timer_g = self
+                        .endpoint_inner
+                        .timers
+                        .timeout(duration, TransactionTimer::TimerG(key, duration));
                     self.timer_g.replace(timer_g);
                 } else if let TransactionTimer::TimerD(_) = timer {
                     self.transition(TransactionState::Terminated)?;
@@ -686,63 +831,116 @@ impl Transaction {
         match state {
             TransactionState::Nothing => {}
             TransactionState::Calling => {
-                let connection = self.connection.as_ref().ok_or(Error::TransactionError("no connection found".to_string(), self.key.clone()))?;
+                let connection = self.connection.as_ref().ok_or(Error::TransactionError(
+                    "no connection found".to_string(),
+                    self.key.clone(),
+                ))?;
 
-                if matches!(self.transaction_type, TransactionType::ClientInvite | TransactionType::ClientNonInvite) {
+                if matches!(
+                    self.transaction_type,
+                    TransactionType::ClientInvite | TransactionType::ClientNonInvite
+                ) {
                     if !connection.is_reliable() {
-                        let timer_a = self.endpoint_inner.timers.timeout(self.endpoint_inner.option.t1, TransactionTimer::TimerA(self.key.clone(), self.endpoint_inner.option.t1));
+                        let timer_a = self.endpoint_inner.timers.timeout(
+                            self.endpoint_inner.option.t1,
+                            TransactionTimer::TimerA(
+                                self.key.clone(),
+                                self.endpoint_inner.option.t1,
+                            ),
+                        );
                         self.timer_a.replace(timer_a);
                     }
-                    self.timer_b.replace(self.endpoint_inner.timers.timeout(self.endpoint_inner.option.t1x64, TransactionTimer::TimerB(self.key.clone())));
+                    self.timer_b.replace(self.endpoint_inner.timers.timeout(
+                        self.endpoint_inner.option.t1x64,
+                        TransactionTimer::TimerB(self.key.clone()),
+                    ));
                 }
             }
             TransactionState::Trying | TransactionState::Proceeding => {
-                self.timer_a.take().map(|id| self.endpoint_inner.timers.cancel(id));
+                self.timer_a
+                    .take()
+                    .map(|id| self.endpoint_inner.timers.cancel(id));
                 if matches!(self.transaction_type, TransactionType::ClientInvite) {
-                    self.timer_b.take().map(|id| self.endpoint_inner.timers.cancel(id));
+                    self.timer_b
+                        .take()
+                        .map(|id| self.endpoint_inner.timers.cancel(id));
                     if self.timer_c.is_none() {
                         // start Timer C for client invite only
-                        let timer_c = self.endpoint_inner.timers.timeout(self.endpoint_inner.option.timerc, TransactionTimer::TimerC(self.key.clone()));
+                        let timer_c = self.endpoint_inner.timers.timeout(
+                            self.endpoint_inner.option.timerc,
+                            TransactionTimer::TimerC(self.key.clone()),
+                        );
                         self.timer_c.replace(timer_c);
                     }
                 }
             }
             TransactionState::Completed => {
-                self.timer_a.take().map(|id| self.endpoint_inner.timers.cancel(id));
-                self.timer_b.take().map(|id| self.endpoint_inner.timers.cancel(id));
-                self.timer_c.take().map(|id| self.endpoint_inner.timers.cancel(id));
+                self.timer_a
+                    .take()
+                    .map(|id| self.endpoint_inner.timers.cancel(id));
+                self.timer_b
+                    .take()
+                    .map(|id| self.endpoint_inner.timers.cancel(id));
+                self.timer_c
+                    .take()
+                    .map(|id| self.endpoint_inner.timers.cancel(id));
 
                 if self.transaction_type == TransactionType::ServerInvite {
                     // start Timer G for server invite only
-                    let connection = self.connection.as_ref().ok_or(Error::TransactionError("no connection found".to_string(), self.key.clone()))?;
+                    let connection = self.connection.as_ref().ok_or(Error::TransactionError(
+                        "no connection found".to_string(),
+                        self.key.clone(),
+                    ))?;
                     if !connection.is_reliable() {
-                        let timer_g = self.endpoint_inner.timers.timeout(self.endpoint_inner.option.t1, TransactionTimer::TimerG(self.key.clone(), self.endpoint_inner.option.t1));
+                        let timer_g = self.endpoint_inner.timers.timeout(
+                            self.endpoint_inner.option.t1,
+                            TransactionTimer::TimerG(
+                                self.key.clone(),
+                                self.endpoint_inner.option.t1,
+                            ),
+                        );
                         self.timer_g.replace(timer_g);
                     }
                     info!(key=%self.key, last = self.last_response.is_none(), "entered confirmed state, waiting for ACK");
                     match self.last_response {
                         Some(ref resp) => {
                             let dialog_id = DialogId::try_from(resp)?;
-                            self.endpoint_inner.waiting_ack.write().as_mut().map(|wa| wa.insert(dialog_id, self.key.clone())).ok();
+                            self.endpoint_inner
+                                .waiting_ack
+                                .write()
+                                .as_mut()
+                                .map(|wa| wa.insert(dialog_id, self.key.clone()))
+                                .ok();
                         }
                         _ => {}
                     }
                     // start Timer K, wait for ACK
-                    let timer_k = self.endpoint_inner.timers.timeout(self.endpoint_inner.option.t4, TransactionTimer::TimerK(self.key.clone()));
+                    let timer_k = self.endpoint_inner.timers.timeout(
+                        self.endpoint_inner.option.t4,
+                        TransactionTimer::TimerK(self.key.clone()),
+                    );
                     self.timer_k.replace(timer_k);
                 }
                 // start Timer D
-                let timer_d = self.endpoint_inner.timers.timeout(self.endpoint_inner.option.t1x64, TransactionTimer::TimerD(self.key.clone()));
+                let timer_d = self.endpoint_inner.timers.timeout(
+                    self.endpoint_inner.option.t1x64,
+                    TransactionTimer::TimerD(self.key.clone()),
+                );
                 self.timer_d.replace(timer_d);
             }
             TransactionState::Confirmed => {
                 self.cleanup_timer();
-                let timer_k = self.endpoint_inner.timers.timeout(self.endpoint_inner.option.t4, TransactionTimer::TimerK(self.key.clone()));
+                let timer_k = self.endpoint_inner.timers.timeout(
+                    self.endpoint_inner.option.t4,
+                    TransactionTimer::TimerK(self.key.clone()),
+                );
                 self.timer_k.replace(timer_k);
             }
             TransactionState::Terminated => {
                 self.cleanup();
-                self.tu_sender.send(TransactionEvent::Terminate(self.key.clone())).ok();
+                self.tu_sender
+                    .send(TransactionEvent::Terminate(self.key.clone()))
+                    .ok();
                 // tell TU to terminate
             }
         }
@@ -755,12 +953,24 @@ impl Transaction {
     }
 
     fn cleanup_timer(&mut self) {
-        self.timer_a.take().map(|id| self.endpoint_inner.timers.cancel(id));
-        self.timer_b.take().map(|id| self.endpoint_inner.timers.cancel(id));
-        self.timer_c.take().map(|id| self.endpoint_inner.timers.cancel(id));
-        self.timer_d.take().map(|id| self.endpoint_inner.timers.cancel(id));
-        self.timer_k.take().map(|id| self.endpoint_inner.timers.cancel(id));
-        self.timer_g.take().map(|id| self.endpoint_inner.timers.cancel(id));
+        self.timer_a
+            .take()
+            .map(|id| self.endpoint_inner.timers.cancel(id));
+        self.timer_b
+            .take()
+            .map(|id| self.endpoint_inner.timers.cancel(id));
+        self.timer_c
+            .take()
+            .map(|id| self.endpoint_inner.timers.cancel(id));
+        self.timer_d
+            .take()
+            .map(|id| self.endpoint_inner.timers.cancel(id));
+        self.timer_k
+            .take()
+            .map(|id| self.endpoint_inner.timers.cancel(id));
+        self.timer_g
+            .take()
+            .map(|id| self.endpoint_inner.timers.cancel(id));
     }
 
     fn cleanup(&mut self) {
@@ -772,7 +982,13 @@ impl Transaction {
 
         match self.last_response {
             Some(ref resp) => match DialogId::try_from(resp) {
-                Ok(dialog_id) => self.endpoint_inner.waiting_ack.write().as_mut().map(|wa| wa.remove(&dialog_id)).ok(),
+                Ok(dialog_id) => self
+                    .endpoint_inner
+                    .waiting_ack
+                    .write()
+                    .as_mut()
+                    .map(|wa| wa.remove(&dialog_id))
+                    .ok(),
                 Err(_) => None,
             },
             _ => None,
@@ -783,10 +999,17 @@ impl Transaction {
                 TransactionType::ClientInvite => {
                     //
                     // For client invite, make a placeholder ACK if in proceeding or trying state
-                    if matches!(self.state, TransactionState::Proceeding | TransactionState::Trying) {
+                    if matches!(
+                        self.state,
+                        TransactionState::Proceeding | TransactionState::Trying
+                    ) {
                         if self.last_ack.is_none() {
                             if let Some(ref resp) = self.last_response {
-                                if let Ok(ack) = self.endpoint_inner.make_ack(resp, Some(&self.original.uri), self.destination.as_ref()) {
+                                if let Ok(ack) = self.endpoint_inner.make_ack(
+                                    resp,
+                                    Some(&self.original.uri),
+                                    self.destination.as_ref(),
+                                ) {
                                     self.last_ack.replace(ack);
                                 }
                             }
@@ -794,11 +1017,14 @@ impl Transaction {
                     }
                     self.last_ack.take().map(SipMessage::Request)
                 }
-                TransactionType::ServerNonInvite => self.last_response.take().map(SipMessage::Response),
+                TransactionType::ServerNonInvite => {
+                    self.last_response.take().map(SipMessage::Response)
+                }
                 _ => None,
             }
         };
-        self.endpoint_inner.detach_transaction(&self.key, last_message);
+        self.endpoint_inner
+            .detach_transaction(&self.key, last_message);
     }
 }
 
