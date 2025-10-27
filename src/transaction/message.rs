@@ -88,7 +88,15 @@ impl EndpointInner {
     /// 7. User-Agent
     ///
     /// Additional headers can be added after creation using the headers API.
-    pub fn make_request(&self, method: rsip::Method, req_uri: rsip::Uri, via: rsip::typed::Via, from: rsip::typed::From, to: rsip::typed::To, seq: u32) -> rsip::Request {
+    pub fn make_request(
+        &self,
+        method: rsip::Method,
+        req_uri: rsip::Uri,
+        via: rsip::typed::Via,
+        from: rsip::typed::From,
+        to: rsip::typed::To,
+        seq: u32,
+    ) -> rsip::Request {
         let headers = vec![
             Header::Via(via.into()),
             Header::CallId(make_call_id(self.option.callid_suffix.as_deref())),
@@ -204,10 +212,26 @@ impl EndpointInner {
     /// * If body is provided, Content-Length should be added separately
     /// * Content-Type should be added for non-empty bodies
     /// * Body encoding is handled by the application layer
-    pub fn make_response(&self, req: &Request, status_code: StatusCode, body: Option<Vec<u8>>) -> Response {
+    pub fn make_response(
+        &self,
+        req: &Request,
+        status_code: StatusCode,
+        body: Option<Vec<u8>>,
+    ) -> Response {
         let mut headers = req.headers.clone();
-        headers.retain(|h| matches!(h, Header::Via(_) | Header::CallId(_) | Header::From(_) | Header::To(_) | Header::CSeq(_)));
-        headers.push(Header::ContentLength(body.as_ref().map_or(0u32, |b| b.len() as u32).into()));
+        headers.retain(|h| {
+            matches!(
+                h,
+                Header::Via(_)
+                    | Header::CallId(_)
+                    | Header::From(_)
+                    | Header::To(_)
+                    | Header::CSeq(_)
+            )
+        });
+        headers.push(Header::ContentLength(
+            body.as_ref().map_or(0u32, |b| b.len() as u32).into(),
+        ));
         headers.unique_push(Header::UserAgent(self.user_agent.clone().into()));
         Response {
             status_code,
@@ -217,7 +241,50 @@ impl EndpointInner {
         }
     }
 
-    pub fn make_ack(&self, resp: &Response, original_request_uri: Option<&rsip::Uri>, destination: Option<&SipAddr>) -> Result<Request> {
+    /// CUSTOM ENHANCEMENT: Generate an ACK request for a response with RFC 3261 compliance
+    ///
+    /// This is a modified version of the upstream `make_ack` function with an additional
+    /// `original_request_uri` parameter to ensure RFC 3261 compliant ACK generation.
+    ///
+    /// # RFC 3261 Compliance (Section 17.1.1.3)
+    ///
+    /// The Request-URI of the ACK depends on the response type:
+    /// - **2xx responses**: ACK is end-to-end, uses Contact URI from response
+    /// - **non-2xx responses (3xx-6xx)**: ACK is hop-by-hop, uses original INVITE Request-URI
+    ///
+    /// # Signature Change from Upstream
+    ///
+    /// **Upstream signature** (rsipstack v0.2.85):
+    /// ```ignore
+    /// pub fn make_ack(&self, resp: &Response, destination: Option<&SipAddr>) -> Result<Request>
+    /// ```
+    ///
+    /// **Our signature** (compatibility with rsip-master as of 2025-01-27):
+    /// ```ignore
+    /// pub fn make_ack(&self, resp: &Response, original_request_uri: Option<&rsip::Uri>, destination: Option<&SipAddr>) -> Result<Request>
+    /// ```
+    ///
+    /// # Arguments
+    ///
+    /// * `resp` - The response being acknowledged
+    /// * `original_request_uri` - The Request-URI from the original INVITE (required for non-2xx ACK)
+    /// * `destination` - Optional destination address override
+    ///
+    /// # Returns
+    ///
+    /// Returns the constructed ACK request, or an error if required information is missing
+    ///
+    /// # Note
+    ///
+    /// This enhancement ensures proper RFC 3261 compliance and is required by our modifications
+    /// in `src/transaction/transaction.rs`. When contributing to upstream, this signature
+    /// change should be included as part of the RFC compliance improvements.
+    pub fn make_ack(
+        &self,
+        resp: &Response,
+        original_request_uri: Option<&rsip::Uri>,
+        destination: Option<&SipAddr>,
+    ) -> Result<Request> {
         let mut headers = resp.headers.clone();
 
         let request_uri = if matches!(resp.status_code.kind(), rsip::StatusCodeKind::Successful) {
@@ -226,12 +293,20 @@ impl EndpointInner {
         } else {
             // For non-2xx final responses (3xx–6xx), the ACK stays within the original INVITE client transaction
             // and uses the original Request-URI (Contact header is optional for non-2xx)
-            original_request_uri.ok_or_else(|| Error::missing_header("original request URI required for non-2xx ACK"))?.clone()
+            original_request_uri
+                .ok_or_else(|| {
+                    Error::missing_header("original request URI required for non-2xx ACK")
+                })?
+                .clone()
         };
 
         if matches!(resp.status_code.kind(), rsip::StatusCodeKind::Successful) {
             // For 2xx responses, ACK is a new transaction with new Via branch
-            if let Ok(top_most_via) = header!(headers.iter_mut(), Header::Via, Error::missing_header("Via")) {
+            if let Ok(top_most_via) = header!(
+                headers.iter_mut(),
+                Header::Via,
+                Error::missing_header("Via")
+            ) {
                 if let Ok(mut typed_via) = top_most_via.typed() {
                     typed_via.params.clear();
                     typed_via.params.push(make_via_branch());
@@ -250,7 +325,17 @@ impl EndpointInner {
         route_set.reverse();
         headers.extend(route_set);
 
-        headers.retain(|h| matches!(h, Header::Via(_) | Header::CallId(_) | Header::From(_) | Header::To(_) | Header::CSeq(_) | Header::Route(_)));
+        headers.retain(|h| {
+            matches!(
+                h,
+                Header::Via(_)
+                    | Header::CallId(_)
+                    | Header::From(_)
+                    | Header::To(_)
+                    | Header::CSeq(_)
+                    | Header::Route(_)
+            )
+        });
         headers.push(Header::MaxForwards(70.into()));
         headers.iter_mut().for_each(|h| {
             if let Header::CSeq(cseq) = h {
