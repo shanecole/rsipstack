@@ -1,29 +1,3 @@
-//! SIP Transaction Layer Implementation
-//!
-//! # Custom Enhancements in This Fork
-//!
-//! This file contains several enhancements beyond the upstream rsipstack:
-//!
-//! ## 1. Connection Resilience (CUSTOM ENHANCEMENT)
-//! - `handle_connection_send_error()`: Automatically detects and removes broken TCP/TLS/WS connections
-//! - Applied throughout send operations to improve long-lived connection reliability
-//!
-//! ## 2. RFC 3261 Compliant ACK Handling (RFC COMPLIANCE FIX)
-//! - Proper ACK destination routing for 2xx vs non-2xx responses
-//! - Only auto-send ACK for non-2xx final responses (3xx-6xx)
-//! - 2xx ACK is handled by TU as a separate transaction per RFC 3261 Section 17.1.1.2
-//!
-//! ## 3. Enhanced ACK Generation (CUSTOM ENHANCEMENT - requires rsip-master compatibility)
-//! - Modified `make_ack()` signature to accept `original_request_uri` parameter
-//! - Ensures non-2xx ACK uses original Request-URI, not Contact (RFC 3261 Section 17.1.1.3)
-//! - Note: This requires corresponding changes in src/transaction/message.rs
-//!
-//! ## 4. Improved Debugging (CUSTOM ENHANCEMENT)
-//! - Added debug logging throughout ACK handling
-//! - Better CANCEL response reason phrase ("Cancelling" instead of "OK")
-//!
-//! Last updated: 2025-01-27 to maintain compatibility with rsip-master
-
 use super::endpoint::EndpointInnerRef;
 use super::key::TransactionKey;
 use super::{SipConnection, TransactionState, TransactionTimer, TransactionType};
@@ -315,9 +289,6 @@ impl Transaction {
             self.original.to_owned().into()
         };
 
-        // CUSTOM ENHANCEMENT: Enhanced error handling for broken connections
-        // Detects and removes broken TCP/TLS/WS connections from transport layer
-        // to force automatic reconnection on next attempt
         match connection.send(message, self.destination.as_ref()).await {
             Ok(()) => self.transition(TransactionState::Calling).map(|_| ()),
             Err(e) => {
@@ -395,7 +366,6 @@ impl Transaction {
             SipMessage::Response(resp) => self.last_response.replace(resp),
             _ => None,
         };
-        // CUSTOM ENHANCEMENT: Enhanced error handling for broken connections
         match connection.send(response, self.destination.as_ref()).await {
             Ok(()) => self.transition(new_state).map(|_| ()),
             Err(e) => {
@@ -455,7 +425,6 @@ impl Transaction {
                         cancel.to_owned().into()
                     };
 
-                    // CUSTOM ENHANCEMENT: Enhanced error handling for broken connections
                     if let Err(e) = connection.send(cancel, self.destination.as_ref()).await {
                         self.handle_connection_send_error(&e, connection);
                         return Err(e);
@@ -490,10 +459,6 @@ impl Transaction {
         let ack = match self.last_ack.clone() {
             Some(ack) => ack,
             None => match self.last_response {
-                // CUSTOM ENHANCEMENT: Pass original request URI for RFC 3261 compliant ACK generation
-                // For non-2xx responses, ACK must use original Request-URI (not Contact URI)
-                // Note: This requires our modified make_ack() signature in src/transaction/message.rs
-                // which adds the original_request_uri parameter (compatibility with rsip-master as of 2025-01-27)
                 Some(ref resp) => self.endpoint_inner.make_ack(
                     resp,
                     Some(&self.original.uri),
@@ -514,9 +479,6 @@ impl Transaction {
             ack.to_owned().into()
         };
         if let SipMessage::Request(ref req) = ack {
-            // RFC 3261 COMPLIANCE: Proper ACK destination handling per RFC 3261 Section 13.2.2.4
-            // - 2xx responses: ACK is end-to-end, uses Contact URI from response (new destination)
-            // - non-2xx responses: ACK is hop-by-hop within transaction, uses original INVITE destination
             // Only update destination for 2xx responses - they use end-to-end ACK with Contact
             // For non-2xx, keep using the original INVITE destination (hop-by-hop ACK)
             if let Some(ref resp) = self.last_response {
@@ -530,8 +492,6 @@ impl Transaction {
             SipMessage::Request(ack) => self.last_ack.replace(ack),
             _ => None,
         };
-        // CUSTOM ENHANCEMENT: Enhanced ACK send logic with debug logging and error handling
-        // Ensures ACK is only sent when connection is available
         if let Some(conn) = connection {
             debug!("Sending ACK via transaction connection");
             conn.send(ack, self.destination.as_ref()).await?;
@@ -589,17 +549,8 @@ impl Transaction {
         self.state == TransactionState::Terminated
     }
 
-    /// CUSTOM ENHANCEMENT: Handle connection send errors by detecting broken TCP/TLS/WS connections
-    ///
-    /// Automatically detects broken connections and removes them from the transport layer
-    /// to force reconnection on next attempt. This improves resilience for long-lived
-    /// connection-oriented transports (TCP, TLS, WebSocket).
-    ///
-    /// This is a custom enhancement not present in upstream rsipstack as of 2025-01-27.
-    ///
-    /// # Arguments
-    /// * `error` - The error that occurred during send
-    /// * `connection` - The connection that failed
+    /// Handle connection send errors by detecting broken TCP/TLS/WS connections
+    /// and removing them from the transport layer to force reconnection on next attempt
     fn handle_connection_send_error(&self, error: &Error, connection: &SipConnection) {
         // Only handle connection-oriented transports (TCP, TLS, WebSocket)
         if !connection.is_reliable() {
@@ -653,8 +604,6 @@ impl Transaction {
                 | TransactionState::Trying
                 | TransactionState::Completed => {
                     if let Some(connection) = &self.connection {
-                        // CUSTOM ENHANCEMENT: Use descriptive "Cancelling" reason phrase
-                        // instead of generic "OK" for better debugging and log readability
                         let resp = self.endpoint_inner.make_response(
                             &req,
                             StatusCode::Other(200, "Cancelling".into()),
@@ -668,8 +617,6 @@ impl Transaction {
                                 resp.into()
                             };
 
-                        // CUSTOM ENHANCEMENT: Enhanced error handling for broken connections
-                        // CUSTOM ENHANCEMENT: Enhanced error handling for broken connections
                         if let Err(e) = connection.send(resp, self.destination.as_ref()).await {
                             self.handle_connection_send_error(&e, connection);
                         }
@@ -748,10 +695,6 @@ impl Transaction {
             return None;
         }
 
-        // RFC 3261 COMPLIANCE: Proper automatic ACK sending per RFC 3261 Section 17.1.1.2
-        // - Non-2xx final responses (3xx-6xx): ACK is part of INVITE transaction (must auto-send)
-        // - 2xx responses: ACK is a separate transaction, sent by Transaction User (no auto-send)
-        // This differs from upstream which may auto-send for all responses
         // Check if we need to send ACK before moving new_state
         // RFC 3261: Only auto-send ACK for non-2xx final responses
         // For 2xx responses, ACK is a separate transaction sent by TU
@@ -801,7 +744,6 @@ impl Transaction {
                             } else {
                                 self.original.to_owned().into()
                             };
-                            // CUSTOM ENHANCEMENT: Enhanced error handling for broken connections
                             if let Err(e) = connection
                                 .send(retry_message, self.destination.as_ref())
                                 .await
@@ -850,7 +792,6 @@ impl Transaction {
                             } else {
                                 last_response.to_owned().into()
                             };
-                            // CUSTOM ENHANCEMENT: Enhanced error handling for broken connections
                             if let Err(e) = connection
                                 .send(last_response, self.destination.as_ref())
                                 .await
@@ -1064,8 +1005,6 @@ impl Transaction {
                     ) {
                         if self.last_ack.is_none() {
                             if let Some(ref resp) = self.last_response {
-                                // CUSTOM ENHANCEMENT: Pass original request URI for RFC compliance
-                                // (requires modified make_ack signature - rsip-master compatibility)
                                 if let Ok(ack) = self.endpoint_inner.make_ack(
                                     resp,
                                     Some(&self.original.uri),

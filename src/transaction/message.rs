@@ -241,44 +241,7 @@ impl EndpointInner {
         }
     }
 
-    /// CUSTOM ENHANCEMENT: Generate an ACK request for a response with RFC 3261 compliance
-    ///
-    /// This is a modified version of the upstream `make_ack` function with an additional
-    /// `original_request_uri` parameter to ensure RFC 3261 compliant ACK generation.
-    ///
-    /// # RFC 3261 Compliance (Section 17.1.1.3)
-    ///
-    /// The Request-URI of the ACK depends on the response type:
-    /// - **2xx responses**: ACK is end-to-end, uses Contact URI from response
-    /// - **non-2xx responses (3xx-6xx)**: ACK is hop-by-hop, uses original INVITE Request-URI
-    ///
-    /// # Signature Change from Upstream
-    ///
-    /// **Upstream signature** (rsipstack v0.2.85):
-    /// ```ignore
-    /// pub fn make_ack(&self, resp: &Response, destination: Option<&SipAddr>) -> Result<Request>
-    /// ```
-    ///
-    /// **Our signature** (compatibility with rsip-master as of 2025-01-27):
-    /// ```ignore
-    /// pub fn make_ack(&self, resp: &Response, original_request_uri: Option<&rsip::Uri>, destination: Option<&SipAddr>) -> Result<Request>
-    /// ```
-    ///
-    /// # Arguments
-    ///
-    /// * `resp` - The response being acknowledged
-    /// * `original_request_uri` - The Request-URI from the original INVITE (required for non-2xx ACK)
-    /// * `destination` - Optional destination address override
-    ///
-    /// # Returns
-    ///
-    /// Returns the constructed ACK request, or an error if required information is missing
-    ///
-    /// # Note
-    ///
-    /// This enhancement ensures proper RFC 3261 compliance and is required by our modifications
-    /// in `src/transaction/transaction.rs`. When contributing to upstream, this signature
-    /// change should be included as part of the RFC compliance improvements.
+    /// Generate an ACK request for a response
     pub fn make_ack(
         &self,
         resp: &Response,
