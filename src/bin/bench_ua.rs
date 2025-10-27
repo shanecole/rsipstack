@@ -23,7 +23,6 @@ use std::{
     },
     time::{Duration, Instant},
 };
-use tokio::sync::mpsc::unbounded_channel;
 use tokio::{select, time::sleep};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info};
@@ -381,7 +380,7 @@ async fn main() -> Result<()> {
 
     let incoming = endpoint.incoming_transactions()?;
     let dialog_layer = Arc::new(DialogLayer::new(endpoint.inner.clone()));
-    let (state_sender, state_receiver) = unbounded_channel();
+    let (state_sender, state_receiver) = dialog_layer.new_dialog_state_channel();
     let stats = Stats::new();
 
     let mode_handler: BoxFuture<Result<()>> = match args.mode.as_str() {

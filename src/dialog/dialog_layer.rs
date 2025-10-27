@@ -1,7 +1,7 @@
 use super::authenticate::Credential;
 use super::dialog::DialogStateSender;
 use super::{dialog::Dialog, server_dialog::ServerInviteDialog, DialogId};
-use crate::dialog::dialog::DialogInner;
+use crate::dialog::dialog::{DialogInner, DialogStateReceiver};
 use crate::transaction::key::TransactionRole;
 use crate::transaction::make_tag;
 use crate::transaction::{endpoint::EndpointInnerRef, transaction::Transaction};
@@ -232,5 +232,9 @@ impl DialogLayer {
     pub fn match_dialog(&self, req: &Request) -> Option<Dialog> {
         let id = DialogId::try_from(req).ok()?;
         self.get_dialog(&id)
+    }
+
+    pub fn new_dialog_state_channel(&self) -> (DialogStateSender, DialogStateReceiver) {
+        tokio::sync::mpsc::unbounded_channel()
     }
 }

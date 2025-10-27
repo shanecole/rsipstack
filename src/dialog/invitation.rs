@@ -390,35 +390,43 @@ impl DialogLayer {
     ) -> Result<(ClientInviteDialog, Option<Response>)> {
         let (dialog, tx) = self.create_client_invite_dialog(opt, state_sender)?;
         let id = dialog.id();
+
         self.inner
             .dialogs
             .write()
-            .unwrap()
-            .insert(id.clone(), Dialog::ClientInvite(dialog.clone()));
-        info!(%id, "client invite dialog created");
+            .as_mut()
+            .map(|ds| ds.insert(id.clone(), Dialog::ClientInvite(dialog.clone())))
+            .ok();
 
+        info!(%id, "client invite dialog created");
         let _guard = DialogGuardForUnconfirmed {
             dialog_layer_inner: &self.inner,
             id: &id,
         };
 
-        match dialog.process_invite(tx).await {
+        let r = dialog.process_invite(tx).await;
+        self.inner
+            .dialogs
+            .write()
+            .as_mut()
+            .map(|ds| ds.remove(&id))
+            .ok();
+
+        match r {
             Ok((new_dialog_id, resp)) => {
                 debug!(
                     "client invite dialog confirmed: {} => {}",
                     id, new_dialog_id
                 );
-                self.inner.dialogs.write().unwrap().remove(&id);
-                // update with new dialog id
                 self.inner
                     .dialogs
                     .write()
-                    .unwrap()
-                    .insert(new_dialog_id, Dialog::ClientInvite(dialog.clone()));
+                    .as_mut()
+                    .map(|ds| ds.insert(new_dialog_id, Dialog::ClientInvite(dialog.clone())))
+                    .ok();
                 return Ok((dialog, resp));
             }
             Err(e) => {
-                self.inner.dialogs.write().unwrap().remove(&id);
                 return Err(e);
             }
         }

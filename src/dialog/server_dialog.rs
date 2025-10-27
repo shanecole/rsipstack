@@ -572,7 +572,6 @@ impl ServerInviteDialog {
             // discard old request
             return Ok(());
         }
-
         self.inner
             .remote_seq
             .compare_exchange(remote_seq, cseq, Ordering::Relaxed, Ordering::Relaxed)
@@ -692,6 +691,7 @@ impl ServerInviteDialog {
                                 self.id(),
                                 TerminatedReason::UacCancel,
                             ))?;
+                            break;
                         }
                         _ => {}
                     },

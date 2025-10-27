@@ -16,7 +16,6 @@ use rsipstack::{
 };
 use std::net::IpAddr;
 use std::{env, sync::Arc, time::Duration};
-use tokio::sync::mpsc::unbounded_channel;
 use tokio::time::timeout;
 use tokio::{select, time::sleep};
 use tokio_util::sync::CancellationToken;
@@ -212,7 +211,7 @@ async fn main() -> rsipstack::Result<()> {
     let incoming = endpoint.incoming_transactions()?;
     let dialog_layer = Arc::new(DialogLayer::new(endpoint.inner.clone()));
 
-    let (state_sender, state_receiver) = unbounded_channel();
+    let (state_sender, state_receiver) = dialog_layer.new_dialog_state_channel();
 
     let first_addr = endpoint
         .get_addrs()
