@@ -411,7 +411,13 @@ mod tests {
         Result,
     };
     use rsip::{Host, Transport};
-    use rsip_dns::{hickory_resolver::TokioResolver, ResolvableExt};
+    use rsip_dns::{
+        hickory_proto::runtime::TokioRuntimeProvider,
+        hickory_resolver::{
+            config::ResolverConfig, config::ResolverOpts, name_server::GenericConnector, Resolver,
+        },
+        ResolvableExt,
+    };
 
     #[tokio::test]
     async fn test_lookup() -> Result<()> {
