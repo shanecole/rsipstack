@@ -1,13 +1,13 @@
 use crate::transport::{SipAddr, SipConnection};
 use crate::{Error, Result};
 use nom::{
+    IResult, Parser,
     branch::alt,
     bytes::complete::{is_not, take_until},
     character::complete::{char, multispace0},
     combinator::{map, opt, rest},
     multi::separated_list0,
     sequence::{delimited, preceded},
-    IResult, Parser,
 };
 use rsip::prelude::ToTypedHeader;
 use rsip::{
@@ -26,10 +26,10 @@ impl RsipResponseExt for rsip::Response {
     fn reason_phrase(&self) -> Option<&str> {
         let headers = self.headers();
         for header in headers.iter() {
-            if let rsip::Header::Other(name, value) = header {
-                if name.eq_ignore_ascii_case("reason") {
-                    return Some(value);
-                }
+            if let rsip::Header::Other(name, value) = header
+                && name.eq_ignore_ascii_case("reason")
+            {
+                return Some(value);
             }
             if let rsip::Header::ErrorInfo(reason) = header {
                 return Some(reason.value());
@@ -76,9 +76,9 @@ impl RsipResponseExt for rsip::Response {
                 contact_uri.params.clear();
                 if let Some(dest) = destination {
                     contact_uri.host_with_port = dest.addr.clone();
-                    dest.r#type
-                        .as_ref()
-                        .map(|t| contact_uri.params.push(rsip::Param::Transport(t.clone())));
+                    if let Some(t) = dest.r#type.as_ref() {
+                        contact_uri.params.push(rsip::Param::Transport(*t))
+                    }
                 }
                 break;
             }
@@ -115,21 +115,26 @@ macro_rules! header_pop {
 }
 
 pub fn extract_uri_from_contact(line: &str) -> Result<rsip::Uri> {
-    if let Ok(uri) = rsip::headers::Contact::from(line).uri() {
-        return Ok(uri);
-    }
+    let mut uri = if let Ok(uri) = rsip::headers::Contact::from(line).uri() {
+        uri
+    } else {
+        let tokenizer = CustomContactTokenizer::from_str(line)?;
+        let mut uri = rsip::Uri::try_from(tokenizer.uri()).map_err(Error::from)?;
+        apply_tokenizer_params(&mut uri, &tokenizer);
+        uri
+    };
 
-    let tokenizer = CustomContactTokenizer::from_str(line)?;
-    let mut uri = rsip::Uri::try_from(tokenizer.uri()).map_err(Error::from)?;
+    // Filter out default transport parameters (UDP, TCP, TLS)
     uri.params.retain(|p| {
-        if let rsip::Param::Transport(rsip::Transport::Udp) = p {
-            false
-        } else {
-            true
-        }
+        !matches!(
+            p,
+            rsip::Param::Transport(rsip::Transport::Udp)
+                | rsip::Param::Transport(rsip::Transport::Tcp)
+                | rsip::Param::Transport(rsip::Transport::Tls)
+        )
     });
-    apply_tokenizer_params(&mut uri, &tokenizer);
-    return Ok(uri);
+
+    Ok(uri)
 }
 
 fn apply_tokenizer_params(uri: &mut rsip::Uri, tokenizer: &CustomContactTokenizer) {
@@ -139,13 +144,12 @@ fn apply_tokenizer_params(uri: &mut rsip::Uri, tokenizer: &CustomContactTokenize
         }
         let mut updated = false;
         for param in uri.params.iter_mut() {
-            if let rsip::Param::Other(key, existing_value) = param {
-                if key.value().eq_ignore_ascii_case(name) {
-                    *existing_value =
-                        value.map(|v| rsip::param::OtherParamValue::new(v.to_string()));
-                    updated = true;
-                    break;
-                }
+            if let rsip::Param::Other(key, existing_value) = param
+                && key.value().eq_ignore_ascii_case(name)
+            {
+                *existing_value = value.map(|v| rsip::param::OtherParamValue::new(v.to_string()));
+                updated = true;
+                break;
             }
         }
         if !updated {
@@ -162,16 +166,11 @@ pub fn destination_from_request(request: &rsip::Request) -> Option<SipAddr> {
         .headers
         .iter()
         .find_map(|header| match header {
-            rsip::Header::Route(route) => route
-                .typed()
-                .ok()
-                .map(|r| {
-                    r.uris()
-                        .first()
-                        .map(|u| SipAddr::try_from(&u.uri).ok())
-                        .flatten()
-                })
-                .flatten(),
+            rsip::Header::Route(route) => route.typed().ok().and_then(|r| {
+                r.uris()
+                    .first()
+                    .and_then(|u| SipAddr::try_from(&u.uri).ok())
+            }),
             _ => None,
         })
         .or_else(|| SipAddr::try_from(&request.uri).ok())

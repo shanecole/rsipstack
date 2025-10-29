@@ -265,14 +265,8 @@ async fn process_dialog_state(
 ) -> Result<()> {
     while let Some(state) = state_receiver.recv().await {
         match state {
-            DialogState::Calling(id) => match dialog_layer.get_dialog(&id) {
-                Some(dialog) => match dialog {
-                    Dialog::ServerInvite(dialog) => {
-                        dialog.accept(None, None).ok();
-                    }
-                    _ => {}
-                },
-                None => {}
+            DialogState::Calling(id) => if let Some(dialog) = dialog_layer.get_dialog(&id) && let Dialog::ServerInvite(dialog) = dialog {
+                dialog.accept(None, None).ok();
             },
             DialogState::Confirmed(id, _) => {
                 stats
@@ -373,7 +367,7 @@ async fn main() -> Result<()> {
     let contact = rsip::Uri {
         scheme: Some(rsip::Scheme::Sip),
         auth: None,
-        host_with_port: first_addr.addr.into(),
+        host_with_port: first_addr.addr,
         params: vec![],
         headers: vec![],
     };

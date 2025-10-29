@@ -10,7 +10,7 @@ use rsip::headers::ContentLength;
 use rsip::message::HasHeaders;
 use rsip::prelude::HeadersExt;
 use rsip::{Header, Method, Request, Response, SipMessage, StatusCode, StatusCodeKind};
-use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 use tracing::{debug, info, trace};
 
 pub type TransactionEventReceiver = UnboundedReceiver<TransactionEvent>;
@@ -77,7 +77,7 @@ pub enum TransactionEvent {
 /// # Transaction Types
 ///
 /// * `ClientInvite` - Client INVITE transaction
-/// * `ClientNonInvite` - Client non-INVITE transaction  
+/// * `ClientNonInvite` - Client non-INVITE transaction
 /// * `ServerInvite` - Server INVITE transaction
 /// * `ServerNonInvite` - Server non-INVITE transaction
 ///
@@ -289,8 +289,13 @@ impl Transaction {
             self.original.to_owned().into()
         };
 
-        connection.send(message, self.destination.as_ref()).await?;
-        self.transition(TransactionState::Calling).map(|_| ())
+        match connection.send(message, self.destination.as_ref()).await {
+            Ok(()) => self.transition(TransactionState::Calling).map(|_| ()),
+            Err(e) => {
+                self.handle_connection_send_error(&e, connection);
+                Err(e)
+            }
+        }
     }
 
     pub async fn reply_with(
@@ -361,8 +366,13 @@ impl Transaction {
             SipMessage::Response(resp) => self.last_response.replace(resp),
             _ => None,
         };
-        connection.send(response, self.destination.as_ref()).await?;
-        self.transition(new_state).map(|_| ())
+        match connection.send(response, self.destination.as_ref()).await {
+            Ok(()) => self.transition(new_state).map(|_| ()),
+            Err(e) => {
+                self.handle_connection_send_error(&e, connection);
+                Err(e)
+            }
+        }
     }
 
     fn can_transition(&self, target: &TransactionState) -> Result<()> {
@@ -415,7 +425,10 @@ impl Transaction {
                         cancel.to_owned().into()
                     };
 
-                    connection.send(cancel, self.destination.as_ref()).await?;
+                    if let Err(e) = connection.send(cancel, self.destination.as_ref()).await {
+                        self.handle_connection_send_error(&e, connection);
+                        return Err(e);
+                    }
                 }
                 self.transition(TransactionState::Completed).map(|_| ())
             }
@@ -446,9 +459,11 @@ impl Transaction {
         let ack = match self.last_ack.clone() {
             Some(ack) => ack,
             None => match self.last_response {
-                Some(ref resp) => self
-                    .endpoint_inner
-                    .make_ack(resp, self.destination.as_ref())?,
+                Some(ref resp) => self.endpoint_inner.make_ack(
+                    resp,
+                    Some(&self.original.uri),
+                    self.destination.as_ref(),
+                )?,
                 None => {
                     return Err(Error::TransactionError(
                         "no last response found to send ACK".to_string(),
@@ -464,7 +479,13 @@ impl Transaction {
             ack.to_owned().into()
         };
         if let SipMessage::Request(ref req) = ack {
-            self.destination = destination_from_request(&req);
+            // Only update destination for 2xx responses - they use end-to-end ACK with Contact
+            // For non-2xx, keep using the original INVITE destination (hop-by-hop ACK)
+            if let Some(ref resp) = self.last_response
+                && resp.status_code.kind() == StatusCodeKind::Successful
+            {
+                self.destination = destination_from_request(req);
+            }
         }
 
         match ack.clone() {
@@ -472,7 +493,15 @@ impl Transaction {
             _ => None,
         };
         if let Some(conn) = connection {
+            debug!("Sending ACK via transaction connection");
             conn.send(ack, self.destination.as_ref()).await?;
+            debug!("ACK sent successfully");
+        } else {
+            debug!("No connection available to send ACK - ACK not sent!");
+            return Err(Error::TransactionError(
+                "no connection available to send ACK".to_string(),
+                self.key.clone(),
+            ));
         }
         // client send ack and transition to Terminated
         self.transition(TransactionState::Terminated).map(|_| ())
@@ -519,6 +548,31 @@ impl Transaction {
     pub fn is_terminated(&self) -> bool {
         self.state == TransactionState::Terminated
     }
+
+    /// Handle connection send errors by detecting broken TCP/TLS/WS connections
+    /// and removing them from the transport layer to force reconnection on next attempt
+    fn handle_connection_send_error(&self, error: &Error, connection: &SipConnection) {
+        // Only handle connection-oriented transports (TCP, TLS, WebSocket)
+        if !connection.is_reliable() {
+            return;
+        }
+
+        // Check if this is a network I/O error that indicates a broken connection
+        let error_str = error.to_string().to_lowercase();
+        let is_connection_error = error_str.contains("broken pipe")
+            || error_str.contains("connection reset")
+            || error_str.contains("connection refused")
+            || error_str.contains("connection closed")
+            || error_str.contains("not connected")
+            || error_str.contains("connection aborted");
+
+        if is_connection_error {
+            // Remove the broken connection from the transport layer
+            let addr = connection.get_addr();
+            info!(key=%self.key, addr=%addr, "removing broken connection from transport layer");
+            self.endpoint_inner.transport_layer.del_connection(addr);
+        }
+    }
 }
 
 impl Transaction {
@@ -550,9 +604,11 @@ impl Transaction {
                 | TransactionState::Trying
                 | TransactionState::Completed => {
                     if let Some(connection) = &self.connection {
-                        let resp = self
-                            .endpoint_inner
-                            .make_response(&req, StatusCode::OK, None);
+                        let resp = self.endpoint_inner.make_response(
+                            &req,
+                            StatusCode::Other(200, "Cancelling".into()),
+                            None,
+                        );
 
                         let resp =
                             if let Some(ref inspector) = self.endpoint_inner.message_inspector {
@@ -561,7 +617,9 @@ impl Transaction {
                                 resp.into()
                             };
 
-                        connection.send(resp, self.destination.as_ref()).await.ok();
+                        if let Err(e) = connection.send(resp, self.destination.as_ref()).await {
+                            self.handle_connection_send_error(&e, connection);
+                        }
                     }
                     return Some(req.into()); // into dialog
                 }
@@ -578,7 +636,9 @@ impl Transaction {
                             } else {
                                 resp.into()
                             };
-                        connection.send(resp, self.destination.as_ref()).await.ok();
+                        if let Err(e) = connection.send(resp, self.destination.as_ref()).await {
+                            self.handle_connection_send_error(&e, connection);
+                        }
                     }
                 }
             };
@@ -635,9 +695,38 @@ impl Transaction {
             return None;
         }
 
+        // Check if we need to send ACK before moving new_state
+        // RFC 3261: Only auto-send ACK for non-2xx final responses
+        // For 2xx responses, ACK is a separate transaction sent by TU
+        let should_send_ack = self.transaction_type == TransactionType::ClientInvite
+            && new_state == TransactionState::Completed
+            && resp.status_code.kind() != StatusCodeKind::Successful;
+
         self.last_response.replace(resp.clone());
         self.transition(new_state).ok();
-        self.send_ack(connection).await.ok(); // send ACK for client invite
+
+        // RFC 3261 17.1.1.2: Client INVITE transaction must send ACK for non-2xx final responses
+        if should_send_ack {
+            // Use connection parameter if available (network response), otherwise fall back to self.connection
+            // Don't send ACK for locally generated responses (connection will be None)
+            let ack_connection = connection.or_else(|| self.connection.clone());
+            if let Some(conn) = ack_connection {
+                debug!(
+                    "Sending ACK for non-2xx response (status={}), connection available",
+                    resp.status_code
+                );
+                if let Err(e) = self.send_ack(Some(conn)).await {
+                    // Log error but don't fail - the response should still be delivered to TU
+                    debug!("Failed to send ACK for non-2xx response: {}", e);
+                }
+            } else {
+                debug!(
+                    "Skipping ACK for non-2xx response (status={}) - no connection available (likely locally generated response)",
+                    resp.status_code
+                );
+            }
+        }
+
         Some(SipMessage::Response(resp))
     }
 
@@ -658,9 +747,13 @@ impl Transaction {
                             } else {
                                 self.original.to_owned().into()
                             };
-                            connection
+                            if let Err(e) = connection
                                 .send(retry_message, self.destination.as_ref())
-                                .await?;
+                                .await
+                            {
+                                self.handle_connection_send_error(&e, connection);
+                                return Err(e);
+                            }
                         }
                         // Restart Timer A with an upper limit
                         let duration = (duration * 2).min(self.endpoint_inner.option.t1x64);
@@ -693,18 +786,21 @@ impl Transaction {
             TransactionState::Completed => {
                 if let TransactionTimer::TimerG(key, duration) = timer {
                     // resend the response
-                    if let Some(last_response) = &self.last_response {
-                        if let Some(connection) = &self.connection {
-                            let last_response = if let Some(ref inspector) =
-                                self.endpoint_inner.message_inspector
-                            {
+                    if let Some(last_response) = &self.last_response
+                        && let Some(connection) = &self.connection
+                    {
+                        let last_response =
+                            if let Some(ref inspector) = self.endpoint_inner.message_inspector {
                                 inspector.before_send(last_response.to_owned().into())
                             } else {
                                 last_response.to_owned().into()
                             };
-                            connection
-                                .send(last_response, self.destination.as_ref())
-                                .await?;
+                        if let Err(e) = connection
+                            .send(last_response, self.destination.as_ref())
+                            .await
+                        {
+                            self.handle_connection_send_error(&e, connection);
+                            return Err(e);
                         }
                     }
                     // restart Timer G with an upper limit
@@ -808,17 +904,14 @@ impl Transaction {
                         self.timer_g.replace(timer_g);
                     }
                     info!(key=%self.key, last = self.last_response.is_none(), "entered confirmed state, waiting for ACK");
-                    match self.last_response {
-                        Some(ref resp) => {
-                            let dialog_id = DialogId::try_from(resp)?;
-                            self.endpoint_inner
-                                .waiting_ack
-                                .write()
-                                .as_mut()
-                                .map(|wa| wa.insert(dialog_id, self.key.clone()))
-                                .ok();
-                        }
-                        _ => {}
+                    if let Some(ref resp) = self.last_response {
+                        let dialog_id = DialogId::try_from(resp)?;
+                        self.endpoint_inner
+                            .waiting_ack
+                            .write()
+                            .as_mut()
+                            .map(|wa| wa.insert(dialog_id, self.key.clone()))
+                            .ok();
                     }
                     // start Timer K, wait for ACK
                     let timer_k = self.endpoint_inner.timers.timeout(
@@ -846,7 +939,8 @@ impl Transaction {
                 self.cleanup();
                 self.tu_sender
                     .send(TransactionEvent::Terminate(self.key.clone()))
-                    .ok(); // tell TU to terminate
+                    .ok();
+                // tell TU to terminate
             }
         }
         debug!(
@@ -907,17 +1001,15 @@ impl Transaction {
                     if matches!(
                         self.state,
                         TransactionState::Proceeding | TransactionState::Trying
-                    ) {
-                        if self.last_ack.is_none() {
-                            if let Some(ref resp) = self.last_response {
-                                if let Ok(ack) = self
-                                    .endpoint_inner
-                                    .make_ack(resp, self.destination.as_ref())
-                                {
-                                    self.last_ack.replace(ack);
-                                }
-                            }
-                        }
+                    ) && self.last_ack.is_none()
+                        && let Some(ref resp) = self.last_response
+                        && let Ok(ack) = self.endpoint_inner.make_ack(
+                            resp,
+                            Some(&self.original.uri),
+                            self.destination.as_ref(),
+                        )
+                    {
+                        self.last_ack.replace(ack);
                     }
                     self.last_ack.take().map(SipMessage::Request)
                 }

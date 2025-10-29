@@ -1,8 +1,8 @@
 use tokio_util::sync::CancellationToken;
 
 use super::{
-    connection::{TransportReceiver, TransportSender},
     SipAddr, SipConnection,
+    connection::{TransportReceiver, TransportSender},
 };
 use crate::Result;
 use std::sync::{Arc, Mutex};
@@ -42,7 +42,11 @@ impl ChannelConnection {
         let source = self.get_addr().clone();
         self.inner
             .outgoing
-            .send(super::TransportEvent::Incoming(msg, transport, source))
+            .send(super::TransportEvent::Incoming(
+                Box::new(msg),
+                transport,
+                source,
+            ))
             .map_err(|e| e.into())
     }
 

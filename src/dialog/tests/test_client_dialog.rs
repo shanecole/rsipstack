@@ -34,8 +34,8 @@ fn create_invite_request(from_tag: &str, to_tag: &str, call_id: &str) -> Request
         headers: vec![
             Via::new("SIP/2.0/UDP alice.example.com:5060;branch=z9hG4bKnashds").into(),
             CSeq::new("1 INVITE").into(),
-            From::new(&format!("Alice <sip:alice@example.com>;tag={}", from_tag)).into(),
-            To::new(&format!("Bob <sip:bob@example.com>;tag={}", to_tag)).into(),
+            From::new( format!("Alice <sip:alice@example.com>;tag={}", from_tag)).into(),
+            To::new( format!("Bob <sip:bob@example.com>;tag={}", to_tag)).into(),
             CallId::new(call_id).into(),
             Contact::new("<sip:alice@alice.example.com:5060>").into(),
             MaxForwards::new("70").into(),

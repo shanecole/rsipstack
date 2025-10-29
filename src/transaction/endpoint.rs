@@ -1,17 +1,17 @@
 use super::{
+    SipConnection, TransactionReceiver, TransactionSender, TransactionTimer,
     key::TransactionKey,
     make_via_branch,
     timer::Timer,
     transaction::{Transaction, TransactionEvent, TransactionEventSender},
-    SipConnection, TransactionReceiver, TransactionSender, TransactionTimer,
 };
 use crate::{
+    Error, Result, VERSION,
     dialog::DialogId,
     transport::{SipAddr, TransportEvent, TransportLayer},
-    Error, Result, VERSION,
 };
 use async_trait::async_trait;
-use rsip::{prelude::HeadersExt, SipMessage};
+use rsip::{SipMessage, prelude::HeadersExt};
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex, RwLock},
@@ -171,22 +171,22 @@ pub struct EndpointBuilder {
 ///     let endpoint = EndpointBuilder::new()
 ///         .with_user_agent("MyApp/1.0")
 ///         .build();
-///     
+///
 ///     // Get incoming transactions
 ///     let mut incoming = endpoint.incoming_transactions().expect("incoming_transactions");
-///     
+///
 ///     // Start the endpoint
 ///     let endpoint_inner = endpoint.inner.clone();
 ///     tokio::spawn(async move {
 ///          endpoint_inner.serve().await.ok();
 ///     });
-///     
+///
 ///     // Process incoming transactions
 ///     while let Some(transaction) = incoming.recv().await {
 ///         // Handle transaction
 ///         break; // Exit for example
 ///     }
-///     
+///
 ///     Ok(())
 /// }
 /// ```
@@ -202,6 +202,7 @@ pub struct Endpoint {
 }
 
 impl EndpointInner {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         user_agent: String,
         transport_layer: TransportLayer,
@@ -238,10 +239,10 @@ impl EndpointInner {
             _ = self.cancel_token.cancelled() => {
             },
             r = self.process_timer() => {
-                _ = r?
+                r?;
             },
             r = self.clone().process_transport_layer() => {
-                _ = r?
+                r?;
             },
         }
         Ok(())
@@ -272,7 +273,7 @@ impl EndpointInner {
 
             match event {
                 TransportEvent::Incoming(msg, connection, from) => {
-                    match self.on_received_message(msg, connection).await {
+                    match self.on_received_message(*msg, connection).await {
                         Ok(()) => {}
                         Err(e) => {
                             warn!(addr=%from,"on_received_message error: {}", e);
@@ -294,35 +295,31 @@ impl EndpointInner {
         let mut ticker = tokio::time::interval(self.timer_interval);
         loop {
             for t in self.timers.poll(Instant::now()) {
-                match t {
-                    TransactionTimer::TimerCleanup(key) => {
-                        trace!(%key, "TimerCleanup");
-                        self.transactions
-                            .write()
-                            .as_mut()
-                            .map(|ts| ts.remove(&key))
-                            .ok();
-                        self.finished_transactions
-                            .write()
-                            .as_mut()
-                            .map(|t| t.remove(&key))
-                            .ok();
-                        continue;
-                    }
-                    _ => {}
+                if let TransactionTimer::TimerCleanup(key) = t {
+                    trace!(%key, "TimerCleanup");
+                    self.transactions
+                        .write()
+                        .as_mut()
+                        .map(|ts| ts.remove(&key))
+                        .ok();
+                    self.finished_transactions
+                        .write()
+                        .as_mut()
+                        .map(|t| t.remove(&key))
+                        .ok();
+                    continue;
                 }
 
-                if let Ok(Some(tu)) =
-                    { self.transactions.read().as_ref().map(|ts| ts.get(&t.key())) }
+                if let Ok(transactions_guard) = self.transactions.read().as_ref()
+                    && let Some(tu) = transactions_guard.get(t.key())
                 {
                     match tu.send(TransactionEvent::Timer(t)) {
                         Ok(_) => {}
-                        Err(error::SendError(t)) => match t {
-                            TransactionEvent::Timer(t) => {
+                        Err(error::SendError(t)) => {
+                            if let TransactionEvent::Timer(t) = t {
                                 self.detach_transaction(t.key(), None);
                             }
-                            _ => {}
-                        },
+                        }
                     }
                 }
             }
@@ -346,20 +343,16 @@ impl EndpointInner {
         };
         match &msg {
             SipMessage::Request(req) => {
-                match req.method() {
-                    rsip::Method::Ack => match DialogId::try_from(req) {
-                        Ok(dialog_id) => {
-                            let tx_key = self
-                                .waiting_ack
-                                .read()
-                                .map(|wa| wa.get(&dialog_id).cloned());
-                            if let Ok(Some(tx_key)) = tx_key {
-                                key = tx_key;
-                            }
-                        }
-                        Err(_) => {}
-                    },
-                    _ => {}
+                if req.method() == &rsip::Method::Ack
+                    && let Ok(dialog_id) = DialogId::try_from(req)
+                {
+                    let tx_key = self
+                        .waiting_ack
+                        .read()
+                        .map(|wa| wa.get(&dialog_id).cloned());
+                    if let Ok(Some(tx_key)) = tx_key {
+                        key = tx_key;
+                    }
                 }
                 // check is the termination of an existing transaction
                 let last_message = self
@@ -385,27 +378,24 @@ impl EndpointInner {
                     .flatten();
 
                 if let Some(mut last_message) = last_message {
-                    match last_message {
-                        SipMessage::Request(ref mut last_req) => {
-                            if last_req.method() == &rsip::Method::Ack {
-                                match resp.status_code.kind() {
-                                    rsip::StatusCodeKind::Provisional => {
-                                        return Ok(());
-                                    }
-                                    rsip::StatusCodeKind::Successful => {
-                                        if last_req.to_header()?.tag().ok().is_none() {
-                                            // don't ack 2xx response when ack is placeholder
-                                            return Ok(());
-                                        }
-                                    }
-                                    _ => {}
-                                }
-                                if let Ok(Some(tag)) = resp.to_header()?.tag() {
-                                    last_req.to_header_mut().and_then(|h| h.mut_tag(tag)).ok();
+                    if let SipMessage::Request(ref mut last_req) = last_message
+                        && last_req.method() == &rsip::Method::Ack
+                    {
+                        match resp.status_code.kind() {
+                            rsip::StatusCodeKind::Provisional => {
+                                return Ok(());
+                            }
+                            rsip::StatusCodeKind::Successful => {
+                                if last_req.to_header()?.tag().ok().is_none() {
+                                    // don't ack 2xx response when ack is placeholder
+                                    return Ok(());
                                 }
                             }
+                            _ => {}
                         }
-                        _ => {}
+                        if let Ok(Some(tag)) = resp.to_header()?.tag() {
+                            last_req.to_header_mut().and_then(|h| h.mut_tag(tag)).ok();
+                        }
                     }
                     connection.send(last_message, None).await?;
                     return Ok(());
@@ -525,14 +515,20 @@ impl EndpointInner {
                 .cloned()?,
         };
 
+        let transport = first_addr.r#type.unwrap_or_default();
+        let mut params = vec![branch.unwrap_or_else(make_via_branch)];
+
+        // Only add rport for UDP (RFC 3581 - used for NAT traversal)
+        // TCP connections are already bidirectional, so rport is not needed
+        if transport == rsip::Transport::Udp {
+            params.push(rsip::Param::Other("rport".into(), None));
+        }
+
         let via = rsip::typed::Via {
             version: rsip::Version::V2,
-            transport: first_addr.r#type.unwrap_or_default(),
+            transport,
             uri: first_addr.addr.into(),
-            params: vec![
-                branch.unwrap_or_else(make_via_branch),
-                rsip::Param::Other("rport".into(), None),
-            ],
+            params,
         };
         Ok(via)
     }
@@ -559,6 +555,12 @@ impl EndpointInner {
             finished_transactions,
             waiting_ack,
         }
+    }
+}
+
+impl Default for EndpointBuilder {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

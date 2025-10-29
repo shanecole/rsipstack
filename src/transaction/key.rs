@@ -37,7 +37,7 @@ impl std::fmt::Display for TransactionKey {
 impl TransactionKey {
     pub fn from_request(req: &Request, role: TransactionRole) -> Result<Self> {
         let via = req.via_header()?.typed()?;
-        let mut method = req.method().clone();
+        let mut method = *req.method();
 
         if matches!(method, Method::Ack | Method::Cancel) && role == TransactionRole::Server {
             method = Method::Invite;
@@ -72,25 +72,28 @@ impl TransactionKey {
         cseq: u32,
         from_tag: Tag,
         call_id: &str,
-    ) -> Result<Self> {
+    ) -> Result<TransactionKey> {
         let mut key = String::new();
+
         match via.branch() {
-            Some(branch) => {
+            Ok(branch) => {
                 write!(
                     &mut key,
                     "{}.{}_{}_{}_{}_{}",
                     role, method, cseq, call_id, from_tag, branch
                 )
+                .map_err(|e| Error::Error(e.to_string()))?;
             }
-            None => {
+            Err(_e) => {
                 write!(
                     &mut key,
                     "{}.{}_{}_{}_{}_{}.2543",
                     role, method, cseq, call_id, from_tag, via.uri.host_with_port
                 )
+                .map_err(|e| Error::Error(e.to_string()))?;
             }
         }
-        .map_err(|e| Error::Error(e.to_string()))?;
+
         Ok(TransactionKey(key))
     }
 }

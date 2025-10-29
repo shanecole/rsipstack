@@ -8,6 +8,7 @@ pub mod endpoint;
 pub mod key;
 pub mod message;
 mod timer;
+#[allow(clippy::module_inception)]
 pub mod transaction;
 pub use endpoint::Endpoint;
 pub use endpoint::EndpointBuilder;
@@ -50,7 +51,7 @@ pub type TransactionSender = UnboundedSender<Transaction>;
 /// Nothing → Calling → Trying → Proceeding → Completed → Terminated
 /// ```
 ///
-/// ## Client INVITE Transaction  
+/// ## Client INVITE Transaction
 /// ```text
 /// Nothing → Calling → Trying → Proceeding → Completed → Terminated
 ///                                      ↓

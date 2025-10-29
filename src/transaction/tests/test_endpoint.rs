@@ -31,12 +31,11 @@ async fn test_endpoint_serve() {
         } => {
         }
         _ = async {
-            while let Some(_) = incoming.recv().await {
+            if (incoming.recv().await).is_some() {
                 // Handle transaction
-                break; // Exit for example
             }
         } => {
-            assert!(false, "must not reach here");
+            panic!("must not reach here");
         }
     }
     endpoint.shutdown();
@@ -51,7 +50,7 @@ async fn test_endpoint_recvrequests() {
 
     let addr = endpoint
         .get_addrs()
-        .get(0)
+        .first()
         .expect("must has connection")
         .to_owned();
 
@@ -72,8 +71,7 @@ async fn test_endpoint_recvrequests() {
                     password: None,
                 }),
                 host_with_port: rsip::HostWithPort::try_from("restsend.com")
-                    .expect("host_port parse")
-                    .into(),
+                    .expect("host_port parse"),
                 ..Default::default()
             },
             headers: vec![
@@ -86,9 +84,9 @@ async fn test_endpoint_recvrequests() {
             version: rsip::Version::V2,
             body: Default::default(),
         };
-        let buf: String = register_req.try_into().expect("try_into");
+        let buf: String = register_req.into();
         test_conn
-            .send_raw(&buf.as_bytes(), &addr)
+            .send_raw(buf.as_bytes(), &addr)
             .await
             .expect("send_raw");
         sleep(Duration::from_secs(1)).await;
@@ -103,7 +101,7 @@ async fn test_endpoint_recvrequests() {
 
     select! {
         _ = send_loop => {
-            assert!(false, "must not reach here");
+            panic!("must not reach here");
         }
         _ = endpoint.serve()=> {}
         req = incoming_loop => {

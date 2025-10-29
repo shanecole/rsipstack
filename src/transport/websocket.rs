@@ -1,25 +1,24 @@
 use crate::{
+    Result,
     transport::{
-        connection::{TransportSender, KEEPALIVE_REQUEST, KEEPALIVE_RESPONSE},
+        SipConnection, TransportEvent,
+        connection::{KEEPALIVE_REQUEST, KEEPALIVE_RESPONSE, TransportSender},
         sip_addr::SipAddr,
         stream::StreamConnection,
         transport_layer::TransportLayerInnerRef,
-        SipConnection, TransportEvent,
     },
-    Result,
 };
 use futures_util::{SinkExt, StreamExt};
 use rsip::SipMessage;
 use std::{fmt, net::SocketAddr, sync::Arc};
 use tokio::{net::TcpListener, sync::Mutex};
 use tokio_tungstenite::{
-    connect_async,
+    MaybeTlsStream, WebSocketStream, connect_async,
     tungstenite::{
         client::IntoClientRequest,
         handshake::server::{Request, Response},
         protocol::Message,
     },
-    MaybeTlsStream, WebSocketStream,
 };
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
@@ -105,15 +104,14 @@ impl WebSocketListenerConnection {
                     // Accept the WebSocket connection with custom header handling
                     let callback = |req: &Request, mut response: Response| {
                         // Check if client requested 'sip' subprotocol
-                        if let Some(protocols) = req.headers().get("sec-websocket-protocol") {
-                            if let Ok(protocols_str) = protocols.to_str() {
-                                if protocols_str.contains("sip") {
-                                    // Add the 'sip' subprotocol to response
-                                    response
-                                        .headers_mut()
-                                        .insert("sec-websocket-protocol", "sip".parse().unwrap());
-                                }
-                            }
+                        if let Some(protocols) = req.headers().get("sec-websocket-protocol")
+                            && let Ok(protocols_str) = protocols.to_str()
+                            && protocols_str.contains("sip")
+                        {
+                            // Add the 'sip' subprotocol to response
+                            response
+                                .headers_mut()
+                                .insert("sec-websocket-protocol", "sip".parse().unwrap());
                         }
                         Ok(response)
                     };
@@ -277,7 +275,7 @@ impl StreamConnection for WebSocketConnection {
                         )?;
 
                         if let Err(e) = sender.send(TransportEvent::Incoming(
-                            sip_msg,
+                            Box::new(sip_msg),
                             sip_connection.clone(),
                             remote_addr.clone(),
                         )) {
@@ -299,7 +297,7 @@ impl StreamConnection for WebSocketConnection {
                     match SipMessage::try_from(bin) {
                         Ok(sip_msg) => {
                             if let Err(e) = sender.send(TransportEvent::Incoming(
-                                sip_msg,
+                                Box::new(sip_msg),
                                 sip_connection.clone(),
                                 remote_addr.clone(),
                             )) {

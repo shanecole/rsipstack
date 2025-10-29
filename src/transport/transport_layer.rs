@@ -7,7 +7,11 @@ use crate::{transport::TransportEvent, Result};
 use async_trait::async_trait;
 
 #[cfg(feature = "rsip-dns")]
-use rsip_dns::trust_dns_resolver::TokioAsyncResolver;
+use rsip_dns::hickory_proto::runtime::TokioRuntimeProvider;
+#[cfg(feature = "rsip-dns")]
+use rsip_dns::hickory_resolver::config::{ResolverConfig, ResolverOpts};
+#[cfg(feature = "rsip-dns")]
+use rsip_dns::hickory_resolver::{name_server::GenericConnector, Resolver};
 #[cfg(feature = "rsip-dns")]
 use rsip_dns::ResolvableExt;
 
@@ -67,11 +71,16 @@ impl DefaultDomainResolver {
             params,
             ..Default::default()
         };
+        let provider = GenericConnector::new(TokioRuntimeProvider::default());
+        let resolver = Resolver::<GenericConnector<TokioRuntimeProvider>>::builder_with_config(
+            ResolverConfig::default(),
+            provider,
+        )
+        .with_options(ResolverOpts::default())
+        .build();
         let context = rsip_dns::Context::initialize_from(
             target_for_lookup,
-            rsip_dns::AsyncTrustDnsClient::new(
-                TokioAsyncResolver::tokio(Default::default(), Default::default()).unwrap(),
-            ),
+            rsip_dns::AsyncHickoryClient::new(resolver),
             rsip_dns::SupportedTransports::any(),
         )?;
 
@@ -259,7 +268,7 @@ impl TransportLayerInner {
         debug!(?key, "lookup target: {} -> {}", destination, target);
         match self.connections.read() {
             Ok(connections) => {
-                if let Some(transport) = connections.get(&target) {
+                if let Some(transport) = connections.get(target) {
                     return Ok((transport.clone(), target.clone()));
                 }
             }
@@ -271,48 +280,45 @@ impl TransportLayerInner {
                 )));
             }
         }
-        match target.r#type {
-            Some(
+        if let Some(
                 rsip::transport::Transport::Tcp
                 | rsip::transport::Transport::Tls
                 | rsip::transport::Transport::Ws
                 | rsip::transport::Transport::Wss,
-            ) => {
-                let sip_connection = match target.r#type {
-                    Some(rsip::transport::Transport::Tcp) => {
-                        let connection =
-                            TcpConnection::connect(target, Some(self.cancel_token.child_token()))
-                                .await?;
-                        SipConnection::Tcp(connection)
-                    }
-                    Some(rsip::transport::Transport::Tls) => {
-                        let connection = TlsConnection::connect(
-                            target,
-                            None,
-                            Some(self.cancel_token.child_token()),
-                        )
-                        .await?;
-                        SipConnection::Tls(connection)
-                    }
-                    Some(rsip::transport::Transport::Ws | rsip::transport::Transport::Wss) => {
-                        let connection = WebSocketConnection::connect(
-                            target,
-                            Some(self.cancel_token.child_token()),
-                        )
-                        .await?;
-                        SipConnection::WebSocket(connection)
-                    }
-                    _ => {
-                        return Err(crate::Error::TransportLayerError(
-                            format!("unsupported transport type: {:?}", target.r#type),
-                            target.to_owned(),
-                        ));
-                    }
-                };
-                self.add_connection(sip_connection.clone());
-                return Ok((sip_connection, target.clone()));
-            }
-            _ => {}
+            ) = target.r#type {
+            let sip_connection = match target.r#type {
+                Some(rsip::transport::Transport::Tcp) => {
+                    let connection =
+                        TcpConnection::connect(target, Some(self.cancel_token.child_token()))
+                            .await?;
+                    SipConnection::Tcp(connection)
+                }
+                Some(rsip::transport::Transport::Tls) => {
+                    let connection = TlsConnection::connect(
+                        target,
+                        None,
+                        Some(self.cancel_token.child_token()),
+                    )
+                    .await?;
+                    SipConnection::Tls(connection)
+                }
+                Some(rsip::transport::Transport::Ws | rsip::transport::Transport::Wss) => {
+                    let connection = WebSocketConnection::connect(
+                        target,
+                        Some(self.cancel_token.child_token()),
+                    )
+                    .await?;
+                    SipConnection::WebSocket(connection)
+                }
+                _ => {
+                    return Err(crate::Error::TransportLayerError(
+                        format!("unsupported transport type: {:?}", target.r#type),
+                        target.to_owned(),
+                    ));
+                }
+            };
+            self.add_connection(sip_connection.clone());
+            return Ok((sip_connection, target.clone()));
         }
 
         let listens = match self.listens.read() {
@@ -402,7 +408,13 @@ mod tests {
         Result,
     };
     use rsip::{Host, Transport};
-    use rsip_dns::{trust_dns_resolver::TokioAsyncResolver, ResolvableExt};
+    use rsip_dns::{
+        hickory_proto::runtime::TokioRuntimeProvider,
+        hickory_resolver::{
+            config::ResolverConfig, config::ResolverOpts, name_server::GenericConnector, Resolver,
+        },
+        ResolvableExt,
+    };
 
     #[tokio::test]
     async fn test_lookup() -> Result<()> {
@@ -479,24 +491,25 @@ mod tests {
         ];
         for item in check_list {
             let uri = rsip::uri::Uri::try_from(item.0)?;
+            let provider = GenericConnector::new(TokioRuntimeProvider::default());
+            let resolver = Resolver::<GenericConnector<TokioRuntimeProvider>>::builder_with_config(
+                ResolverConfig::default(),
+                provider,
+            )
+            .with_options(ResolverOpts::default())
+            .build();
             let context = rsip_dns::Context::initialize_from(
                 uri.clone(),
-                rsip_dns::AsyncTrustDnsClient::new(
-                    TokioAsyncResolver::tokio(Default::default(), Default::default()).unwrap(),
-                ),
+                rsip_dns::AsyncHickoryClient::new(resolver),
                 rsip_dns::SupportedTransports::any(),
             )?;
 
             let mut lookup = rsip_dns::Lookup::from(context);
             let mut target = lookup.resolve_next().await.unwrap();
-            match uri.host_with_port.host {
-                Host::IpAddr(_) => {
-                    if let Some(port) = uri.host_with_port.port {
-                        target.port = port;
-                    }
+            if let Host::IpAddr(_) = uri.host_with_port.host
+                && let Some(port) = uri.host_with_port.port {
+                    target.port = port;
                 }
-                _ => {}
-            }
             assert_eq!(uri.user().unwrap(), item.1 .0);
             assert_eq!(target.transport, item.1 .3);
             assert_eq!(target.ip_addr.to_string(), item.1 .1);

@@ -18,8 +18,8 @@ pub enum Error {
     #[error("Endpoint error: {0}")]
     EndpointError(String),
 
-    #[error("Dialog error:{2}({0})")]
-    DialogError(String, DialogId, rsip::StatusCode),
+    #[error("Dialog error")]
+    DialogError(Box<(String, DialogId, rsip::StatusCode)>),
 
     #[error("I/O error: {0}")]
     IoError(#[from] std::io::Error),

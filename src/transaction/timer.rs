@@ -7,7 +7,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-#[derive(Debug, PartialOrd, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 struct TimerKey {
     task_id: u64,
     execute_at: Instant,
@@ -19,10 +19,22 @@ impl Ord for TimerKey {
     }
 }
 
+impl PartialOrd for TimerKey {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
 pub struct Timer<T> {
     tasks: RwLock<BTreeMap<TimerKey, T>>,
     id_to_tasks: RwLock<HashMap<u64, Instant>>,
     last_task_id: AtomicU64,
+}
+
+impl<T> Default for Timer<T> {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl<T> Timer<T> {
@@ -115,7 +127,7 @@ impl<T> Timer<T> {
             }
             result.reserve(keys_to_remove.len());
             for key in keys_to_remove.iter() {
-                tasks.remove(key).map(|value| result.push(value));
+                if let Some(value) = tasks.remove(key) { result.push(value) }
             }
             keys_to_remove
         };

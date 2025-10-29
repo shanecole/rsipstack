@@ -1,11 +1,12 @@
 use crate::{Error, Result};
 use rsip::{
-    prelude::{HeadersExt, UntypedHeader},
     Request, Response,
+    prelude::{HeadersExt, UntypedHeader},
 };
 
 pub mod authenticate;
 pub mod client_dialog;
+#[allow(clippy::module_inception)]
 pub mod dialog;
 pub mod dialog_layer;
 pub mod invitation;

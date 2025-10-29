@@ -1,15 +1,15 @@
 use super::{sip_addr::SipAddr, stream::StreamConnection, tcp::TcpConnection, udp::UdpConnection};
+use crate::Result;
 use crate::transport::channel::ChannelConnection;
 use crate::transport::websocket::{WebSocketConnection, WebSocketListenerConnection};
 use crate::transport::{
     tcp_listener::TcpListenerConnection,
     tls::{TlsConnection, TlsListenerConnection},
 };
-use crate::Result;
 use get_if_addrs::IfAddr;
 use rsip::{
-    prelude::{HeadersExt, ToTypedHeader},
     Param, SipMessage,
+    prelude::{HeadersExt, ToTypedHeader},
 };
 use std::net::{IpAddr, Ipv4Addr};
 use std::{fmt, net::SocketAddr};
@@ -54,7 +54,7 @@ use tracing::debug;
 /// ```
 #[derive(Debug)]
 pub enum TransportEvent {
-    Incoming(SipMessage, SipConnection, SipAddr),
+    Incoming(Box<SipMessage>, SipConnection, SipAddr),
     New(SipConnection),
     Closed(SipConnection),
 }
@@ -163,10 +163,7 @@ pub enum SipConnection {
 
 impl SipConnection {
     pub fn is_reliable(&self) -> bool {
-        match self {
-            SipConnection::Udp(_) => false,
-            _ => true,
-        }
+        !matches!(self, SipConnection::Udp(_))
     }
 
     pub fn cancel_token(&self) -> Option<CancellationToken> {
@@ -318,10 +315,8 @@ impl SipConnection {
         typed_via.params.retain(|param| {
             if let Param::Other(key, _) = param {
                 !key.value().eq_ignore_ascii_case("rport")
-            } else if matches!(param, Param::Received(_)) {
-                false
             } else {
-                true
+                !matches!(param, Param::Received(_))
             }
         });
 
@@ -373,7 +368,7 @@ impl SipConnection {
                         }
                     }
                     Param::Transport(t) => {
-                        transport = t.clone();
+                        transport = *t;
                     }
                     Param::Other(key, Some(value)) if key.value().eq_ignore_ascii_case("rport") => {
                         if let Ok(port) = value.value().try_into() {

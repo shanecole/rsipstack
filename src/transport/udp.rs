@@ -1,10 +1,10 @@
-use super::{connection::TransportSender, SipAddr, SipConnection};
+use super::{SipAddr, SipConnection, connection::TransportSender};
 use crate::{
-    transport::{
-        connection::{KEEPALIVE_REQUEST, KEEPALIVE_RESPONSE, MAX_UDP_BUF_SIZE},
-        TransportEvent,
-    },
     Result,
+    transport::{
+        TransportEvent,
+        connection::{KEEPALIVE_REQUEST, KEEPALIVE_RESPONSE, MAX_UDP_BUF_SIZE},
+    },
 };
 use std::{net::SocketAddr, sync::Arc};
 use tokio::net::UdpSocket;
@@ -148,7 +148,7 @@ impl UdpConnection {
             );
 
             sender.send(TransportEvent::Incoming(
-                msg,
+                Box::new(msg),
                 SipConnection::Udp(self.clone()),
                 SipAddr {
                     r#type: Some(rsip::transport::Transport::Udp),

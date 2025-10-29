@@ -1,11 +1,11 @@
-use super::dialog::{Dialog, DialogInnerRef, DialogState, TerminatedReason};
 use super::DialogId;
+use super::dialog::{Dialog, DialogInnerRef, DialogState, TerminatedReason};
 use crate::transport::SipConnection;
 use crate::{
-    transaction::transaction::{Transaction, TransactionEvent},
     Result,
+    transaction::transaction::{Transaction, TransactionEvent},
 };
-use rsip::{prelude::HeadersExt, Header, Request, SipMessage, StatusCode};
+use rsip::{Header, Request, SipMessage, StatusCode, prelude::HeadersExt};
 use std::sync::atomic::Ordering;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, trace, warn};
@@ -306,7 +306,7 @@ impl ServerInviteDialog {
         }
         info!(id=%self.id(), ?code, ?reason, "rejecting dialog");
         let headers = if let Some(reason) = reason {
-            Some(vec![rsip::Header::Other("Reason".into(), reason.into())])
+            Some(vec![rsip::Header::Other("Reason".into(), reason)])
         } else {
             None
         };
@@ -418,14 +418,11 @@ impl ServerInviteDialog {
             body,
         )?;
         let resp = self.inner.do_request(request.clone()).await;
-        match resp {
-            Ok(Some(ref resp)) => {
-                if resp.status_code == StatusCode::OK {
-                    self.inner
-                        .transition(DialogState::Updated(self.id(), request))?;
-                }
-            }
-            _ => {}
+        if let Ok(Some(ref resp)) = resp
+            && resp.status_code == StatusCode::OK
+        {
+            self.inner
+                .transition(DialogState::Updated(self.id(), request))?;
         }
         resp
     }
@@ -592,11 +589,11 @@ impl ServerInviteDialog {
                         "invalid request received {} {}",
                         tx.original.method, tx.original.uri
                     );
-                    return Err(crate::Error::DialogError(
+                    return Err(crate::Error::DialogError(Box::new((
                         "invalid request in confirmed state".to_string(),
                         self.id(),
                         rsip::StatusCode::MethodNotAllowed,
-                    ));
+                    ))));
                 }
                 rsip::Method::Bye => return self.handle_bye(tx).await,
                 rsip::Method::Info => return self.handle_info(tx).await,
@@ -605,23 +602,18 @@ impl ServerInviteDialog {
                 _ => {
                     info!(id=%self.id(),"invalid request method: {:?}", tx.original.method);
                     tx.reply(rsip::StatusCode::MethodNotAllowed).await?;
-                    return Err(crate::Error::DialogError(
+                    return Err(crate::Error::DialogError(Box::new((
                         "invalid request".to_string(),
                         self.id(),
                         rsip::StatusCode::MethodNotAllowed,
-                    ));
+                    ))));
                 }
             }
-        } else {
-            match tx.original.method {
-                rsip::Method::Ack => {
-                    self.inner.tu_sender.send(TransactionEvent::Received(
-                        tx.original.clone().into(),
-                        tx.connection.clone(),
-                    ))?;
-                }
-                _ => {}
-            }
+        } else if tx.original.method == rsip::Method::Ack {
+            self.inner.tu_sender.send(TransactionEvent::Received(
+                tx.original.clone().into(),
+                tx.connection.clone(),
+            ))?;
         }
         self.handle_invite(tx).await
     }
@@ -660,13 +652,11 @@ impl ServerInviteDialog {
 
     async fn handle_invite(&mut self, tx: &mut Transaction) -> Result<()> {
         let handle_loop = async {
-            if !self.inner.is_confirmed() && matches!(tx.original.method, rsip::Method::Invite) {
-                match self.inner.transition(DialogState::Calling(self.id())) {
-                    Ok(_) => {
-                        tx.send_trying().await.ok();
-                    }
-                    Err(_) => {}
-                }
+            if !self.inner.is_confirmed()
+                && matches!(tx.original.method, rsip::Method::Invite)
+                && let Ok(_) = self.inner.transition(DialogState::Calling(self.id()))
+            {
+                tx.send_trying().await.ok();
             }
 
             while let Some(msg) = tx.receive().await {
@@ -719,11 +709,11 @@ impl TryFrom<&Dialog> for ServerInviteDialog {
     fn try_from(dlg: &Dialog) -> Result<Self> {
         match dlg {
             Dialog::ServerInvite(dlg) => Ok(dlg.clone()),
-            _ => Err(crate::Error::DialogError(
+            _ => Err(crate::Error::DialogError(Box::new((
                 "Dialog is not a ServerInviteDialog".to_string(),
                 dlg.id(),
                 rsip::StatusCode::BadRequest,
-            )),
+            )))),
         }
     }
 }

@@ -155,7 +155,7 @@ impl TlsListenerConnection {
                     .map_err(|e| Error::Error(format!("Failed to parse PKCS8 key: {}", e)))?;
 
                 if !keys.is_empty() {
-                    let key_der = pki_types::PrivatePkcs8KeyDer::from(keys[0].clone_key());
+                    let key_der = keys[0].clone_key();
                     pki_types::PrivateKeyDer::Pkcs8(key_der)
                 } else {
                     // Try PKCS1 format
@@ -165,7 +165,7 @@ impl TlsListenerConnection {
                         .map_err(|e| Error::Error(format!("Failed to parse RSA key: {}", e)))?;
 
                     if !keys.is_empty() {
-                        let key_der = pki_types::PrivatePkcs1KeyDer::from(keys[0].clone_key());
+                        let key_der = keys[0].clone_key();
                         pki_types::PrivateKeyDer::Pkcs1(key_der)
                     } else {
                         return Err(Error::Error("No valid private key found".to_string()));
@@ -244,11 +244,8 @@ impl TlsConnection {
             .with_root_certificates(root_store)
             .with_no_client_auth();
 
-        match custom_verifier {
-            Some(verifier) => {
-                config.dangerous().set_certificate_verifier(verifier);
-            }
-            None => {}
+        if let Some(verifier) = custom_verifier {
+            config.dangerous().set_certificate_verifier(verifier);
         }
         let connector = TlsConnector::from(Arc::new(config));
 

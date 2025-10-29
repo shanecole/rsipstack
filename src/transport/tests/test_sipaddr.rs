@@ -8,8 +8,7 @@ fn test_via_received() {
         uri: rsip::Uri {
             scheme: Some(rsip::Scheme::Sip),
             host_with_port: rsip::HostWithPort::try_from("127.0.0.1:2025")
-                .expect("host_port parse")
-                .into(),
+                .expect("host_port parse"),
             ..Default::default()
         },
         headers: vec![Via::new("SIP/2.0/TLS restsend.com:5061;branch=z9hG4bKnashd92").into()]
@@ -19,7 +18,7 @@ fn test_via_received() {
     };
 
     let (_, parse_addr) =
-        SipConnection::parse_target_from_via(&register_req.via_header().expect("via_header"))
+        SipConnection::parse_target_from_via(register_req.via_header().expect("via_header"))
             .expect("get_target_socketaddr");
 
     let addr = HostWithPort {
@@ -36,14 +35,11 @@ fn test_via_received() {
     )
     .expect("update_msg_received");
 
-    match msg {
-        SipMessage::Request(req) => {
-            let (_, parse_addr) =
-                SipConnection::parse_target_from_via(&req.via_header().expect("via_header"))
-                    .expect("get_target_socketaddr");
-            assert_eq!(parse_addr, addr.into());
-        }
-        _ => {}
+    if let SipMessage::Request(req) = msg {
+        let (_, parse_addr) =
+            SipConnection::parse_target_from_via(req.via_header().expect("via_header"))
+                .expect("get_target_socketaddr");
+        assert_eq!(parse_addr, addr.into());
     }
 }
 

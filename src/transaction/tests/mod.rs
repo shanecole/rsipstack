@@ -26,7 +26,7 @@ pub(super) async fn create_test_endpoint(addr: Option<&str>) -> Result<Endpoint>
     Ok(endpoint)
 }
 #[cfg(test)]
-mod tests {
+mod unit_tests {
     use crate::{
         rsip_ext::extract_uri_from_contact,
         transaction::{make_via_branch, random_text},

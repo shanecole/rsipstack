@@ -1,10 +1,10 @@
 use crate::{
+    Result,
     transport::{
+        TransportEvent,
         connection::{KEEPALIVE_REQUEST, KEEPALIVE_RESPONSE},
         udp::UdpConnection,
-        TransportEvent,
     },
-    Result,
 };
 use std::time::Duration;
 use tokio::{select, sync::mpsc::unbounded_channel, time::sleep};
@@ -17,7 +17,7 @@ async fn test_udp_keepalive() -> Result<()> {
 
     let bob_loop = async {
         sleep(Duration::from_millis(20)).await; // wait for serve_loop to start
-                                                // send keep alive
+        // send keep alive
         peer_bob
             .send_raw(KEEPALIVE_REQUEST, peer_alice.get_addr())
             .await
@@ -30,11 +30,11 @@ async fn test_udp_keepalive() -> Result<()> {
 
     select! {
         _ = peer_alice.serve_loop(alice_tx) => {
-            assert!(false, "serve_loop exited");
+            panic!( "serve_loop exited");
         }
         _ = bob_loop => {}
         _= sleep(Duration::from_millis(200)) => {
-            assert!(false, "timeout waiting for keep alive response");
+            panic!( "timeout waiting for keep alive response");
         }
     };
     Ok(())
@@ -59,13 +59,13 @@ async fn test_udp_recv_sip_message() -> Result<()> {
 
     select! {
         _ = peer_alice.serve_loop(alice_tx) => {
-            assert!(false, "alice serve_loop exited");
+            panic!( "alice serve_loop exited");
         }
         _ = peer_bob.serve_loop(bob_tx) => {
-            assert!(false, "bob serve_loop exited");
+            panic!( "bob serve_loop exited");
         }
         _ = send_loop => {
-            assert!(false, "send_loop exited");
+            panic!( "send_loop exited");
         }
         event = bob_rx.recv() => {
             match event {
@@ -75,12 +75,12 @@ async fn test_udp_recv_sip_message() -> Result<()> {
                     assert_eq!(connection.get_addr(), peer_bob.get_addr());
                 }
                 _ => {
-                    assert!(false, "unexpected event");
+                    panic!("unexpected event");
                 }
             }
         }
         _= sleep(Duration::from_millis(500)) => {
-            assert!(false, "timeout waiting");
+            panic!( "timeout waiting");
         }
     };
     Ok(())

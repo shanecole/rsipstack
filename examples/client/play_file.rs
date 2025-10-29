@@ -1,7 +1,7 @@
-use crate::{get_first_non_loopback_interface, MediaSessionOption};
-use rsipstack::transport::udp::UdpConnection;
+use crate::{MediaSessionOption, get_first_non_loopback_interface};
 use rsipstack::Result;
-use rsipstack::{transport::SipAddr, Error};
+use rsipstack::transport::udp::UdpConnection;
+use rsipstack::{Error, transport::SipAddr};
 use rtp_rs::RtpPacketBuilder;
 use std::net::SocketAddr;
 use std::time::Duration;
@@ -95,6 +95,7 @@ pub async fn play_echo(conn: UdpConnection, token: CancellationToken) -> Result<
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn play_audio_file(
     conn: UdpConnection,
     token: CancellationToken,
@@ -134,7 +135,7 @@ pub async fn play_audio_file(
                 .ssrc(ssrc)
                 .sequence(seq.into())
                 .timestamp(ts)
-                .payload(&chunk)
+                .payload(chunk)
                 .build() {
                     Ok(r) => r,
                     Err(e) => {

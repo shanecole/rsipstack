@@ -17,12 +17,12 @@ fn create_test_request(method: rsip::Method, branch: &str) -> rsip::Request {
         method,
         uri: rsip::Uri::try_from("sip:test.example.com:5060").unwrap(),
         headers: vec![
-            Via::new(&format!(
+            Via::new( format!(
                 "SIP/2.0/UDP test.example.com:5060;branch={}",
                 branch
             ))
             .into(),
-            CSeq::new(&format!("1 {}", method)).into(),
+            CSeq::new( format!("1 {}", method)).into(),
             From::new("Alice <sip:alice@example.com>;tag=1928301774").into(),
             To::new("Bob <sip:bob@example.com>").into(),
             CallId::new("a84b4c76e66710@pc33.atlanta.com").into(),

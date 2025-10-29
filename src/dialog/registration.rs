@@ -1,8 +1,9 @@
 use super::{
-    authenticate::{handle_client_authenticate, Credential},
     DialogId,
+    authenticate::{Credential, handle_client_authenticate},
 };
 use crate::{
+    Result,
     rsip_ext::RsipResponseExt,
     transaction::{
         endpoint::EndpointInnerRef,
@@ -11,11 +12,10 @@ use crate::{
         transaction::Transaction,
     },
     transport::SipAddr,
-    Result,
 };
 use rsip::{
-    prelude::{HeadersExt, ToTypedHeader},
     Response, SipMessage, StatusCode,
+    prelude::{HeadersExt, ToTypedHeader},
 };
 use tracing::{debug, info};
 
@@ -462,11 +462,8 @@ impl Registration {
                         let received = resp.via_received();
                         // Update contact header from response
 
-                        match resp.contact_header() {
-                            Ok(contact) => {
-                                self.contact = contact.typed().ok();
-                            }
-                            Err(_) => {}
+                        if let Ok(contact) = resp.contact_header() {
+                            self.contact = contact.typed().ok();
                         };
                         if self.public_address != received {
                             info!(
@@ -490,11 +487,11 @@ impl Registration {
                 _ => break,
             }
         }
-        return Err(crate::Error::DialogError(
+        Err(crate::Error::DialogError(Box::new((
             "registration transaction is already terminated".to_string(),
             DialogId::try_from(&tx.original)?,
             StatusCode::BadRequest,
-        ));
+        ))))
     }
 
     /// Create a NAT-aware Contact header with public address

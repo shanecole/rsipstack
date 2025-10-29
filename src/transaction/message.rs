@@ -241,24 +241,42 @@ impl EndpointInner {
         }
     }
 
-    pub fn make_ack(&self, resp: &Response, destination: Option<&SipAddr>) -> Result<Request> {
+    /// Generate an ACK request for a response
+    pub fn make_ack(
+        &self,
+        resp: &Response,
+        original_request_uri: Option<&rsip::Uri>,
+        destination: Option<&SipAddr>,
+    ) -> Result<Request> {
         let mut headers = resp.headers.clone();
-        let request_uri = resp.remote_uri(destination)?;
+
+        let request_uri = if matches!(resp.status_code.kind(), rsip::StatusCodeKind::Successful) {
+            // For 2xx responses, ACK is end-to-end and uses Contact URI
+            resp.remote_uri(destination)?
+        } else {
+            // For non-2xx final responses (3xx–6xx), the ACK stays within the original INVITE client transaction
+            // and uses the original Request-URI (Contact header is optional for non-2xx)
+            original_request_uri
+                .ok_or_else(|| {
+                    Error::missing_header("original request URI required for non-2xx ACK")
+                })?
+                .clone()
+        };
 
         if matches!(resp.status_code.kind(), rsip::StatusCodeKind::Successful) {
-            //For non-2xx final responses (3xx–6xx), the ACK stays within the original INVITE client transaction.
+            // For 2xx responses, ACK is a new transaction with new Via branch
             if let Ok(top_most_via) = header!(
                 headers.iter_mut(),
                 Header::Via,
                 Error::missing_header("Via")
-            ) {
-                if let Ok(mut typed_via) = top_most_via.typed() {
+            )
+                && let Ok(mut typed_via) = top_most_via.typed() {
                     typed_via.params.clear();
                     typed_via.params.push(make_via_branch());
                     *top_most_via = typed_via.into();
                 }
-            }
         }
+        // For non-2xx responses, keep the original Via branch (hop-by-hop within same transaction)
         // update route set from Record-Route header
         let mut route_set = Vec::new();
         for header in resp.headers.iter() {
@@ -291,7 +309,7 @@ impl EndpointInner {
         Ok(rsip::Request {
             method: rsip::Method::Ack,
             uri: request_uri,
-            headers: headers.into(),
+            headers,
             body: vec![],
             version: rsip::Version::V2,
         })

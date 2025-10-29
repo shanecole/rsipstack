@@ -142,7 +142,7 @@ fn test_via_received_ws() {
 #[test]
 fn test_via_response_not_modified() {
     let response = rsip::message::Response {
-        status_code: rsip::StatusCode::try_from(200).unwrap(),
+        status_code: rsip::StatusCode::from(200),
         headers: vec![Via::new("SIP/2.0/UDP 127.0.0.1:5060;branch=z9hG4bK-test").into()].into(),
         version: rsip::Version::V2,
         body: Default::default(),
@@ -172,7 +172,7 @@ fn create_test_request(via_proto: &str) -> rsip::message::Request {
             ..Default::default()
         },
         headers: vec![
-            Via::new(&format!("{} 127.0.0.1:5060;branch=z9hG4bK-test", via_proto)).into(),
+            Via::new( format!("{} 127.0.0.1:5060;branch=z9hG4bK-test", via_proto)).into(),
         ]
         .into(),
         version: rsip::Version::V2,

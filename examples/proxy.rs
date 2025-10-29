@@ -1,35 +1,35 @@
-use axum::extract::ws::Message;
-use axum::extract::ws::WebSocket;
 use axum::extract::ConnectInfo;
 use axum::extract::FromRequestParts;
+use axum::extract::ws::Message;
+use axum::extract::ws::WebSocket;
 use axum::response::Html;
 use axum::{
-    extract::{ws::WebSocketUpgrade, State},
+    Router,
+    extract::{State, ws::WebSocketUpgrade},
     response::IntoResponse,
     routing::get,
-    Router,
 };
 use clap::Parser;
 use futures::{SinkExt, StreamExt};
 use get_if_addrs::get_if_addrs;
+use rsip::SipMessage;
 use rsip::headers::UntypedHeader;
 use rsip::prelude::{HeadersExt, ToTypedHeader};
-use rsip::SipMessage;
 use rsipstack::dialog::DialogId;
-use rsipstack::rsip_ext::{extract_uri_from_contact, RsipHeadersExt};
+use rsipstack::rsip_ext::{RsipHeadersExt, extract_uri_from_contact};
+use rsipstack::transaction::TransactionReceiver;
 use rsipstack::transaction::endpoint::EndpointInnerRef;
 use rsipstack::transaction::key::{TransactionKey, TransactionRole};
 use rsipstack::transaction::transaction::Transaction;
-use rsipstack::transaction::TransactionReceiver;
+use rsipstack::transport::SipAddr;
 use rsipstack::transport::channel::ChannelConnection;
 use rsipstack::transport::tcp_listener::TcpListenerConnection;
 use rsipstack::transport::udp::UdpConnection;
 #[cfg(feature = "websocket")]
 use rsipstack::transport::websocket::WebSocketListenerConnection;
-use rsipstack::transport::SipAddr;
 use rsipstack::transport::{SipConnection, TransportEvent};
-use rsipstack::{header_pop, Error, Result};
-use rsipstack::{transport::TransportLayer, EndpointBuilder};
+use rsipstack::{EndpointBuilder, transport::TransportLayer};
+use rsipstack::{Error, Result, header_pop};
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::fmt::Formatter;
@@ -38,8 +38,8 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::{env, vec};
 use tokio::select;
-use tokio::sync::mpsc;
 use tokio::sync::Mutex;
+use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tower::ServiceBuilder;
 use tower_http::cors::CorsLayer;
@@ -127,7 +127,7 @@ async fn main() -> Result<()> {
 
     let connection = UdpConnection::create_connection(
         format!("{}:{}", addr, args.port).parse()?,
-        external.clone(),
+        external,
         None,
     )
     .await?;
@@ -326,18 +326,14 @@ impl TryFrom<&rsip::Request> for User {
 
         via.params.iter().for_each(|param| match param {
             rsip::Param::Transport(t) => {
-                destination.r#type = Some(t.clone());
+                destination.r#type = Some(*t);
             }
-            rsip::Param::Received(r) => match r.value().try_into() {
-                Ok(addr) => destination.addr.host = addr,
-                Err(_) => {}
-            },
+            rsip::Param::Received(r) => destination.addr.host = r.value().into(),
             rsip::Param::Other(o, Some(v)) => {
-                if o.value().eq_ignore_ascii_case("rport") {
-                    match v.value().try_into() {
-                        Ok(port) => destination.addr.port = Some(port),
-                        Err(_) => {}
-                    }
+                if o.value().eq_ignore_ascii_case("rport")
+                    && let Ok(port) = v.value().try_into()
+                {
+                    destination.addr.port = Some(port)
                 }
             }
             _ => {}
@@ -365,19 +361,14 @@ async fn handle_register(state: AppState, mut tx: Transaction) -> Result<()> {
         uri: orig_contact_uri,
         params: vec![rsip::Param::Expires("60".into())],
     };
-    match tx.original.expires_header() {
-        Some(expires) => match expires.value().parse::<u32>() {
-            Ok(v) => {
-                if v == 0 {
-                    // remove user
-                    info!("unregistered user: {} -> {}", user.username, contact);
-                    state.inner.users.lock().await.remove(&user.username);
-                    return tx.reply(rsip::StatusCode::OK).await;
-                }
-            }
-            Err(_) => {}
-        },
-        None => {}
+    if let Some(expires) = tx.original.expires_header()
+        && let Ok(v) = expires.value().parse::<u32>()
+        && v == 0
+    {
+        // remove user
+        info!("unregistered user: {} -> {}", user.username, contact);
+        state.inner.users.lock().await.remove(&user.username);
+        return tx.reply(rsip::StatusCode::OK).await;
     }
 
     info!("Registered user: {} -> {}", user.username, user.destination);
@@ -414,15 +405,11 @@ async fn handle_invite(state: AppState, mut tx: Transaction) -> Result<()> {
                 .ok();
             // wait for ACK
             while let Some(msg) = tx.receive().await {
-                match msg {
-                    rsip::message::SipMessage::Request(req) => match req.method {
-                        rsip::Method::Ack => {
-                            info!("received no-2xx ACK");
-                            break;
-                        }
-                        _ => {}
-                    },
-                    _ => {}
+                if let rsip::message::SipMessage::Request(req) = msg
+                    && req.method == rsip::Method::Ack
+                {
+                    info!("received no-2xx ACK");
+                    break;
                 }
             }
             return Ok(());
@@ -451,32 +438,25 @@ async fn handle_invite(state: AppState, mut tx: Transaction) -> Result<()> {
         select! {
             msg = inv_tx.receive() => {
                 info!("UAC Received message: {}", msg.as_ref().map(|m| m.to_string()).unwrap_or_default());
-                if let Some(msg) = msg {
-                    match msg {
-                        rsip::message::SipMessage::Response(mut resp) => {
-                            // pop first Via
-                            header_pop!(resp.headers, rsip::Header::Via);
-                            resp.headers.push_front(record_route.clone().into());
-                            if resp.status_code.kind() == rsip::StatusCodeKind::Successful {
-                                let dialog_id = DialogId::try_from(&resp)?;
-                                info!("add session: {}", dialog_id);
-                                state.inner.sessions.lock().await.insert(dialog_id);
-                            }
-                            tx.respond(resp).await?;
+                if let Some(msg) = msg
+                    && let rsip::message::SipMessage::Response(mut resp) = msg {
+                        // pop first Via
+                        header_pop!(resp.headers, rsip::Header::Via);
+                        resp.headers.push_front(record_route.clone().into());
+                        if resp.status_code.kind() == rsip::StatusCodeKind::Successful {
+                            let dialog_id = DialogId::try_from(&resp)?;
+                            info!("add session: {}", dialog_id);
+                            state.inner.sessions.lock().await.insert(dialog_id);
                         }
-                        _ => {}
+                        tx.respond(resp).await?;
                     }
-                }
             }
             msg = tx.receive() => {
                 info!("UAS Received message: {}", msg.as_ref().map(|m| m.to_string()).unwrap_or_default());
                 if let Some(msg) = msg {
                     match msg {
-                        rsip::message::SipMessage::Request(req) => match req.method {
-                            rsip::Method::Cancel => {
-                                inv_tx.send_cancel(req).await?;
-                            }
-                            _ => {}
+                        rsip::message::SipMessage::Request(req) => if req.method == rsip::Method::Cancel {
+                            inv_tx.send_cancel(req).await?;
                         },
                         rsip::message::SipMessage::Response(_) => {}
                     }
@@ -559,7 +539,7 @@ where
         _state: &S,
     ) -> std::result::Result<Self, Self::Rejection> {
         let mut remote_addr = match parts.extensions.get::<ConnectInfo<SocketAddr>>() {
-            Some(ConnectInfo(addr)) => addr.clone(),
+            Some(ConnectInfo(addr)) => *addr,
             None => return Err(http::StatusCode::BAD_REQUEST),
         };
 
@@ -569,13 +549,13 @@ where
             "x-real-ip",
             "cf-connecting-ip",
         ] {
-            if let Some(value) = parts.headers.get(header) {
-                if let Ok(ip) = value.to_str() {
-                    // Handle comma-separated IPs (e.g. X-Forwarded-For can have multiple)
-                    let first_ip = ip.split(',').next().unwrap_or(ip).trim();
-                    remote_addr.set_ip(IpAddr::V4(first_ip.parse().unwrap()));
-                    break;
-                }
+            if let Some(value) = parts.headers.get(header)
+                && let Ok(ip) = value.to_str()
+            {
+                // Handle comma-separated IPs (e.g. X-Forwarded-For can have multiple)
+                let first_ip = ip.split(',').next().unwrap_or(ip).trim();
+                remote_addr.set_ip(IpAddr::V4(first_ip.parse().unwrap()));
+                break;
             }
         }
         Ok(ClientAddr(remote_addr))
@@ -661,7 +641,7 @@ async fn handle_websocket(client_addr: ClientAddr, socket: WebSocket, _state: Ap
                             );
                             let msg = match SipConnection::update_msg_received(
                                 sip_msg,
-                                client_addr.0.into(),
+                                client_addr.0,
                                 transport_type,
                             ) {
                                 Ok(msg) => msg,
@@ -671,7 +651,7 @@ async fn handle_websocket(client_addr: ClientAddr, socket: WebSocket, _state: Ap
                                 }
                             };
                             if let Err(e) = from_ws_tx.send(TransportEvent::Incoming(
-                                msg,
+                                Box::new(msg),
                                 sip_connection.clone(),
                                 local_addr.clone(),
                             )) {
@@ -690,7 +670,7 @@ async fn handle_websocket(client_addr: ClientAddr, socket: WebSocket, _state: Ap
                                 sip_msg.to_string().lines().next().unwrap_or("")
                             );
                             if let Err(e) = from_ws_tx.send(TransportEvent::Incoming(
-                                sip_msg,
+                                Box::new(sip_msg),
                                 sip_connection.clone(),
                                 local_addr.clone(),
                             )) {
@@ -731,7 +711,7 @@ async fn handle_websocket(client_addr: ClientAddr, socket: WebSocket, _state: Ap
             event = to_ws_rx.recv() => {
                 match event {
                     Some(TransportEvent::Incoming(sip_msg, _, _)) => {
-                        let message_text = sip_msg.to_string();
+                        let message_text = (*sip_msg).to_string();
                         info!(
                             "Forwarding message to WebSocket: {}",
                             message_text.lines().next().unwrap_or("")
@@ -764,7 +744,7 @@ async fn handle_websocket(client_addr: ClientAddr, socket: WebSocket, _state: Ap
 mod tests {
     use super::*;
     use rsipstack::transport::udp::UdpConnection;
-    use rsipstack::{transport::TransportLayer, EndpointBuilder};
+    use rsipstack::{EndpointBuilder, transport::TransportLayer};
     use std::sync::Arc;
     use std::time::Duration;
     use tokio_util::sync::CancellationToken;
@@ -913,8 +893,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_channel_connection_creation() {
-        use rsipstack::transport::channel::ChannelConnection;
         use rsipstack::transport::SipAddr;
+        use rsipstack::transport::channel::ChannelConnection;
         use rsipstack::transport::{SipConnection, TransportEvent};
         use tokio::sync::mpsc;
 
@@ -974,7 +954,7 @@ mod tests {
         // Send test message to transport
         to_transport_tx
             .send(TransportEvent::Incoming(
-                test_message,
+                Box::new(test_message),
                 sip_connection.clone(),
                 local_addr.clone(),
             ))
@@ -999,7 +979,7 @@ mod tests {
             match event {
                 TransportEvent::Incoming(msg, _conn, addr) => {
                     assert_eq!(addr, local_addr);
-                    if let rsip::SipMessage::Request(req) = msg {
+                    if let rsip::SipMessage::Request(req) = *msg {
                         assert_eq!(req.method, rsip::Method::Register);
                     } else {
                         panic!("Expected request message");

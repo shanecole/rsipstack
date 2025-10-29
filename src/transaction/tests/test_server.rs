@@ -44,12 +44,11 @@ async fn test_server_transaction() {
             uri: rsip::Uri {
                 scheme: Some(rsip::Scheme::Sip),
                 host_with_port: rsip::HostWithPort::try_from(addr.addr.to_string())
-                    .expect("host_port parse")
-                    .into(),
+                    .expect("host_port parse"),
                 ..Default::default()
             },
             headers: vec![
-                Via::new(&format!(
+                Via::new( format!(
                     "SIP/2.0/UDP {};branch=z9hG4bKnashd92",
                     client_conn_sip.get_addr().addr
                 ))
@@ -102,10 +101,10 @@ async fn test_server_transaction() {
         }
         _ = endpoint.serve()=> {}
         _ = incoming_loop => {
-            assert!(false, "must not reach here");
+            panic!( "must not reach here");
         }
         _ = sleep(Duration::from_secs(1)) => {
-            assert!(false, "timeout waiting");
+            panic!( "timeout waiting");
         }
     }
 }
