@@ -202,6 +202,7 @@ pub struct Endpoint {
 }
 
 impl EndpointInner {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         user_agent: String,
         transport_layer: TransportLayer,

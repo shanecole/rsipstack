@@ -258,6 +258,7 @@ impl DialogState {
     }
 }
 
+    #[allow(clippy::too_many_arguments)]
 impl DialogInner {
     pub fn new(
         role: TransactionRole,
