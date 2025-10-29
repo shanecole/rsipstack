@@ -225,7 +225,7 @@ async fn main() -> rsipstack::Result<()> {
             user: sip_username,
             password: None,
         }),
-        host_with_port: first_addr.addr.into(),
+        host_with_port: first_addr.addr,
         params: vec![],
         headers: vec![],
     };
@@ -305,24 +305,21 @@ async fn process_incoming_request(
     while let Some(mut tx) = incoming.recv().await {
         info!("Received transaction: {:?}", tx.key);
 
-        match tx.original.to_header()?.tag()?.as_ref() {
-            Some(_) => match dialog_layer.match_dialog(&tx.original) {
-                Some(mut d) => {
-                    tokio::spawn(async move {
-                        d.handle(&mut tx).await?;
-                        Ok::<_, Error>(())
-                    });
-                    continue;
-                }
-                None => {
-                    info!("dialog not found: {}", tx.original);
-                    tx.reply(rsip::StatusCode::CallTransactionDoesNotExist)
-                        .await?;
-                    continue;
-                }
-            },
-            None => {}
-        }
+        if let Some(_) = tx.original.to_header()?.tag()?.as_ref() { match dialog_layer.match_dialog(&tx.original) {
+            Some(mut d) => {
+                tokio::spawn(async move {
+                    d.handle(&mut tx).await?;
+                    Ok::<_, Error>(())
+                });
+                continue;
+            }
+            None => {
+                info!("dialog not found: {}", tx.original);
+                tx.reply(rsip::StatusCode::CallTransactionDoesNotExist)
+                    .await?;
+                continue;
+            }
+        } }
         // out dialog, new server dialog
         match tx.original.method {
             rsip::Method::Invite | rsip::Method::Ack => {
@@ -512,15 +509,14 @@ async fn process_invite(opt: &MediaSessionOption, dialog: ServerInviteDialog) ->
     let (conn, answer) = build_rtp_conn(opt, ssrc, payload_type).await?;
 
     let (answer_sender, mut answer_receiver) = tokio::sync::mpsc::unbounded_channel();
-    if opt.random_reject > 0 {
-        if rand::random::<u32>() % opt.random_reject == 0 {
+    if opt.random_reject > 0
+        && rand::random::<u32>().is_multiple_of(opt.random_reject) {
             info!("Randomly rejecting the call");
             dialog
                 .reject(Some(rsip::StatusCode::BusyHere), Some("Busy here".into()))
                 .ok();
             return Ok(());
         }
-    }
     let mut ts = 0;
     let mut seq = 1;
     let peer_addr = format!("{}:{}", peer_addr, peer_port);
@@ -591,10 +587,8 @@ async fn process_invite(opt: &MediaSessionOption, dialog: ServerInviteDialog) ->
                                 info!("User rejected the call");
                                 dialog.reject(Some(rsip::StatusCode::BusyHere), Some("Busy here".into())).ok();
                                 rejected = true;
-                                return;
                             } else {
                                 info!("Unknown command: {}", r);
-                                return;
                             }
                         }
                     );

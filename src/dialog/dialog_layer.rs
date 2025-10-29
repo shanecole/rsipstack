@@ -211,22 +211,18 @@ impl DialogLayer {
 
     pub fn get_dialog(&self, id: &DialogId) -> Option<Dialog> {
         match self.inner.dialogs.read() {
-            Ok(dialogs) => match dialogs.get(id) {
-                Some(dialog) => Some(dialog.clone()),
-                None => None,
-            },
+            Ok(dialogs) => dialogs.get(id).cloned(),
             Err(_) => None,
         }
     }
 
     pub fn remove_dialog(&self, id: &DialogId) {
         info!(%id, "remove dialog");
-        self.inner
+        if let Some(d) = self.inner
             .dialogs
             .write()
             .unwrap()
-            .remove(id)
-            .map(|d| d.on_remove());
+            .remove(id) { d.on_remove() }
     }
 
     pub fn match_dialog(&self, req: &Request) -> Option<Dialog> {

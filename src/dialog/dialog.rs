@@ -1,10 +1,11 @@
 use super::{
-    authenticate::{handle_client_authenticate, Credential},
+    DialogId,
+    authenticate::{Credential, handle_client_authenticate},
     client_dialog::ClientInviteDialog,
     server_dialog::ServerInviteDialog,
-    DialogId,
 };
 use crate::{
+    Result,
     rsip_ext::extract_uri_from_contact,
     transaction::{
         endpoint::EndpointInnerRef,
@@ -13,17 +14,16 @@ use crate::{
         transaction::{Transaction, TransactionEventSender},
     },
     transport::SipAddr,
-    Result,
 };
 use rsip::{
+    Header, Param, Request, Response, SipMessage, StatusCode,
     headers::Route,
     prelude::{HeadersExt, ToTypedHeader, UntypedHeader},
     typed::{CSeq, Contact, Via},
-    Header, Param, Request, Response, SipMessage, StatusCode,
 };
 use std::sync::{
-    atomic::{AtomicU32, Ordering},
     Arc, Mutex,
+    atomic::{AtomicU32, Ordering},
 };
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio_util::sync::CancellationToken;
@@ -42,7 +42,7 @@ use tracing::{debug, info, warn};
 /// * `WaitAck` - Server dialog waiting for ACK after sending 2xx response
 /// * `Confirmed` - Dialog is established and confirmed (2xx response received/sent and ACK sent/received)
 /// * `Updated` - Dialog received an UPDATE request
-/// * `Notify` - Dialog received a NOTIFY request  
+/// * `Notify` - Dialog received a NOTIFY request
 /// * `Info` - Dialog received an INFO request
 /// * `Options` - Dialog received an OPTIONS request
 /// * `Terminated` - Dialog has been terminated
@@ -116,7 +116,7 @@ pub enum TerminatedReason {
 ///         // Handle server dialog
 ///     },
 ///     Dialog::ClientInvite(client_dialog) => {
-///         // Handle client dialog  
+///         // Handle client dialog
 ///     }
 /// }
 /// # }
@@ -296,7 +296,7 @@ impl DialogInner {
             role,
             cancel_token: CancellationToken::new(),
             id: Mutex::new(id.clone()),
-            from: from,
+            from,
             to: Mutex::new(to),
             local_seq: AtomicU32::new(cseq),
             remote_uri: Mutex::new(remote_uri),
@@ -339,8 +339,8 @@ impl DialogInner {
     pub(super) fn build_vias_from_request(&self) -> Result<Vec<Via>> {
         let mut vias = vec![];
         for header in self.initial_request.headers.iter() {
-            if let Header::Via(via) = header {
-                if let Ok(mut typed_via) = via.typed() {
+            if let Header::Via(via) = header
+                && let Ok(mut typed_via) = via.typed() {
                     for param in typed_via.params.iter_mut() {
                         if let Param::Branch(_) = param {
                             *param = make_via_branch();
@@ -349,7 +349,6 @@ impl DialogInner {
                     vias.push(typed_via);
                     return Ok(vias);
                 }
-            }
         }
         let via = self.endpoint_inner.get_via(None, None)?;
         vias.push(via);
@@ -402,9 +401,8 @@ impl DialogInner {
             self.endpoint_inner.user_agent.clone().into(),
         ));
 
-        self.local_contact
-            .as_ref()
-            .map(|c| headers.push(Contact::from(c.clone()).into()));
+        if let Some(c) = self.local_contact
+            .as_ref() { headers.push(Contact::from(c.clone()).into()) }
 
         {
             let route_set = self.route_set.lock().unwrap();
@@ -501,9 +499,8 @@ impl DialogInner {
             )
         });
 
-        self.local_contact
-            .as_ref()
-            .map(|c| resp_headers.push(Contact::from(c.clone()).into()));
+        if let Some(c) = self.local_contact
+            .as_ref() { resp_headers.push(Contact::from(c.clone()).into()) }
 
         resp_headers.push(Header::ContentLength(
             body.as_ref().map_or(0u32, |b| b.len() as u32).into(),
@@ -526,11 +523,10 @@ impl DialogInner {
         let key = TransactionKey::from_request(&request, TransactionRole::Client)?;
         let mut tx = Transaction::new_client(key, request, self.endpoint_inner.clone(), None);
 
-        if let Some(route) = tx.original.route_header() {
-            if let Some(first_route) = route.typed().ok().and_then(|r| r.uris().first().cloned()) {
+        if let Some(route) = tx.original.route_header()
+            && let Some(first_route) = route.typed().ok().and_then(|r| r.uris().first().cloned()) {
                 tx.destination = SipAddr::try_from(&first_route.uri).ok();
             }
-        }
         match tx.send().await {
             Ok(_) => {
                 info!(
@@ -625,15 +621,12 @@ impl DialogInner {
             _ => {}
         }
         let mut old_state = self.state.lock().unwrap();
-        match (&*old_state, &state) {
-            (DialogState::Terminated(id, _), _) => {
-                warn!(
-                    %id,
-                    "dialog already terminated, ignoring transition to {}", state
-                );
-                return Ok(());
-            }
-            _ => {}
+        if let (DialogState::Terminated(id, _), _) = (&*old_state, &state) {
+            warn!(
+                %id,
+                "dialog already terminated, ignoring transition to {}", state
+            );
+            return Ok(());
         }
         debug!("transitioning state: {} -> {}", old_state, state);
         *old_state = state;
@@ -688,16 +681,14 @@ impl Dialog {
                 .lock()
                 .unwrap()
                 .as_ref()
-                .map(|c| extract_uri_from_contact(c.value()).ok())
-                .flatten(),
+                .and_then(|c| extract_uri_from_contact(c.value()).ok()),
             Dialog::ClientInvite(d) => d
                 .inner
                 .remote_contact
                 .lock()
                 .unwrap()
                 .as_ref()
-                .map(|c| extract_uri_from_contact(c.value()).ok())
-                .flatten(),
+                .and_then(|c| extract_uri_from_contact(c.value()).ok()),
         }
     }
 

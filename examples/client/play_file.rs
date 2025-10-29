@@ -134,7 +134,7 @@ pub async fn play_audio_file(
                 .ssrc(ssrc)
                 .sequence(seq.into())
                 .timestamp(ts)
-                .payload(&chunk)
+                .payload(chunk)
                 .build() {
                     Ok(r) => r,
                     Err(e) => {

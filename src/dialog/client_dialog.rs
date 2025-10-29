@@ -252,15 +252,11 @@ impl ClientInviteDialog {
             self.inner
                 .make_request(rsip::Method::Invite, None, None, None, headers, body)?;
         let resp = self.inner.do_request(request.clone()).await;
-        match resp {
-            Ok(Some(ref resp)) => {
-                if resp.status_code == StatusCode::OK {
-                    self.inner
-                        .transition(DialogState::Updated(self.id(), request))?;
-                }
+        if let Ok(Some(ref resp)) = resp
+            && resp.status_code == StatusCode::OK {
+                self.inner
+                    .transition(DialogState::Updated(self.id(), request))?;
             }
-            _ => {}
-        }
         resp
     }
 
@@ -488,10 +484,7 @@ impl ClientInviteDialog {
                             continue;
                         }
                         StatusCode::Ringing | StatusCode::SessionProgress => {
-                            match resp.to_header()?.tag() {
-                                Ok(Some(tag)) => self.inner.update_remote_tag(tag.value())?,
-                                _ => {}
-                            }
+                            if let Ok(Some(tag)) = resp.to_header()?.tag() { self.inner.update_remote_tag(tag.value())? }
                             self.inner.transition(DialogState::Early(self.id(), resp))?;
                             continue;
                         }
@@ -529,10 +522,7 @@ impl ClientInviteDialog {
                         _ => {}
                     };
                     final_response = Some(resp.clone());
-                    match resp.to_header()?.tag()? {
-                        Some(tag) => self.inner.update_remote_tag(tag.value())?,
-                        None => {}
-                    }
+                    if let Some(tag) = resp.to_header()?.tag()? { self.inner.update_remote_tag(tag.value())? }
 
                     if let Ok(id) = DialogId::try_from(&resp) {
                         dialog_id = id;

@@ -44,8 +44,7 @@ async fn test_server_transaction() {
             uri: rsip::Uri {
                 scheme: Some(rsip::Scheme::Sip),
                 host_with_port: rsip::HostWithPort::try_from(addr.addr.to_string())
-                    .expect("host_port parse")
-                    .into(),
+                    .expect("host_port parse"),
                 ..Default::default()
             },
             headers: vec![

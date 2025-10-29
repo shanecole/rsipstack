@@ -269,13 +269,12 @@ impl EndpointInner {
                 headers.iter_mut(),
                 Header::Via,
                 Error::missing_header("Via")
-            ) {
-                if let Ok(mut typed_via) = top_most_via.typed() {
+            )
+                && let Ok(mut typed_via) = top_most_via.typed() {
                     typed_via.params.clear();
                     typed_via.params.push(make_via_branch());
                     *top_most_via = typed_via.into();
                 }
-            }
         }
         // For non-2xx responses, keep the original Via branch (hop-by-hop within same transaction)
         // update route set from Record-Route header
@@ -310,7 +309,7 @@ impl EndpointInner {
         Ok(rsip::Request {
             method: rsip::Method::Ack,
             uri: request_uri,
-            headers: headers.into(),
+            headers,
             body: vec![],
             version: rsip::Version::V2,
         })

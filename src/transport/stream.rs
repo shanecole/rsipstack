@@ -91,16 +91,10 @@ impl Decoder for SipCodec {
                             .all(|(&a, &b)| a.to_ascii_lowercase() == b)
                     {
                         true
-                    } else if header.len() == CL_SHORT_NAME.len()
-                        && header
+                    } else { header.len() == CL_SHORT_NAME.len() && header
                             .iter()
                             .zip(CL_SHORT_NAME.iter())
-                            .all(|(&a, &b)| a.to_ascii_lowercase() == b)
-                    {
-                        true
-                    } else {
-                        false
-                    };
+                            .all(|(&a, &b)| a.to_ascii_lowercase() == b) };
 
                     if is_cl {
                         // parse value

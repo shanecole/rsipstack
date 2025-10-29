@@ -481,11 +481,10 @@ impl Transaction {
         if let SipMessage::Request(ref req) = ack {
             // Only update destination for 2xx responses - they use end-to-end ACK with Contact
             // For non-2xx, keep using the original INVITE destination (hop-by-hop ACK)
-            if let Some(ref resp) = self.last_response {
-                if resp.status_code.kind() == StatusCodeKind::Successful {
-                    self.destination = destination_from_request(&req);
+            if let Some(ref resp) = self.last_response
+                && resp.status_code.kind() == StatusCodeKind::Successful {
+                    self.destination = destination_from_request(req);
                 }
-            }
         }
 
         match ack.clone() {
@@ -783,8 +782,8 @@ impl Transaction {
             TransactionState::Completed => {
                 if let TransactionTimer::TimerG(key, duration) = timer {
                     // resend the response
-                    if let Some(last_response) = &self.last_response {
-                        if let Some(connection) = &self.connection {
+                    if let Some(last_response) = &self.last_response
+                        && let Some(connection) = &self.connection {
                             let last_response = if let Some(ref inspector) =
                                 self.endpoint_inner.message_inspector
                             {
@@ -800,7 +799,6 @@ impl Transaction {
                                 return Err(e);
                             }
                         }
-                    }
                     // restart Timer G with an upper limit
                     let duration = (duration * 2).min(self.endpoint_inner.option.t1x64);
                     let timer_g = self
@@ -902,17 +900,14 @@ impl Transaction {
                         self.timer_g.replace(timer_g);
                     }
                     info!(key=%self.key, last = self.last_response.is_none(), "entered confirmed state, waiting for ACK");
-                    match self.last_response {
-                        Some(ref resp) => {
-                            let dialog_id = DialogId::try_from(resp)?;
-                            self.endpoint_inner
-                                .waiting_ack
-                                .write()
-                                .as_mut()
-                                .map(|wa| wa.insert(dialog_id, self.key.clone()))
-                                .ok();
-                        }
-                        _ => {}
+                    if let Some(ref resp) = self.last_response {
+                        let dialog_id = DialogId::try_from(resp)?;
+                        self.endpoint_inner
+                            .waiting_ack
+                            .write()
+                            .as_mut()
+                            .map(|wa| wa.insert(dialog_id, self.key.clone()))
+                            .ok();
                     }
                     // start Timer K, wait for ACK
                     let timer_k = self.endpoint_inner.timers.timeout(
@@ -1002,19 +997,16 @@ impl Transaction {
                     if matches!(
                         self.state,
                         TransactionState::Proceeding | TransactionState::Trying
-                    ) {
-                        if self.last_ack.is_none() {
-                            if let Some(ref resp) = self.last_response {
-                                if let Ok(ack) = self.endpoint_inner.make_ack(
+                    )
+                        && self.last_ack.is_none()
+                            && let Some(ref resp) = self.last_response
+                                && let Ok(ack) = self.endpoint_inner.make_ack(
                                     resp,
                                     Some(&self.original.uri),
                                     self.destination.as_ref(),
                                 ) {
                                     self.last_ack.replace(ack);
                                 }
-                            }
-                        }
-                    }
                     self.last_ack.take().map(SipMessage::Request)
                 }
                 TransactionType::ServerNonInvite => {

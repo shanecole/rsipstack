@@ -84,7 +84,7 @@ async fn test_endpoint_recvrequests() {
             version: rsip::Version::V2,
             body: Default::default(),
         };
-        let buf: String = register_req.try_into().expect("try_into");
+        let buf: String = register_req.into();
         test_conn
             .send_raw(buf.as_bytes(), &addr)
             .await

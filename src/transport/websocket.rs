@@ -105,16 +105,14 @@ impl WebSocketListenerConnection {
                     // Accept the WebSocket connection with custom header handling
                     let callback = |req: &Request, mut response: Response| {
                         // Check if client requested 'sip' subprotocol
-                        if let Some(protocols) = req.headers().get("sec-websocket-protocol") {
-                            if let Ok(protocols_str) = protocols.to_str() {
-                                if protocols_str.contains("sip") {
+                        if let Some(protocols) = req.headers().get("sec-websocket-protocol")
+                            && let Ok(protocols_str) = protocols.to_str()
+                                && protocols_str.contains("sip") {
                                     // Add the 'sip' subprotocol to response
                                     response
                                         .headers_mut()
                                         .insert("sec-websocket-protocol", "sip".parse().unwrap());
                                 }
-                            }
-                        }
                         Ok(response)
                     };
 

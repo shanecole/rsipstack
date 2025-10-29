@@ -12,7 +12,7 @@ use tracing::info;
 #[tokio::test]
 async fn test_client_transaction() -> Result<()> {
     let endpoint = super::create_test_endpoint(Some("127.0.0.1:0")).await?;
-    let server_addr = endpoint.get_addrs().get(0).expect("must has connection").to_owned();
+    let server_addr = endpoint.get_addrs().first().expect("must has connection").to_owned();
     info!("server addr: {}", server_addr);
 
     let peer_server = UdpConnection::create_connection("127.0.0.1:0".parse()?, None, None).await?;
@@ -21,37 +21,34 @@ async fn test_client_transaction() -> Result<()> {
         select! {
             _ = async {
                 if let Some(event) = recevier.recv().await {
-                    match event {
-                        TransportEvent::Incoming(msg, connection, _) => {
-                            info!("recv request: {}", msg);
-                            assert!(msg.is_request());
-                            match msg {
-                                SipMessage::Request(req) => {
-                                    let headers = req.headers.clone();
-                                    let response = SipMessage::Response(rsip::message::Response {
-                                        version: rsip::Version::V2,
-                                        status_code:rsip::StatusCode::Trying,
-                                        headers: headers.clone(),
-                                        body: Default::default(),
-                                    });
-                                    connection.send(response, None).await.expect("send trying");
-                                    sleep(Duration::from_millis(100)).await;
+                    if let TransportEvent::Incoming(msg, connection, _) = event {
+                        info!("recv request: {}", msg);
+                        assert!(msg.is_request());
+                        match msg {
+                            SipMessage::Request(req) => {
+                                let headers = req.headers.clone();
+                                let response = SipMessage::Response(rsip::message::Response {
+                                    version: rsip::Version::V2,
+                                    status_code:rsip::StatusCode::Trying,
+                                    headers: headers.clone(),
+                                    body: Default::default(),
+                                });
+                                connection.send(response, None).await.expect("send trying");
+                                sleep(Duration::from_millis(100)).await;
 
-                                    let response = SipMessage::Response(rsip::message::Response {
-                                        version: rsip::Version::V2,
-                                        status_code:rsip::StatusCode::OK,
-                                        headers,
-                                        body: Default::default(),
-                                    });
-                                    connection.send(response, None).await.expect("send Ok");
-                                    sleep(Duration::from_secs(1)).await;
-                                }
-                                _ => {
-                                    panic!( "must not reach here");
-                                }
+                                let response = SipMessage::Response(rsip::message::Response {
+                                    version: rsip::Version::V2,
+                                    status_code:rsip::StatusCode::OK,
+                                    headers,
+                                    body: Default::default(),
+                                });
+                                connection.send(response, None).await.expect("send Ok");
+                                sleep(Duration::from_secs(1)).await;
+                            }
+                            _ => {
+                                panic!( "must not reach here");
                             }
                         }
-                        _ => {}
                     }
                 } else {
                     panic!( "must not reach here");
@@ -166,7 +163,7 @@ async fn test_client_invite_sends_ack_for_non_2xx() -> Result<()> {
     let _ = tracing_subscriber::fmt().with_max_level(tracing::Level::DEBUG).with_test_writer().try_init();
 
     let endpoint = super::create_test_endpoint(Some("127.0.0.1:0")).await?;
-    let server_addr = endpoint.get_addrs().get(0).expect("must have connection").to_owned();
+    let server_addr = endpoint.get_addrs().first().expect("must have connection").to_owned();
     info!("server addr: {}", server_addr);
 
     // Start endpoint serving to process incoming messages
@@ -191,32 +188,26 @@ async fn test_client_invite_sends_ack_for_non_2xx() -> Result<()> {
 
         loop {
             if let Ok(Some(event)) = timeout(Duration::from_secs(5), receiver.recv()).await {
-                match event {
-                    TransportEvent::Incoming(msg, connection, _) => {
-                        match msg {
-                            SipMessage::Request(req) => {
-                                info!("peer received request: {}", req.method);
-                                if req.method == rsip::Method::Invite {
-                                    received_invite = true;
-                                    // Send 486 Busy Here response
-                                    let response = rsip::Response {
-                                        status_code: rsip::StatusCode::BusyHere,
-                                        headers: req.headers.clone(),
-                                        version: rsip::Version::V2,
-                                        body: vec![],
-                                    };
-                                    info!("peer sending 486 Busy Here");
-                                    connection.send(response.into(), None).await.ok();
-                                } else if req.method == rsip::Method::Ack {
-                                    info!("peer received ACK - test success!");
-                                    received_ack = true;
-                                    break;
-                                }
-                            }
-                            _ => {}
+                if let TransportEvent::Incoming(msg, connection, _) = event {
+                    if let SipMessage::Request(req) = msg {
+                        info!("peer received request: {}", req.method);
+                        if req.method == rsip::Method::Invite {
+                            received_invite = true;
+                            // Send 486 Busy Here response
+                            let response = rsip::Response {
+                                status_code: rsip::StatusCode::BusyHere,
+                                headers: req.headers.clone(),
+                                version: rsip::Version::V2,
+                                body: vec![],
+                            };
+                            info!("peer sending 486 Busy Here");
+                            connection.send(response.into(), None).await.ok();
+                        } else if req.method == rsip::Method::Ack {
+                            info!("peer received ACK - test success!");
+                            received_ack = true;
+                            break;
                         }
                     }
-                    _ => {}
                 }
             } else {
                 break;
@@ -254,12 +245,11 @@ async fn test_client_invite_sends_ack_for_non_2xx() -> Result<()> {
         client_tx.send().await?;
 
         // Wait for response
-        if let Ok(Some(msg)) = timeout(Duration::from_secs(5), client_tx.receive()).await {
-            if let rsip::SipMessage::Response(resp) = msg {
+        if let Ok(Some(msg)) = timeout(Duration::from_secs(5), client_tx.receive()).await
+            && let rsip::SipMessage::Response(resp) = msg {
                 info!("client received response: {}", resp.status_code);
                 assert_eq!(resp.status_code, rsip::StatusCode::BusyHere);
             }
-        }
 
         // Give some time for ACK to be sent
         tokio::time::sleep(Duration::from_millis(100)).await;

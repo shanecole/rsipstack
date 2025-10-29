@@ -174,16 +174,13 @@ impl<'a> Drop for DialogGuardForUnconfirmed<'a> {
     fn drop(&mut self) {
         // If the dialog is still unconfirmed, we should try to cancel it
         match self.dialog_layer_inner.dialogs.write() {
-            Ok(mut dialogs) => match dialogs.remove(self.id) {
-                Some(dlg) => {
-                    info!(%self.id, "unconfirmed dialog dropped, cancelling it");
-                    let _ = tokio::spawn(async move {
-                        if let Err(e) = dlg.hangup().await {
-                            info!(id=%dlg.id(), "failed to hangup unconfirmed dialog: {}", e);
-                        }
-                    });
-                }
-                None => {}
+            Ok(mut dialogs) => if let Some(dlg) = dialogs.remove(self.id) {
+                info!(%self.id, "unconfirmed dialog dropped, cancelling it");
+                let _ = tokio::spawn(async move {
+                    if let Err(e) = dlg.hangup().await {
+                        info!(id=%dlg.id(), "failed to hangup unconfirmed dialog: {}", e);
+                    }
+                });
             },
             Err(e) => {
                 warn!(%self.id, "failed to acquire write lock on dialogs: {}", e);
@@ -424,10 +421,10 @@ impl DialogLayer {
                     .as_mut()
                     .map(|ds| ds.insert(new_dialog_id, Dialog::ClientInvite(dialog.clone())))
                     .ok();
-                return Ok((dialog, resp));
+                Ok((dialog, resp))
             }
             Err(e) => {
-                return Err(e);
+                Err(e)
             }
         }
     }
@@ -447,14 +444,11 @@ impl DialogLayer {
 
         if opt.destination.is_some() {
             tx.destination = opt.destination;
-        } else {
-            if let Some(route) = tx.original.route_header() {
-                if let Some(first_route) =
-                    route.typed().ok().and_then(|r| r.uris().first().cloned())
-                {
-                    tx.destination = SipAddr::try_from(&first_route.uri).ok();
-                }
-            }
+        } else if let Some(route) = tx.original.route_header()
+        && let Some(first_route) =
+            route.typed().ok().and_then(|r| r.uris().first().cloned())
+        {
+            tx.destination = SipAddr::try_from(&first_route.uri).ok();
         }
 
         let id = DialogId::try_from(&request)?;

@@ -31,6 +31,12 @@ pub struct Timer<T> {
     last_task_id: AtomicU64,
 }
 
+impl<T> Default for Timer<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<T> Timer<T> {
     pub fn new() -> Self {
         Timer {
@@ -121,7 +127,7 @@ impl<T> Timer<T> {
             }
             result.reserve(keys_to_remove.len());
             for key in keys_to_remove.iter() {
-                tasks.remove(key).map(|value| result.push(value));
+                if let Some(value) = tasks.remove(key) { result.push(value) }
             }
             keys_to_remove
         };

@@ -306,7 +306,7 @@ impl ServerInviteDialog {
         }
         info!(id=%self.id(), ?code, ?reason, "rejecting dialog");
         let headers = if let Some(reason) = reason {
-            Some(vec![rsip::Header::Other("Reason".into(), reason.into())])
+            Some(vec![rsip::Header::Other("Reason".into(), reason)])
         } else {
             None
         };
@@ -418,15 +418,11 @@ impl ServerInviteDialog {
             body,
         )?;
         let resp = self.inner.do_request(request.clone()).await;
-        match resp {
-            Ok(Some(ref resp)) => {
-                if resp.status_code == StatusCode::OK {
-                    self.inner
-                        .transition(DialogState::Updated(self.id(), request))?;
-                }
+        if let Ok(Some(ref resp)) = resp
+            && resp.status_code == StatusCode::OK {
+                self.inner
+                    .transition(DialogState::Updated(self.id(), request))?;
             }
-            _ => {}
-        }
         resp
     }
 
@@ -612,16 +608,11 @@ impl ServerInviteDialog {
                     ));
                 }
             }
-        } else {
-            match tx.original.method {
-                rsip::Method::Ack => {
-                    self.inner.tu_sender.send(TransactionEvent::Received(
-                        tx.original.clone().into(),
-                        tx.connection.clone(),
-                    ))?;
-                }
-                _ => {}
-            }
+        } else if tx.original.method == rsip::Method::Ack {
+            self.inner.tu_sender.send(TransactionEvent::Received(
+                tx.original.clone().into(),
+                tx.connection.clone(),
+            ))?;
         }
         self.handle_invite(tx).await
     }
@@ -660,14 +651,10 @@ impl ServerInviteDialog {
 
     async fn handle_invite(&mut self, tx: &mut Transaction) -> Result<()> {
         let handle_loop = async {
-            if !self.inner.is_confirmed() && matches!(tx.original.method, rsip::Method::Invite) {
-                match self.inner.transition(DialogState::Calling(self.id())) {
-                    Ok(_) => {
-                        tx.send_trying().await.ok();
-                    }
-                    Err(_) => {}
+            if !self.inner.is_confirmed() && matches!(tx.original.method, rsip::Method::Invite)
+                && let Ok(_) = self.inner.transition(DialogState::Calling(self.id())) {
+                    tx.send_trying().await.ok();
                 }
-            }
 
             while let Some(msg) = tx.receive().await {
                 match msg {
