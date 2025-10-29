@@ -55,9 +55,9 @@ mod tests {
         assert_eq!(contact_uri.to_string(), "sip:bob@restsend.com");
         let line = "<sip:linphone@domain.com;gr=urn:uuid:c8651907-f0b2-0027-bdbd-ce4ed05c9ef4>;+org.linphone.specs=\"ephemeral/1.1,groupchat/1.1,lime\"";
         let contact_uri = extract_uri_from_contact(line).expect("failed to parse contact");
-        // TODO: rsip nom8 parsing limitation - parameter values with colons are truncated
-        // Expected: "sip:linphone@domain.com;gr=urn:uuid:c8651907-f0b2-0027-bdbd-ce4ed05c9ef4"
-        // This needs to be fixed in rsip's URI parameter parsing
-        assert_eq!(contact_uri.to_string(), "sip:linphone@domain.com;gr=urn");
+        assert_eq!(
+            contact_uri.to_string(),
+            "sip:linphone@domain.com;gr=urn:uuid:c8651907-f0b2-0027-bdbd-ce4ed05c9ef4"
+        );
     }
 }
