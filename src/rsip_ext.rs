@@ -115,21 +115,24 @@ macro_rules! header_pop {
 }
 
 pub fn extract_uri_from_contact(line: &str) -> Result<rsip::Uri> {
-    if let Ok(uri) = rsip::headers::Contact::from(line).uri() {
-        return Ok(uri);
-    }
+    let mut uri = if let Ok(uri) = rsip::headers::Contact::from(line).uri() {
+        uri
+    } else {
+        let tokenizer = CustomContactTokenizer::from_str(line)?;
+        let mut uri = rsip::Uri::try_from(tokenizer.uri()).map_err(Error::from)?;
+        apply_tokenizer_params(&mut uri, &tokenizer);
+        uri
+    };
 
-    let tokenizer = CustomContactTokenizer::from_str(line)?;
-    let mut uri = rsip::Uri::try_from(tokenizer.uri()).map_err(Error::from)?;
-    uri.params.retain(|p| {
-        if let rsip::Param::Transport(rsip::Transport::Udp) = p {
-            false
-        } else {
-            true
-        }
+    // Filter out default transport parameters (UDP, TCP, TLS)
+    uri.params.retain(|p| match p {
+        rsip::Param::Transport(rsip::Transport::Udp) => false,
+        rsip::Param::Transport(rsip::Transport::Tcp) => false,
+        rsip::Param::Transport(rsip::Transport::Tls) => false,
+        _ => true,
     });
-    apply_tokenizer_params(&mut uri, &tokenizer);
-    return Ok(uri);
+
+    Ok(uri)
 }
 
 fn apply_tokenizer_params(uri: &mut rsip::Uri, tokenizer: &CustomContactTokenizer) {
