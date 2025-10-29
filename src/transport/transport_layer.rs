@@ -7,7 +7,11 @@ use crate::{transport::TransportEvent, Result};
 use async_trait::async_trait;
 
 #[cfg(feature = "rsip-dns")]
-use rsip_dns::trust_dns_resolver::TokioAsyncResolver;
+use rsip_dns::hickory_proto::runtime::TokioRuntimeProvider;
+#[cfg(feature = "rsip-dns")]
+use rsip_dns::hickory_resolver::config::{ResolverConfig, ResolverOpts};
+#[cfg(feature = "rsip-dns")]
+use rsip_dns::hickory_resolver::{name_server::GenericConnector, Resolver};
 #[cfg(feature = "rsip-dns")]
 use rsip_dns::ResolvableExt;
 
@@ -67,11 +71,16 @@ impl DefaultDomainResolver {
             params,
             ..Default::default()
         };
+        let provider = GenericConnector::new(TokioRuntimeProvider::default());
+        let resolver = Resolver::<GenericConnector<TokioRuntimeProvider>>::builder_with_config(
+            ResolverConfig::default(),
+            provider,
+        )
+        .with_options(ResolverOpts::default())
+        .build();
         let context = rsip_dns::Context::initialize_from(
             target_for_lookup,
-            rsip_dns::AsyncTrustDnsClient::new(
-                TokioAsyncResolver::tokio(Default::default(), Default::default()).unwrap(),
-            ),
+            rsip_dns::AsyncTrustDnsClient::new(resolver),
             rsip_dns::SupportedTransports::any(),
         )?;
 
@@ -402,7 +411,7 @@ mod tests {
         Result,
     };
     use rsip::{Host, Transport};
-    use rsip_dns::{trust_dns_resolver::TokioAsyncResolver, ResolvableExt};
+    use rsip_dns::{hickory_resolver::TokioResolver, ResolvableExt};
 
     #[tokio::test]
     async fn test_lookup() -> Result<()> {
@@ -479,11 +488,16 @@ mod tests {
         ];
         for item in check_list {
             let uri = rsip::uri::Uri::try_from(item.0)?;
+            let provider = GenericConnector::new(TokioRuntimeProvider::default());
+            let resolver = Resolver::<GenericConnector<TokioRuntimeProvider>>::builder_with_config(
+                ResolverConfig::default(),
+                provider,
+            )
+            .with_options(ResolverOpts::default())
+            .build();
             let context = rsip_dns::Context::initialize_from(
                 uri.clone(),
-                rsip_dns::AsyncTrustDnsClient::new(
-                    TokioAsyncResolver::tokio(Default::default(), Default::default()).unwrap(),
-                ),
+                rsip_dns::AsyncTrustDnsClient::new(resolver),
                 rsip_dns::SupportedTransports::any(),
             )?;
 
