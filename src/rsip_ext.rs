@@ -78,7 +78,7 @@ impl RsipResponseExt for rsip::Response {
                     contact_uri.host_with_port = dest.addr.clone();
                     dest.r#type
                         .as_ref()
-                        .map(|t| contact_uri.params.push(rsip::Param::Transport(t.clone())));
+                        .map(|t| contact_uri.params.push(rsip::Param::Transport(*t)));
                 }
                 break;
             }

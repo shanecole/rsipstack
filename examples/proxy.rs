@@ -127,7 +127,7 @@ async fn main() -> Result<()> {
 
     let connection = UdpConnection::create_connection(
         format!("{}:{}", addr, args.port).parse()?,
-        external.clone(),
+        external,
         None,
     )
     .await?;

@@ -190,7 +190,7 @@ async fn main() -> rsipstack::Result<()> {
     let addr = get_first_non_loopback_interface().expect("get first non loopback interface");
     let connection = UdpConnection::create_connection(
         format!("{}:{}", addr, args.port).parse()?,
-        external.clone(),
+        external,
         Some(token.child_token()),
     )
     .await?;

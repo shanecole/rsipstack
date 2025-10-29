@@ -373,7 +373,7 @@ impl SipConnection {
                         }
                     }
                     Param::Transport(t) => {
-                        transport = t.clone();
+                        transport = *t;
                     }
                     Param::Other(key, Some(value)) if key.value().eq_ignore_ascii_case("rport") => {
                         if let Ok(port) = value.value().try_into() {
