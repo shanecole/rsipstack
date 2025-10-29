@@ -102,10 +102,10 @@ async fn test_server_transaction() {
         }
         _ = endpoint.serve()=> {}
         _ = incoming_loop => {
-            assert!(false, "must not reach here");
+            panic!( "must not reach here");
         }
         _ = sleep(Duration::from_secs(1)) => {
-            assert!(false, "timeout waiting");
+            panic!( "timeout waiting");
         }
     }
 }

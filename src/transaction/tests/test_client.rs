@@ -47,18 +47,18 @@ async fn test_client_transaction() -> Result<()> {
                                     sleep(Duration::from_secs(1)).await;
                                 }
                                 _ => {
-                                    assert!(false, "must not reach here");
+                                    panic!( "must not reach here");
                                 }
                             }
                         }
                         _ => {}
                     }
                 } else {
-                    assert!(false, "must not reach here");
+                    panic!( "must not reach here");
                 }
             } => {}
             _ = peer_server.serve_loop(sender) => {
-                assert!(false, "must not reach here");
+                panic!( "must not reach here");
             }
         }
     };
@@ -94,13 +94,13 @@ async fn test_client_transaction() -> Result<()> {
     select! {
         _ = recv_loop => {}
         _ = peer_server_loop => {
-            assert!(false, "must not reach here");
+            panic!( "must not reach here");
         }
         _ = endpoint.serve() => {
-            assert!(false, "must not reach here");
+            panic!( "must not reach here");
         }
         _ = sleep(Duration::from_secs(1)) => {
-            assert!(false, "timeout waiting");
+            panic!( "timeout waiting");
         }
     }
     Ok(())
