@@ -1,8 +1,8 @@
 use super::DialogId;
+use crate::Result;
 use crate::transaction::key::{TransactionKey, TransactionRole};
 use crate::transaction::transaction::Transaction;
-use crate::transaction::{make_via_branch, random_text, CNONCE_LEN};
-use crate::Result;
+use crate::transaction::{CNONCE_LEN, make_via_branch, random_text};
 use rsip::headers::auth::{AuthQop, Qop};
 use rsip::prelude::{HasHeaders, HeadersExt, ToTypedHeader};
 use rsip::services::DigestGenerator;
@@ -195,11 +195,11 @@ pub async fn handle_client_authenticate(
         None => {
             let code = resp.status_code.clone();
             let proxy_header = rsip::header_opt!(resp.headers().iter(), Header::ProxyAuthenticate);
-            let proxy_header = proxy_header.ok_or(crate::Error::DialogError(
+            let proxy_header = proxy_header.ok_or(crate::Error::DialogError(Box::new((
                 "missing proxy/www authenticate".to_string(),
                 DialogId::try_from(&tx.original)?,
                 code,
-            ))?;
+            ))))?;
             Header::ProxyAuthenticate(proxy_header.clone())
         }
     };

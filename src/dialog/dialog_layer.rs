@@ -1,11 +1,11 @@
 use super::authenticate::Credential;
 use super::dialog::DialogStateSender;
-use super::{dialog::Dialog, server_dialog::ServerInviteDialog, DialogId};
+use super::{DialogId, dialog::Dialog, server_dialog::ServerInviteDialog};
+use crate::Result;
 use crate::dialog::dialog::{DialogInner, DialogStateReceiver};
 use crate::transaction::key::TransactionRole;
 use crate::transaction::make_tag;
 use crate::transaction::{endpoint::EndpointInnerRef, transaction::Transaction};
-use crate::Result;
 use rsip::Request;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::{
@@ -157,11 +157,11 @@ impl DialogLayer {
             match dlg {
                 Some(Dialog::ServerInvite(dlg)) => return Ok(dlg),
                 _ => {
-                    return Err(crate::Error::DialogError(
+                    return Err(crate::Error::DialogError(Box::new((
                         "the dialog not found".to_string(),
                         id,
                         rsip::StatusCode::CallTransactionDoesNotExist,
-                    ));
+                    ))));
                 }
             }
         }
@@ -218,11 +218,9 @@ impl DialogLayer {
 
     pub fn remove_dialog(&self, id: &DialogId) {
         info!(%id, "remove dialog");
-        if let Some(d) = self.inner
-            .dialogs
-            .write()
-            .unwrap()
-            .remove(id) { d.on_remove() }
+        if let Some(d) = self.inner.dialogs.write().unwrap().remove(id) {
+            d.on_remove()
+        }
     }
 
     pub fn match_dialog(&self, req: &Request) -> Option<Dialog> {

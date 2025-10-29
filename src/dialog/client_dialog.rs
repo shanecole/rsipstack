@@ -1,14 +1,14 @@
-use super::dialog::DialogInnerRef;
 use super::DialogId;
+use super::dialog::DialogInnerRef;
+use crate::Result;
 use crate::dialog::{
     authenticate::handle_client_authenticate,
     dialog::{DialogState, TerminatedReason},
 };
 use crate::rsip_ext::RsipResponseExt;
 use crate::transaction::transaction::Transaction;
-use crate::Result;
 use rsip::prelude::HasHeaders;
-use rsip::{prelude::HeadersExt, Header};
+use rsip::{Header, prelude::HeadersExt};
 use rsip::{Response, SipMessage, StatusCode};
 use std::sync::atomic::Ordering;
 use tokio_util::sync::CancellationToken;
@@ -253,10 +253,11 @@ impl ClientInviteDialog {
                 .make_request(rsip::Method::Invite, None, None, None, headers, body)?;
         let resp = self.inner.do_request(request.clone()).await;
         if let Ok(Some(ref resp)) = resp
-            && resp.status_code == StatusCode::OK {
-                self.inner
-                    .transition(DialogState::Updated(self.id(), request))?;
-            }
+            && resp.status_code == StatusCode::OK
+        {
+            self.inner
+                .transition(DialogState::Updated(self.id(), request))?;
+        }
         resp
     }
 
@@ -417,11 +418,11 @@ impl ClientInviteDialog {
                 _ => {
                     info!(id=%self.id(), "invalid request method: {:?}", tx.original.method);
                     tx.reply(rsip::StatusCode::MethodNotAllowed).await?;
-                    return Err(crate::Error::DialogError(
+                    return Err(crate::Error::DialogError(Box::new((
                         "invalid request".to_string(),
                         self.id(),
                         rsip::StatusCode::MethodNotAllowed,
-                    ));
+                    ))));
                 }
             }
         } else {
@@ -484,7 +485,9 @@ impl ClientInviteDialog {
                             continue;
                         }
                         StatusCode::Ringing | StatusCode::SessionProgress => {
-                            if let Ok(Some(tag)) = resp.to_header()?.tag() { self.inner.update_remote_tag(tag.value())? }
+                            if let Ok(Some(tag)) = resp.to_header()?.tag() {
+                                self.inner.update_remote_tag(tag.value())?
+                            }
                             self.inner.transition(DialogState::Early(self.id(), resp))?;
                             continue;
                         }
@@ -522,7 +525,9 @@ impl ClientInviteDialog {
                         _ => {}
                     };
                     final_response = Some(resp.clone());
-                    if let Some(tag) = resp.to_header()?.tag()? { self.inner.update_remote_tag(tag.value())? }
+                    if let Some(tag) = resp.to_header()?.tag()? {
+                        self.inner.update_remote_tag(tag.value())?
+                    }
 
                     if let Ok(id) = DialogId::try_from(&resp) {
                         dialog_id = id;
