@@ -5,18 +5,18 @@ use super::{
     dialog_layer::DialogLayer,
 };
 use crate::{
-    dialog::{dialog::Dialog, dialog_layer::DialogLayerInnerRef, DialogId},
+    Result,
+    dialog::{DialogId, dialog::Dialog, dialog_layer::DialogLayerInnerRef},
     transaction::{
         key::{TransactionKey, TransactionRole},
         make_tag,
         transaction::Transaction,
     },
     transport::SipAddr,
-    Result,
 };
 use rsip::{
-    prelude::{HeadersExt, ToTypedHeader},
     Request, Response,
+    prelude::{HeadersExt, ToTypedHeader},
 };
 use std::sync::Arc;
 use tracing::{debug, info, warn};
@@ -157,7 +157,7 @@ impl Drop for DialogGuard {
             },
             _ => return,
         };
-        let _ = tokio::spawn(async move {
+        tokio::spawn(async move {
             if let Err(e) = dlg.hangup().await {
                 info!(id=%dlg.id(), "failed to hangup dialog: {}", e);
             }
@@ -174,14 +174,16 @@ impl<'a> Drop for DialogGuardForUnconfirmed<'a> {
     fn drop(&mut self) {
         // If the dialog is still unconfirmed, we should try to cancel it
         match self.dialog_layer_inner.dialogs.write() {
-            Ok(mut dialogs) => if let Some(dlg) = dialogs.remove(self.id) {
-                info!(%self.id, "unconfirmed dialog dropped, cancelling it");
-                let _ = tokio::spawn(async move {
-                    if let Err(e) = dlg.hangup().await {
-                        info!(id=%dlg.id(), "failed to hangup unconfirmed dialog: {}", e);
-                    }
-                });
-            },
+            Ok(mut dialogs) => {
+                if let Some(dlg) = dialogs.remove(self.id) {
+                    info!(%self.id, "unconfirmed dialog dropped, cancelling it");
+                    tokio::spawn(async move {
+                        if let Err(e) = dlg.hangup().await {
+                            info!(id=%dlg.id(), "failed to hangup unconfirmed dialog: {}", e);
+                        }
+                    });
+                }
+            }
             Err(e) => {
                 warn!(%self.id, "failed to acquire write lock on dialogs: {}", e);
             }
@@ -423,9 +425,7 @@ impl DialogLayer {
                     .ok();
                 Ok((dialog, resp))
             }
-            Err(e) => {
-                Err(e)
-            }
+            Err(e) => Err(e),
         }
     }
 
@@ -445,8 +445,7 @@ impl DialogLayer {
         if opt.destination.is_some() {
             tx.destination = opt.destination;
         } else if let Some(route) = tx.original.route_header()
-        && let Some(first_route) =
-            route.typed().ok().and_then(|r| r.uris().first().cloned())
+            && let Some(first_route) = route.typed().ok().and_then(|r| r.uris().first().cloned())
         {
             tx.destination = SipAddr::try_from(&first_route.uri).ok();
         }

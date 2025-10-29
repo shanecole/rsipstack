@@ -31,7 +31,7 @@ async fn test_endpoint_serve() {
         } => {
         }
         _ = async {
-            if let Some(_) = incoming.recv().await {
+            if (incoming.recv().await).is_some() {
                 // Handle transaction
             }
         } => {

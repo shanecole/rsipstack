@@ -315,10 +315,8 @@ impl SipConnection {
         typed_via.params.retain(|param| {
             if let Param::Other(key, _) = param {
                 !key.value().eq_ignore_ascii_case("rport")
-            } else if matches!(param, Param::Received(_)) {
-                false
             } else {
-                true
+                !matches!(param, Param::Received(_))
             }
         });
 
