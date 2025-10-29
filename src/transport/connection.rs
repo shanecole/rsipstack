@@ -54,7 +54,7 @@ use tracing::debug;
 /// ```
 #[derive(Debug)]
 pub enum TransportEvent {
-    Incoming(SipMessage, SipConnection, SipAddr),
+    Incoming(Box<SipMessage>, SipConnection, SipAddr),
     New(SipConnection),
     Closed(SipConnection),
 }

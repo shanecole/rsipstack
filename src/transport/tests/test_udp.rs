@@ -1,10 +1,10 @@
 use crate::{
+    Result,
     transport::{
+        TransportEvent,
         connection::{KEEPALIVE_REQUEST, KEEPALIVE_RESPONSE},
         udp::UdpConnection,
-        TransportEvent,
     },
-    Result,
 };
 use std::time::Duration;
 use tokio::{select, sync::mpsc::unbounded_channel, time::sleep};
@@ -17,7 +17,7 @@ async fn test_udp_keepalive() -> Result<()> {
 
     let bob_loop = async {
         sleep(Duration::from_millis(20)).await; // wait for serve_loop to start
-                                                // send keep alive
+        // send keep alive
         peer_bob
             .send_raw(KEEPALIVE_REQUEST, peer_alice.get_addr())
             .await
@@ -75,7 +75,7 @@ async fn test_udp_recv_sip_message() -> Result<()> {
                     assert_eq!(connection.get_addr(), peer_bob.get_addr());
                 }
                 _ => {
-                    panic!( "unexpected event");
+                    panic!("unexpected event");
                 }
             }
         }

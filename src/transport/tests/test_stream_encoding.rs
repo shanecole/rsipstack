@@ -4,8 +4,8 @@ use crate::transport::{
 };
 use bytes::BytesMut;
 use rsip::{
-    prelude::{HeadersExt, UntypedHeader},
     SipMessage,
+    prelude::{HeadersExt, UntypedHeader},
 };
 use tokio_util::codec::{Decoder, Encoder};
 
@@ -31,11 +31,15 @@ fn test_sip_codec_single_message() {
     assert!(result.is_some(), "Should decode a message");
 
     let msg = result.unwrap();
-    match msg {
-        crate::transport::stream::SipCodecType::Message(SipMessage::Request(req)) => {
-            assert_eq!(req.method, rsip::Method::Register);
+    match &msg {
+        crate::transport::stream::SipCodecType::Message(boxed_msg) => {
+            if let SipMessage::Request(req) = &**boxed_msg {
+                assert_eq!(req.method, rsip::Method::Register);
+            } else {
+                panic!("Expected request message");
+            }
         }
-        _ => panic!("Expected request message"),
+        _ => panic!("Expected message type"),
     }
 
     // Buffer should be empty after consuming the message
@@ -83,11 +87,15 @@ fn test_sip_codec_fragmented_message() {
     assert!(result.is_some(), "Should decode complete message");
 
     let msg = result.unwrap();
-    match msg {
-        crate::transport::stream::SipCodecType::Message(SipMessage::Request(req)) => {
-            assert_eq!(req.method, rsip::Method::Register);
+    match &msg {
+        crate::transport::stream::SipCodecType::Message(boxed_msg) => {
+            if let SipMessage::Request(req) = &**boxed_msg {
+                assert_eq!(req.method, rsip::Method::Register);
+            } else {
+                panic!("Expected request message");
+            }
         }
-        _ => panic!("Expected request message"),
+        _ => panic!("Expected message type"),
     }
 }
 
@@ -128,11 +136,15 @@ fn test_sip_codec_multiple_messages() {
     assert!(result1.is_some(), "Should decode first message");
 
     let msg1 = result1.unwrap();
-    match msg1 {
-        crate::transport::stream::SipCodecType::Message(SipMessage::Request(req)) => {
-            assert_eq!(req.call_id_header().unwrap().value(), "test-call-id-1");
+    match &msg1 {
+        crate::transport::stream::SipCodecType::Message(boxed_msg) => {
+            if let SipMessage::Request(req) = &**boxed_msg {
+                assert_eq!(req.call_id_header().unwrap().value(), "test-call-id-1");
+            } else {
+                panic!("Expected request message");
+            }
         }
-        _ => panic!("Expected request message"),
+        _ => panic!("Expected message type"),
     }
 
     // Second decode
@@ -142,11 +154,15 @@ fn test_sip_codec_multiple_messages() {
     assert!(result2.is_some(), "Should decode second message");
 
     let msg2 = result2.unwrap();
-    match msg2 {
-        crate::transport::stream::SipCodecType::Message(SipMessage::Request(req)) => {
-            assert_eq!(req.call_id_header().unwrap().value(), "test-call-id-2");
+    match &msg2 {
+        crate::transport::stream::SipCodecType::Message(boxed_msg) => {
+            if let SipMessage::Request(req) = &**boxed_msg {
+                assert_eq!(req.call_id_header().unwrap().value(), "test-call-id-2");
+            } else {
+                panic!("Expected request message");
+            }
         }
-        _ => panic!("Expected request message"),
+        _ => panic!("Expected message type"),
     }
 
     // Buffer should be empty after consuming both messages
@@ -300,11 +316,15 @@ fn test_sip_codec_multiple_messages_with_bodies() {
     assert!(result1.is_some(), "Should decode first message");
 
     let msg1 = result1.unwrap();
-    match msg1 {
-        crate::transport::stream::SipCodecType::Message(SipMessage::Request(req)) => {
-            assert_eq!(req.call_id_header().unwrap().value(), "test-call-id-1");
+    match &msg1 {
+        crate::transport::stream::SipCodecType::Message(boxed_msg) => {
+            if let SipMessage::Request(req) = &**boxed_msg {
+                assert_eq!(req.call_id_header().unwrap().value(), "test-call-id-1");
+            } else {
+                panic!("Expected request message");
+            }
         }
-        _ => panic!("Expected request message"),
+        _ => panic!("Expected message type"),
     }
 
     // Second decode
@@ -314,11 +334,15 @@ fn test_sip_codec_multiple_messages_with_bodies() {
     assert!(result2.is_some(), "Should decode second message");
 
     let msg2 = result2.unwrap();
-    match msg2 {
-        crate::transport::stream::SipCodecType::Message(SipMessage::Request(req)) => {
-            assert_eq!(req.call_id_header().unwrap().value(), "test-call-id-2");
+    match &msg2 {
+        crate::transport::stream::SipCodecType::Message(boxed_msg) => {
+            if let SipMessage::Request(req) = &**boxed_msg {
+                assert_eq!(req.call_id_header().unwrap().value(), "test-call-id-2");
+            } else {
+                panic!("Expected request message");
+            }
         }
-        _ => panic!("Expected request message"),
+        _ => panic!("Expected message type"),
     }
 
     // Buffer should be empty after consuming both messages

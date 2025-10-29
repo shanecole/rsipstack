@@ -34,7 +34,7 @@ impl Default for SipCodec {
 
 #[derive(Debug, Clone)]
 pub enum SipCodecType {
-    Message(SipMessage),
+    Message(Box<SipMessage>),
     KeepaliveRequest,
     KeepaliveResponse,
 }
@@ -121,7 +121,7 @@ impl Decoder for SipCodec {
             if src.len() >= total_len {
                 let msg_data = src.split_to(total_len); // consume full message
                 let msg = SipMessage::try_from(&msg_data[..])?;
-                return Ok(Some(SipCodecType::Message(msg)));
+                return Ok(Some(SipCodecType::Message(Box::new(msg))));
             }
         }
 
@@ -210,13 +210,13 @@ where
                                 debug!("Received message from {}: {}", remote_addr, sip_msg);
                                 let remote_socket_addr = remote_addr.get_socketaddr()?;
                                 let sip_msg = SipConnection::update_msg_received(
-                                    sip_msg,
+                                    *sip_msg,
                                     remote_socket_addr,
                                     remote_addr.r#type.unwrap_or_default(),
                                 )?;
 
                                 if let Err(e) = sender.send(TransportEvent::Incoming(
-                                    sip_msg,
+                                    Box::new(sip_msg),
                                     connection.clone(),
                                     remote_addr.clone(),
                                 )) {

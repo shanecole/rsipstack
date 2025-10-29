@@ -28,7 +28,7 @@ async fn test_client_transaction() -> Result<()> {
                     if let TransportEvent::Incoming(msg, connection, _) = event {
                         info!("recv request: {}", msg);
                         assert!(msg.is_request());
-                        match msg {
+                        match *msg {
                             SipMessage::Request(req) => {
                                 let headers = req.headers.clone();
                                 let response = SipMessage::Response(rsip::message::Response {
@@ -203,7 +203,7 @@ async fn test_client_invite_sends_ack_for_non_2xx() -> Result<()> {
 
         while let Ok(Some(event)) = timeout(Duration::from_secs(5), receiver.recv()).await {
             if let TransportEvent::Incoming(msg, connection, _) = event
-                && let SipMessage::Request(req) = msg
+                && let SipMessage::Request(req) = *msg
             {
                 info!("peer received request: {}", req.method);
                 if req.method == rsip::Method::Invite {

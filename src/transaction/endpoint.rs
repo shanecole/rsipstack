@@ -272,7 +272,7 @@ impl EndpointInner {
 
             match event {
                 TransportEvent::Incoming(msg, connection, from) => {
-                    match self.on_received_message(msg, connection).await {
+                    match self.on_received_message(*msg, connection).await {
                         Ok(()) => {}
                         Err(e) => {
                             warn!(addr=%from,"on_received_message error: {}", e);
@@ -310,14 +310,17 @@ impl EndpointInner {
                 }
 
                 if let Ok(transactions_guard) = self.transactions.read().as_ref()
-                    && let Some(tu) = transactions_guard.get(t.key()) {
-                        match tu.send(TransactionEvent::Timer(t)) {
-                            Ok(_) => {}
-                            Err(error::SendError(t)) => if let TransactionEvent::Timer(t) = t {
+                    && let Some(tu) = transactions_guard.get(t.key())
+                {
+                    match tu.send(TransactionEvent::Timer(t)) {
+                        Ok(_) => {}
+                        Err(error::SendError(t)) => {
+                            if let TransactionEvent::Timer(t) = t {
                                 self.detach_transaction(t.key(), None);
-                            },
+                            }
                         }
                     }
+                }
             }
             ticker.tick().await;
         }
@@ -339,7 +342,9 @@ impl EndpointInner {
         };
         match &msg {
             SipMessage::Request(req) => {
-                if req.method() == &rsip::Method::Ack && let Ok(dialog_id) = DialogId::try_from(req) {
+                if req.method() == &rsip::Method::Ack
+                    && let Ok(dialog_id) = DialogId::try_from(req)
+                {
                     let tx_key = self
                         .waiting_ack
                         .read()
@@ -373,23 +378,24 @@ impl EndpointInner {
 
                 if let Some(mut last_message) = last_message {
                     if let SipMessage::Request(ref mut last_req) = last_message
-                        && last_req.method() == &rsip::Method::Ack {
-                            match resp.status_code.kind() {
-                                rsip::StatusCodeKind::Provisional => {
+                        && last_req.method() == &rsip::Method::Ack
+                    {
+                        match resp.status_code.kind() {
+                            rsip::StatusCodeKind::Provisional => {
+                                return Ok(());
+                            }
+                            rsip::StatusCodeKind::Successful => {
+                                if last_req.to_header()?.tag().ok().is_none() {
+                                    // don't ack 2xx response when ack is placeholder
                                     return Ok(());
                                 }
-                                rsip::StatusCodeKind::Successful => {
-                                    if last_req.to_header()?.tag().ok().is_none() {
-                                        // don't ack 2xx response when ack is placeholder
-                                        return Ok(());
-                                    }
-                                }
-                                _ => {}
                             }
-                            if let Ok(Some(tag)) = resp.to_header()?.tag() {
-                                last_req.to_header_mut().and_then(|h| h.mut_tag(tag)).ok();
-                            }
+                            _ => {}
                         }
+                        if let Ok(Some(tag)) = resp.to_header()?.tag() {
+                            last_req.to_header_mut().and_then(|h| h.mut_tag(tag)).ok();
+                        }
+                    }
                     connection.send(last_message, None).await?;
                     return Ok(());
                 }

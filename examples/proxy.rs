@@ -363,13 +363,13 @@ async fn handle_register(state: AppState, mut tx: Transaction) -> Result<()> {
     };
     if let Some(expires) = tx.original.expires_header()
         && let Ok(v) = expires.value().parse::<u32>()
-            && v == 0
-        {
-            // remove user
-            info!("unregistered user: {} -> {}", user.username, contact);
-            state.inner.users.lock().await.remove(&user.username);
-            return tx.reply(rsip::StatusCode::OK).await;
-        }
+        && v == 0
+    {
+        // remove user
+        info!("unregistered user: {} -> {}", user.username, contact);
+        state.inner.users.lock().await.remove(&user.username);
+        return tx.reply(rsip::StatusCode::OK).await;
+    }
 
     info!("Registered user: {} -> {}", user.username, user.destination);
     state
@@ -651,7 +651,7 @@ async fn handle_websocket(client_addr: ClientAddr, socket: WebSocket, _state: Ap
                                 }
                             };
                             if let Err(e) = from_ws_tx.send(TransportEvent::Incoming(
-                                msg,
+                                Box::new(msg),
                                 sip_connection.clone(),
                                 local_addr.clone(),
                             )) {
@@ -670,7 +670,7 @@ async fn handle_websocket(client_addr: ClientAddr, socket: WebSocket, _state: Ap
                                 sip_msg.to_string().lines().next().unwrap_or("")
                             );
                             if let Err(e) = from_ws_tx.send(TransportEvent::Incoming(
-                                sip_msg,
+                                Box::new(sip_msg),
                                 sip_connection.clone(),
                                 local_addr.clone(),
                             )) {
@@ -711,7 +711,7 @@ async fn handle_websocket(client_addr: ClientAddr, socket: WebSocket, _state: Ap
             event = to_ws_rx.recv() => {
                 match event {
                     Some(TransportEvent::Incoming(sip_msg, _, _)) => {
-                        let message_text = sip_msg.to_string();
+                        let message_text = (*sip_msg).to_string();
                         info!(
                             "Forwarding message to WebSocket: {}",
                             message_text.lines().next().unwrap_or("")
@@ -954,7 +954,7 @@ mod tests {
         // Send test message to transport
         to_transport_tx
             .send(TransportEvent::Incoming(
-                test_message,
+                Box::new(test_message),
                 sip_connection.clone(),
                 local_addr.clone(),
             ))
@@ -979,7 +979,7 @@ mod tests {
             match event {
                 TransportEvent::Incoming(msg, _conn, addr) => {
                     assert_eq!(addr, local_addr);
-                    if let rsip::SipMessage::Request(req) = msg {
+                    if let rsip::SipMessage::Request(req) = *msg {
                         assert_eq!(req.method, rsip::Method::Register);
                     } else {
                         panic!("Expected request message");
