@@ -50,7 +50,7 @@ use tracing::{debug, info, warn};
 /// # Examples
 ///
 /// ```rust,no_run
-/// use rsipstack::dialog::dialog_state::DialogState;
+/// use rsipstack::dialog::dialog::DialogState;
 /// use rsipstack::dialog::DialogId;
 ///
 /// # fn example() {
@@ -108,7 +108,7 @@ pub enum TerminatedReason {
 /// # Examples
 ///
 /// ```rust,no_run
-/// use rsipstack::dialog::dialog_state::Dialog;
+/// use rsipstack::dialog::dialog::Dialog;
 ///
 /// # fn handle_dialog(dialog: Dialog) {
 /// match dialog {
@@ -258,7 +258,7 @@ impl DialogState {
     }
 }
 
-    #[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)]
 impl DialogInner {
     pub fn new(
         role: TransactionRole,
@@ -341,15 +341,16 @@ impl DialogInner {
         let mut vias = vec![];
         for header in self.initial_request.headers.iter() {
             if let Header::Via(via) = header
-                && let Ok(mut typed_via) = via.typed() {
-                    for param in typed_via.params.iter_mut() {
-                        if let Param::Branch(_) = param {
-                            *param = make_via_branch();
-                        }
+                && let Ok(mut typed_via) = via.typed()
+            {
+                for param in typed_via.params.iter_mut() {
+                    if let Param::Branch(_) = param {
+                        *param = make_via_branch();
                     }
-                    vias.push(typed_via);
-                    return Ok(vias);
                 }
+                vias.push(typed_via);
+                return Ok(vias);
+            }
         }
         let via = self.endpoint_inner.get_via(None, None)?;
         vias.push(via);
@@ -402,8 +403,9 @@ impl DialogInner {
             self.endpoint_inner.user_agent.clone().into(),
         ));
 
-        if let Some(c) = self.local_contact
-            .as_ref() { headers.push(Contact::from(c.clone()).into()) }
+        if let Some(c) = self.local_contact.as_ref() {
+            headers.push(Contact::from(c.clone()).into())
+        }
 
         {
             let route_set = self.route_set.lock().unwrap();
@@ -500,8 +502,9 @@ impl DialogInner {
             )
         });
 
-        if let Some(c) = self.local_contact
-            .as_ref() { resp_headers.push(Contact::from(c.clone()).into()) }
+        if let Some(c) = self.local_contact.as_ref() {
+            resp_headers.push(Contact::from(c.clone()).into())
+        }
 
         resp_headers.push(Header::ContentLength(
             body.as_ref().map_or(0u32, |b| b.len() as u32).into(),
@@ -525,9 +528,10 @@ impl DialogInner {
         let mut tx = Transaction::new_client(key, request, self.endpoint_inner.clone(), None);
 
         if let Some(route) = tx.original.route_header()
-            && let Some(first_route) = route.typed().ok().and_then(|r| r.uris().first().cloned()) {
-                tx.destination = SipAddr::try_from(&first_route.uri).ok();
-            }
+            && let Some(first_route) = route.typed().ok().and_then(|r| r.uris().first().cloned())
+        {
+            tx.destination = SipAddr::try_from(&first_route.uri).ok();
+        }
         match tx.send().await {
             Ok(_) => {
                 info!(

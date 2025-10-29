@@ -138,7 +138,8 @@
 //!         Error::TransactionError(msg, key) => {
 //!             eprintln!("Transaction error {msg}: {key}");
 //!         },
-//!         Error::DialogError(msg, id, code) => {
+//!         Error::DialogError(boxed) => {
+//!             let (msg, id, code) = &*boxed;
 //!             eprintln!("Dialog error {msg}: {id} (Status code: {code})");
 //!         },
 //!         _ => eprintln!("Other error: {}", error),
