@@ -30,14 +30,14 @@ fn create_invite_request(from_tag: &str, to_tag: &str, call_id: &str, branch: &s
         method: rsip::Method::Invite,
         uri: rsip::Uri::try_from("sip:bob@example.com:5060").unwrap(),
         headers: vec![
-            Via::new(&format!(
+            Via::new( format!(
                 "SIP/2.0/UDP alice.example.com:5060;branch={}",
                 branch
             ))
             .into(),
             CSeq::new("1 INVITE").into(),
-            From::new(&format!("Alice <sip:alice@example.com>;tag={}", from_tag)).into(),
-            To::new(&format!("Bob <sip:bob@example.com>;tag={}", to_tag)).into(),
+            From::new( format!("Alice <sip:alice@example.com>;tag={}", from_tag)).into(),
+            To::new( format!("Bob <sip:bob@example.com>;tag={}", to_tag)).into(),
             CallId::new(call_id).into(),
             Contact::new("<sip:alice@alice.example.com:5060>").into(),
             MaxForwards::new("70").into(),
@@ -197,12 +197,12 @@ async fn test_dialog_retrieval_and_matching() -> crate::Result<()> {
         uri: rsip::Uri::try_from("sip:bob@example.com:5060")?,
         headers: vec![
             CSeq::new("2 BYE").into(),
-            From::new(&format!(
+            From::new( format!(
                 "Alice <sip:alice@example.com>;tag={}",
                 dialog_id.from_tag
             ))
             .into(),
-            To::new(&format!(
+            To::new( format!(
                 "Bob <sip:bob@example.com>;tag={}",
                 dialog_id.to_tag
             ))

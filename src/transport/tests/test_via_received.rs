@@ -172,7 +172,7 @@ fn create_test_request(via_proto: &str) -> rsip::message::Request {
             ..Default::default()
         },
         headers: vec![
-            Via::new(&format!("{} 127.0.0.1:5060;branch=z9hG4bK-test", via_proto)).into(),
+            Via::new( format!("{} 127.0.0.1:5060;branch=z9hG4bK-test", via_proto)).into(),
         ]
         .into(),
         version: rsip::Version::V2,

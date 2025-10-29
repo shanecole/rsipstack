@@ -32,7 +32,7 @@ pub type TransactionEventSender = UnboundedSender<TransactionEvent>;
 /// # Examples
 ///
 /// ```rust,no_run
-/// use rsipstack::transaction::transaction::TransactionEvent;
+/// use rsipstack::transaction::transaction_state::TransactionEvent;
 /// use rsip::SipMessage;
 ///
 /// # fn handle_event(event: TransactionEvent) {

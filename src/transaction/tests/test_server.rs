@@ -49,7 +49,7 @@ async fn test_server_transaction() {
                 ..Default::default()
             },
             headers: vec![
-                Via::new(&format!(
+                Via::new( format!(
                     "SIP/2.0/UDP {};branch=z9hG4bKnashd92",
                     client_conn_sip.get_addr().addr
                 ))

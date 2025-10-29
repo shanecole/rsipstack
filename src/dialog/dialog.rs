@@ -50,7 +50,7 @@ use tracing::{debug, info, warn};
 /// # Examples
 ///
 /// ```rust,no_run
-/// use rsipstack::dialog::dialog::DialogState;
+/// use rsipstack::dialog::dialog_state::DialogState;
 /// use rsipstack::dialog::DialogId;
 ///
 /// # fn example() {
@@ -108,7 +108,7 @@ pub enum TerminatedReason {
 /// # Examples
 ///
 /// ```rust,no_run
-/// use rsipstack::dialog::dialog::Dialog;
+/// use rsipstack::dialog::dialog_state::Dialog;
 ///
 /// # fn handle_dialog(dialog: Dialog) {
 /// match dialog {
