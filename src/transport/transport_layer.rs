@@ -80,7 +80,7 @@ impl DefaultDomainResolver {
         .build();
         let context = rsip_dns::Context::initialize_from(
             target_for_lookup,
-            rsip_dns::AsyncTrustDnsClient::new(resolver),
+            rsip_dns::AsyncHickoryClient::new(resolver),
             rsip_dns::SupportedTransports::any(),
         )?;
 
@@ -497,7 +497,7 @@ mod tests {
             .build();
             let context = rsip_dns::Context::initialize_from(
                 uri.clone(),
-                rsip_dns::AsyncTrustDnsClient::new(resolver),
+                rsip_dns::AsyncHickoryClient::new(resolver),
                 rsip_dns::SupportedTransports::any(),
             )?;
 
