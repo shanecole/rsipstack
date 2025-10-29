@@ -7,7 +7,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-#[derive(Debug, PartialOrd, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 struct TimerKey {
     task_id: u64,
     execute_at: Instant,
@@ -16,6 +16,12 @@ struct TimerKey {
 impl Ord for TimerKey {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         self.execute_at.cmp(&other.execute_at)
+    }
+}
+
+impl PartialOrd for TimerKey {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
     }
 }
 
