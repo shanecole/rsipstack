@@ -199,6 +199,10 @@ impl DialogLayer {
         self.inner.dialogs.read().unwrap().len()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.inner.dialogs.read().unwrap().is_empty()
+    }
+
     pub fn all_dialog_ids(&self) -> Vec<DialogId> {
         self.inner
             .dialogs

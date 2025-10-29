@@ -1,15 +1,15 @@
 use super::{sip_addr::SipAddr, stream::StreamConnection, tcp::TcpConnection, udp::UdpConnection};
+use crate::Result;
 use crate::transport::channel::ChannelConnection;
 use crate::transport::websocket::{WebSocketConnection, WebSocketListenerConnection};
 use crate::transport::{
     tcp_listener::TcpListenerConnection,
     tls::{TlsConnection, TlsListenerConnection},
 };
-use crate::Result;
 use get_if_addrs::IfAddr;
 use rsip::{
-    prelude::{HeadersExt, ToTypedHeader},
     Param, SipMessage,
+    prelude::{HeadersExt, ToTypedHeader},
 };
 use std::net::{IpAddr, Ipv4Addr};
 use std::{fmt, net::SocketAddr};
@@ -163,10 +163,7 @@ pub enum SipConnection {
 
 impl SipConnection {
     pub fn is_reliable(&self) -> bool {
-        match self {
-            SipConnection::Udp(_) => false,
-            _ => true,
-        }
+        !matches!(self, SipConnection::Udp(_))
     }
 
     pub fn cancel_token(&self) -> Option<CancellationToken> {
