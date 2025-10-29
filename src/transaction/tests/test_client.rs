@@ -188,8 +188,8 @@ async fn test_client_invite_sends_ack_for_non_2xx() -> Result<()> {
 
         loop {
             if let Ok(Some(event)) = timeout(Duration::from_secs(5), receiver.recv()).await {
-                if let TransportEvent::Incoming(msg, connection, _) = event {
-                    if let SipMessage::Request(req) = msg {
+                if let TransportEvent::Incoming(msg, connection, _) = event
+                    && let SipMessage::Request(req) = msg {
                         info!("peer received request: {}", req.method);
                         if req.method == rsip::Method::Invite {
                             received_invite = true;
@@ -208,7 +208,6 @@ async fn test_client_invite_sends_ack_for_non_2xx() -> Result<()> {
                             break;
                         }
                     }
-                }
             } else {
                 break;
             }

@@ -305,7 +305,7 @@ async fn process_incoming_request(
     while let Some(mut tx) = incoming.recv().await {
         info!("Received transaction: {:?}", tx.key);
 
-        if let Some(_) = tx.original.to_header()?.tag()?.as_ref() { match dialog_layer.match_dialog(&tx.original) {
+        if tx.original.to_header()?.tag()?.as_ref().is_some() { match dialog_layer.match_dialog(&tx.original) {
             Some(mut d) => {
                 tokio::spawn(async move {
                     d.handle(&mut tx).await?;

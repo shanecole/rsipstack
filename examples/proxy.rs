@@ -361,8 +361,8 @@ async fn handle_register(state: AppState, mut tx: Transaction) -> Result<()> {
         uri: orig_contact_uri,
         params: vec![rsip::Param::Expires("60".into())],
     };
-    if let Some(expires) = tx.original.expires_header() {
-        if let Ok(v) = expires.value().parse::<u32>()
+    if let Some(expires) = tx.original.expires_header()
+        && let Ok(v) = expires.value().parse::<u32>()
             && v == 0
         {
             // remove user
@@ -370,7 +370,6 @@ async fn handle_register(state: AppState, mut tx: Transaction) -> Result<()> {
             state.inner.users.lock().await.remove(&user.username);
             return tx.reply(rsip::StatusCode::OK).await;
         }
-    }
 
     info!("Registered user: {} -> {}", user.username, user.destination);
     state
