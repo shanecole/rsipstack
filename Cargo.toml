@@ -14,9 +14,9 @@ categories = ["network-programming", "multimedia"]
 [lib]
 crate-type = ["cdylib", "rlib"]
 
-[[bin]]
-name = "bench_ua"
-path = "src/bin/bench_ua.rs"
+# [[bin]]
+# name = "bench_ua"
+# path = "src/bin/bench_ua.rs"
 
 [dependencies]
 async-trait = "0.1.89"
