@@ -6,7 +6,7 @@ use super::{
     transaction::{Transaction, TransactionEvent, TransactionEventSender},
 };
 use crate::{
-    Error, Result, VERSION,
+    Error, Result,
     dialog::DialogId,
     transport::{SipAddr, TransportEvent, TransportLayer},
 };
@@ -45,6 +45,7 @@ pub struct EndpointOption {
     pub t1x64: Duration,
     pub timerc: Duration,
     pub callid_suffix: Option<String>,
+    pub identity_behavior: crate::transaction::types::IdentityBehavior,
 }
 
 impl Default for EndpointOption {
@@ -55,6 +56,7 @@ impl Default for EndpointOption {
             t1x64: Duration::from_millis(64 * 500),
             timerc: Duration::from_secs(180),
             callid_suffix: None,
+            identity_behavior: crate::transaction::types::IdentityBehavior::default(),
         }
     }
 }
@@ -99,7 +101,8 @@ pub struct EndpointStats {
 /// * `t1x64` - Maximum retransmission timeout (default 32s)
 pub struct EndpointInner {
     pub allows: Mutex<Option<Vec<rsip::Method>>>,
-    pub user_agent: String,
+    pub user_agent: Option<String>,
+    pub server: Option<String>,
     pub timers: Timer<TransactionTimer>,
     pub transport_layer: TransportLayer,
     pub finished_transactions: RwLock<HashMap<TransactionKey, Option<SipMessage>>>,
@@ -136,7 +139,8 @@ pub type EndpointInnerRef = Arc<EndpointInner>;
 /// ```
 pub struct EndpointBuilder {
     allows: Vec<rsip::Method>,
-    user_agent: String,
+    user_agent: Option<String>,
+    server: Option<String>,
     transport_layer: Option<TransportLayer>,
     cancel_token: Option<CancellationToken>,
     timer_interval: Option<Duration>,
@@ -204,7 +208,8 @@ pub struct Endpoint {
 impl EndpointInner {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        user_agent: String,
+        user_agent: Option<String>,
+        server: Option<String>,
         transport_layer: TransportLayer,
         cancel_token: CancellationToken,
         timer_interval: Option<Duration>,
@@ -218,6 +223,7 @@ impl EndpointInner {
         Arc::new(EndpointInner {
             allows: Mutex::new(Some(allows)),
             user_agent,
+            server,
             timers: Timer::new(),
             transport_layer,
             transactions: RwLock::new(HashMap::new()),
@@ -568,7 +574,8 @@ impl EndpointBuilder {
     pub fn new() -> Self {
         EndpointBuilder {
             allows: Vec::new(),
-            user_agent: VERSION.to_string(),
+            user_agent: None,
+            server: None,
             transport_layer: None,
             cancel_token: None,
             timer_interval: None,
@@ -582,8 +589,92 @@ impl EndpointBuilder {
         self.option = Some(option);
         self
     }
-    pub fn with_user_agent(&mut self, user_agent: &str) -> &mut Self {
-        self.user_agent = user_agent.to_string();
+    /// Set the User-Agent string for outgoing requests
+    ///
+    /// RFC 3261: User-Agent is added to requests to identify the UAC software
+    ///
+    /// # Examples
+    /// ```no_run
+    /// use rsipstack::EndpointBuilder;
+    ///
+    /// # fn example() {
+    /// let endpoint = EndpointBuilder::new()
+    ///     .with_user_agent("sip-proxy/1.2.0")
+    ///     .build();
+    /// # }
+    /// ```
+    pub fn with_user_agent(&mut self, user_agent: impl Into<String>) -> &mut Self {
+        self.user_agent = Some(user_agent.into());
+        self
+    }
+
+    /// Set the Server string for outgoing responses
+    ///
+    /// RFC 3261: Server is added to responses to identify the UAS software
+    ///
+    /// # Examples
+    /// ```no_run
+    /// use rsipstack::EndpointBuilder;
+    ///
+    /// # fn example() {
+    /// let endpoint = EndpointBuilder::new()
+    ///     .with_server("sip-proxy/1.2.0")
+    ///     .build();
+    /// # }
+    /// ```
+    pub fn with_server(&mut self, server: impl Into<String>) -> &mut Self {
+        self.server = Some(server.into());
+        self
+    }
+
+    /// Set both User-Agent and Server to the same identity string
+    ///
+    /// This is a convenience method for UAC/UAS applications where
+    /// both the client and server components use the same identity.
+    ///
+    /// # Examples
+    /// ```no_run
+    /// use rsipstack::EndpointBuilder;
+    ///
+    /// # fn example() {
+    /// let endpoint = EndpointBuilder::new()
+    ///     .with_identity("MyPhone/1.0")
+    ///     .build();
+    /// # }
+    /// ```
+    pub fn with_identity(&mut self, identity: impl Into<String>) -> &mut Self {
+        let id = identity.into();
+        self.user_agent = Some(id.clone());
+        self.server = Some(id);
+        self
+    }
+
+    /// Set the identity behavior (when to add User-Agent/Server headers)
+    ///
+    /// # Examples
+    /// ```no_run
+    /// use rsipstack::{EndpointBuilder, IdentityBehavior};
+    ///
+    /// # fn example() {
+    /// // Proxy mode: only add headers to generated messages
+    /// let endpoint = EndpointBuilder::new()
+    ///     .with_identity("sip-proxy/1.2.0")
+    ///     .with_identity_behavior(IdentityBehavior::OnlyGenerated)
+    ///     .build();
+    /// # }
+    /// ```
+    pub fn with_identity_behavior(
+        &mut self,
+        behavior: crate::transaction::types::IdentityBehavior,
+    ) -> &mut Self {
+        if let Some(ref mut opt) = self.option {
+            opt.identity_behavior = behavior;
+        } else {
+            self.option = Some(EndpointOption {
+                identity_behavior: behavior,
+                ..Default::default()
+            });
+        }
         self
     }
 
@@ -631,7 +722,23 @@ impl EndpointBuilder {
             .unwrap_or(TransportLayer::new(cancel_token.child_token()));
 
         let allows = self.allows.to_owned();
-        let user_agent = self.user_agent.to_owned();
+
+        // Apply defaults if identity not set
+        let (user_agent, server) = if self.user_agent.is_none() && self.server.is_none() {
+            // Default to rsipstack version for backward compatibility
+            let default_identity = Some(crate::VERSION.to_string());
+            (default_identity.clone(), default_identity)
+        } else if self.user_agent.is_none() {
+            // If only server is set, use it for user_agent too
+            (self.server.clone(), self.server.clone())
+        } else if self.server.is_none() {
+            // If only user_agent is set, use it for server too
+            (self.user_agent.clone(), self.user_agent.clone())
+        } else {
+            // Both are set, use as-is
+            (self.user_agent.clone(), self.server.clone())
+        };
+
         let timer_interval = self.timer_interval.to_owned();
         let option = self.option.take();
         let message_inspector = self.message_inspector.take();
@@ -640,6 +747,7 @@ impl EndpointBuilder {
 
         let core = EndpointInner::new(
             user_agent,
+            server,
             transport_layer,
             cancel_token,
             timer_interval,

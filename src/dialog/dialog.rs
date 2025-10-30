@@ -399,9 +399,19 @@ impl DialogInner {
             }
         }
         headers.push(Header::CSeq(cseq_header.into()));
-        headers.push(Header::UserAgent(
-            self.endpoint_inner.user_agent.clone().into(),
-        ));
+
+        // Add User-Agent based on identity behavior
+        match self.endpoint_inner.option.identity_behavior {
+            crate::transaction::types::IdentityBehavior::Always
+            | crate::transaction::types::IdentityBehavior::OnlyGenerated => {
+                if let Some(ref ua) = self.endpoint_inner.user_agent {
+                    headers.push(Header::UserAgent(ua.clone().into()));
+                }
+            }
+            crate::transaction::types::IdentityBehavior::Never => {
+                // Don't add User-Agent
+            }
+        }
 
         if let Some(c) = self.local_contact.as_ref() {
             headers.push(Contact::from(c.clone()).into())
@@ -498,7 +508,7 @@ impl DialogInner {
         resp_headers.retain(|h| {
             !matches!(
                 h,
-                Header::Contact(_) | Header::ContentLength(_) | Header::UserAgent(_)
+                Header::Contact(_) | Header::ContentLength(_) | Header::Server(_)
             )
         });
 
@@ -510,9 +520,18 @@ impl DialogInner {
             body.as_ref().map_or(0u32, |b| b.len() as u32).into(),
         ));
 
-        resp_headers.push(Header::UserAgent(
-            self.endpoint_inner.user_agent.clone().into(),
-        ));
+        // Add Server header based on identity behavior (RFC 3261: Server for responses)
+        match self.endpoint_inner.option.identity_behavior {
+            crate::transaction::types::IdentityBehavior::Always
+            | crate::transaction::types::IdentityBehavior::OnlyGenerated => {
+                if let Some(ref srv) = self.endpoint_inner.server {
+                    resp_headers.push(Header::Server(srv.clone().into()));
+                }
+            }
+            crate::transaction::types::IdentityBehavior::Never => {
+                // Don't add Server
+            }
+        }
 
         Response {
             status_code: status,

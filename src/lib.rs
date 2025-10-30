@@ -236,7 +236,7 @@ pub mod dialog;
 pub mod error;
 pub mod transaction;
 pub mod transport;
-pub use transaction::EndpointBuilder;
+pub use transaction::{EndpointBuilder, IdentityBehavior};
 pub mod rsip_ext;
 
 pub const VERSION: &str = concat!("rsipstack/", env!("CARGO_PKG_VERSION"));

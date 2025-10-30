@@ -1,10 +1,9 @@
 use super::{endpoint::EndpointInner, make_call_id};
-use crate::{rsip_ext::RsipResponseExt, transaction::make_via_branch, transport::SipAddr, Result};
+use crate::{Result, rsip_ext::RsipResponseExt, transaction::make_via_branch, transport::SipAddr};
 use rsip::{
-    header,
+    Error, Header, Request, Response, StatusCode, header,
     headers::{ContentLength, Route},
     prelude::{ToTypedHeader, UntypedHeader},
-    Error, Header, Request, Response, StatusCode,
 };
 
 impl EndpointInner {
@@ -97,15 +96,28 @@ impl EndpointInner {
         to: rsip::typed::To,
         seq: u32,
     ) -> rsip::Request {
-        let headers = vec![
+        let mut headers = vec![
             Header::Via(via.into()),
             Header::CallId(make_call_id(self.option.callid_suffix.as_deref())),
             Header::From(from.into()),
             Header::To(to.into()),
             Header::CSeq(rsip::typed::CSeq { seq, method }.into()),
             Header::MaxForwards(70.into()),
-            Header::UserAgent(self.user_agent.clone().into()),
         ];
+
+        // Add User-Agent based on identity behavior
+        match self.option.identity_behavior {
+            crate::transaction::types::IdentityBehavior::Always
+            | crate::transaction::types::IdentityBehavior::OnlyGenerated => {
+                if let Some(ref ua) = self.user_agent {
+                    headers.push(Header::UserAgent(ua.clone().into()));
+                }
+            }
+            crate::transaction::types::IdentityBehavior::Never => {
+                // Don't add User-Agent
+            }
+        }
+
         rsip::Request {
             method,
             uri: req_uri,
@@ -232,7 +244,20 @@ impl EndpointInner {
         headers.push(Header::ContentLength(
             body.as_ref().map_or(0u32, |b| b.len() as u32).into(),
         ));
-        headers.unique_push(Header::UserAgent(self.user_agent.clone().into()));
+
+        // Add Server header based on identity behavior (RFC 3261: Server for responses)
+        match self.option.identity_behavior {
+            crate::transaction::types::IdentityBehavior::Always
+            | crate::transaction::types::IdentityBehavior::OnlyGenerated => {
+                if let Some(ref srv) = self.server {
+                    headers.unique_push(Header::Server(srv.clone().into()));
+                }
+            }
+            crate::transaction::types::IdentityBehavior::Never => {
+                // Don't add Server
+            }
+        }
+
         Response {
             status_code,
             version: req.version().clone(),
@@ -269,12 +294,12 @@ impl EndpointInner {
                 headers.iter_mut(),
                 Header::Via,
                 Error::missing_header("Via")
-            )
-                && let Ok(mut typed_via) = top_most_via.typed() {
-                    typed_via.params.clear();
-                    typed_via.params.push(make_via_branch());
-                    *top_most_via = typed_via.into();
-                }
+            ) && let Ok(mut typed_via) = top_most_via.typed()
+            {
+                typed_via.params.clear();
+                typed_via.params.push(make_via_branch());
+                *top_most_via = typed_via.into();
+            }
         }
         // For non-2xx responses, keep the original Via branch (hop-by-hop within same transaction)
         // update route set from Record-Route header
@@ -305,7 +330,29 @@ impl EndpointInner {
             }
         });
         headers.push(Header::ContentLength(ContentLength::default())); // 0 because of vec![] below
-        headers.unique_push(Header::UserAgent(self.user_agent.clone().into()));
+
+        // ACK behavior depends on response type
+        let is_2xx = matches!(resp.status_code.kind(), rsip::StatusCodeKind::Successful);
+
+        match self.option.identity_behavior {
+            crate::transaction::types::IdentityBehavior::Always => {
+                // Always add User-Agent (backward compatible)
+                if let Some(ref ua) = self.user_agent {
+                    headers.unique_push(Header::UserAgent(ua.clone().into()));
+                }
+            }
+            crate::transaction::types::IdentityBehavior::OnlyGenerated => {
+                // Only add User-Agent for non-2xx ACK (hop-by-hop)
+                if !is_2xx
+                    && let Some(ref ua) = self.user_agent {
+                        headers.unique_push(Header::UserAgent(ua.clone().into()));
+                    }
+            }
+            crate::transaction::types::IdentityBehavior::Never => {
+                // Don't add User-Agent
+            }
+        }
+
         Ok(rsip::Request {
             method: rsip::Method::Ack,
             uri: request_uri,

@@ -10,8 +10,10 @@ pub mod message;
 mod timer;
 #[allow(clippy::module_inception)]
 pub mod transaction;
+pub mod types;
 pub use endpoint::Endpoint;
 pub use endpoint::EndpointBuilder;
+pub use types::IdentityBehavior;
 #[cfg(test)]
 mod tests;
 
