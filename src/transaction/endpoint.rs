@@ -290,7 +290,9 @@ impl EndpointInner {
                     info!(addr=%t.get_addr(), "new connection");
                 }
                 TransportEvent::Closed(t) => {
-                    info!(addr=%t.get_addr(), "closed connection");
+                    let addr = t.get_addr();
+                    info!(addr=%addr, "closed connection");
+                    self.transport_layer.del_connection(addr);
                 }
             }
         }
