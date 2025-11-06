@@ -50,12 +50,12 @@ async fn server_dialog_handles_prack_request() -> crate::Result<()> {
         headers: vec![
             Via::new("SIP/2.0/UDP 198.51.100.1:5060;branch=z9hG4bKprack01").into(),
             CSeq::new("2 PRACK").into(),
-            From::new(&format!(
+            From::new(format!(
                 "Alice <sip:alice@example.com>;tag={}",
                 dialog_id.from_tag
             ))
             .into(),
-            To::new(&format!(
+            To::new(format!(
                 "Bob <sip:bob@example.com>;tag={}",
                 dialog_id.to_tag
             ))
