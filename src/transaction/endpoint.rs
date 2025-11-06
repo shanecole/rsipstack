@@ -15,7 +15,7 @@ use rsip::{SipMessage, prelude::HeadersExt};
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex, RwLock},
-    time::{Duration, Instant},
+    time::Duration,
 };
 use tokio::{
     select,
@@ -111,6 +111,7 @@ pub struct EndpointInner {
     incoming_sender: TransactionSender,
     incoming_receiver: Mutex<Option<TransactionReceiver>>,
     cancel_token: CancellationToken,
+    #[allow(dead_code)]
     timer_interval: Duration,
     pub(super) message_inspector: Option<Box<dyn MessageInspector>>,
     pub(super) locator: Option<Box<dyn TargetLocator>>,
@@ -242,11 +243,8 @@ impl EndpointInner {
 
     pub async fn serve(self: &Arc<Self>) -> Result<()> {
         select! {
-            _ = self.cancel_token.cancelled() => {
-            },
-            r = self.process_timer() => {
-                r?;
-            },
+            _ = self.cancel_token.cancelled() => {},
+            _ = self.process_timer() => {},
             r = self.clone().process_transport_layer() => {
                 r?;
             },
@@ -299,39 +297,39 @@ impl EndpointInner {
         Ok(())
     }
 
-    pub async fn process_timer(&self) -> Result<()> {
-        let mut ticker = tokio::time::interval(self.timer_interval);
+    pub async fn process_timer(&self) {
         loop {
-            for t in self.timers.poll(Instant::now()) {
-                if let TransactionTimer::TimerCleanup(key) = t {
-                    trace!(%key, "TimerCleanup");
-                    self.transactions
-                        .write()
-                        .as_mut()
-                        .map(|ts| ts.remove(&key))
-                        .ok();
-                    self.finished_transactions
-                        .write()
-                        .as_mut()
-                        .map(|t| t.remove(&key))
-                        .ok();
-                    continue;
-                }
-
-                if let Ok(transactions_guard) = self.transactions.read().as_ref()
-                    && let Some(tu) = transactions_guard.get(t.key())
-                {
-                    match tu.send(TransactionEvent::Timer(t)) {
-                        Ok(_) => {}
-                        Err(error::SendError(t)) => {
-                            if let TransactionEvent::Timer(t) = t {
-                                self.detach_transaction(t.key(), None);
+            for t in self.timers.wait_for_ready().await.into_iter() {
+                match t {
+                    TransactionTimer::TimerCleanup(key) => {
+                        trace!(%key, "TimerCleanup");
+                        self.transactions
+                            .write()
+                            .as_mut()
+                            .map(|ts| ts.remove(&key))
+                            .ok();
+                        self.finished_transactions
+                            .write()
+                            .as_mut()
+                            .map(|t| t.remove(&key))
+                            .ok();
+                    }
+                    _ => {
+                        if let Ok(transactions_guard) = self.transactions.read().as_ref()
+                            && let Some(tu) = transactions_guard.get(t.key())
+                        {
+                            match tu.send(TransactionEvent::Timer(t)) {
+                                Ok(_) => {}
+                                Err(error::SendError(t)) => {
+                                    if let TransactionEvent::Timer(t) = t {
+                                        self.detach_transaction(t.key(), None);
+                                    }
+                                }
                             }
                         }
                     }
                 }
             }
-            ticker.tick().await;
         }
     }
 
