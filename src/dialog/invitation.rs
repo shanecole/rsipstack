@@ -132,6 +132,7 @@ pub struct InviteOption {
     pub contact: rsip::Uri,
     pub credential: Option<Credential>,
     pub headers: Option<Vec<rsip::Header>>,
+    pub support_prack: bool,
 }
 
 pub struct DialogGuard {
@@ -268,6 +269,12 @@ impl DialogLayer {
                 .unwrap_or("application/sdp".to_string())
                 .into(),
         ));
+
+        if opt.support_prack {
+            request
+                .headers
+                .unique_push(rsip::Header::Supported("100rel".into()));
+        }
         // can't override default headers
         if let Some(headers) = opt.headers.as_ref() {
             for header in headers {
@@ -413,16 +420,23 @@ impl DialogLayer {
 
         match r {
             Ok((new_dialog_id, resp)) => {
-                debug!(
-                    "client invite dialog confirmed: {} => {}",
-                    id, new_dialog_id
-                );
-                self.inner
-                    .dialogs
-                    .write()
-                    .as_mut()
-                    .map(|ds| ds.insert(new_dialog_id, Dialog::ClientInvite(dialog.clone())))
-                    .ok();
+                match resp {
+                    Some(ref r) if r.status_code.kind() == rsip::StatusCodeKind::Successful => {
+                        debug!(
+                            "client invite dialog confirmed: {} => {}",
+                            id, new_dialog_id
+                        );
+                        self.inner
+                            .dialogs
+                            .write()
+                            .as_mut()
+                            .map(|ds| {
+                                ds.insert(new_dialog_id, Dialog::ClientInvite(dialog.clone()))
+                            })
+                            .ok();
+                    }
+                    _ => {}
+                }
                 Ok((dialog, resp))
             }
             Err(e) => Err(e),

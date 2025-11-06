@@ -1,5 +1,6 @@
 use super::DialogId;
 use super::dialog::{Dialog, DialogInnerRef, DialogState, TerminatedReason};
+use crate::rsip_ext::parse_rack_header;
 use crate::transport::SipConnection;
 use crate::{
     Result,
@@ -596,6 +597,7 @@ impl ServerInviteDialog {
                     ))));
                 }
                 rsip::Method::Bye => return self.handle_bye(tx).await,
+                rsip::Method::PRack => return self.handle_prack(tx).await,
                 rsip::Method::Info => return self.handle_info(tx).await,
                 rsip::Method::Options => return self.handle_options(tx).await,
                 rsip::Method::Update => return self.handle_update(tx).await,
@@ -609,11 +611,17 @@ impl ServerInviteDialog {
                     ))));
                 }
             }
-        } else if tx.original.method == rsip::Method::Ack {
-            self.inner.tu_sender.send(TransactionEvent::Received(
-                tx.original.clone().into(),
-                tx.connection.clone(),
-            ))?;
+        } else {
+            match tx.original.method {
+                rsip::Method::PRack => return self.handle_prack(tx).await,
+                rsip::Method::Ack => {
+                    self.inner.tu_sender.send(TransactionEvent::Received(
+                        tx.original.clone().into(),
+                        tx.connection.clone(),
+                    ))?;
+                }
+                _ => {}
+            }
         }
         self.handle_invite(tx).await
     }
@@ -622,6 +630,19 @@ impl ServerInviteDialog {
         info!(id = %self.id(), "received bye {}", tx.original.uri);
         self.inner
             .transition(DialogState::Terminated(self.id(), TerminatedReason::UacBye))?;
+        tx.reply(rsip::StatusCode::OK).await?;
+        Ok(())
+    }
+
+    async fn handle_prack(&mut self, tx: &mut Transaction) -> Result<()> {
+        info!(id=%self.id(), "received prack {}", tx.original.uri);
+
+        if parse_rack_header(&tx.original.headers).is_none() {
+            warn!(id=%self.id(), "received PRACK without RAck header");
+            tx.reply(rsip::StatusCode::BadRequest).await?;
+            return Ok(());
+        }
+
         tx.reply(rsip::StatusCode::OK).await?;
         Ok(())
     }
