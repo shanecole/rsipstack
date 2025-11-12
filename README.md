@@ -2,6 +2,8 @@
 
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/restsend/rsipstack)
 
+> **Note:** This is a maintained fork of [restsend/rsipstack](https://github.com/restsend/rsipstack) to leverage improvements in the [rsip master branch](https://github.com/shakalakaboom/rsip) not yet published to crates.io, and to incorporate enhancements from our [rsip-dns fork](https://github.com/shanecole/rsip-dns) for better DNS resolution with hickory-dns.
+
 A RFC 3261 compliant SIP stack written in Rust. The goal of this project is to provide a high-performance, reliable, and easy-to-use SIP stack that can be used in various scenarios.
 
 ## Features
