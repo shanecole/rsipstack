@@ -433,9 +433,10 @@ impl DialogInner {
         let mut tx = Transaction::new_client(key, request, self.endpoint_inner.clone(), None);
 
         if let Some(route) = tx.original.route_header()
-            && let Some(first_route) = route.typed().ok().and_then(|r| r.uris().first().cloned()) {
-                tx.destination = SipAddr::try_from(&first_route.uri).ok();
-            }
+            && let Some(first_route) = route.typed().ok().and_then(|r| r.uris().first().cloned())
+        {
+            tx.destination = SipAddr::try_from(&first_route.uri).ok();
+        }
 
         match tx.send().await {
             Ok(_) => {
@@ -680,22 +681,17 @@ impl DialogInner {
             }
         }
 
+        if let Some(c) = self.local_contact.as_ref() {
+            resp_headers.push(Contact::from(c.clone()).into())
+        }
+
         if let Some(headers) = headers {
             for header in headers {
                 resp_headers.unique_push(header);
             }
         }
 
-        resp_headers.retain(|h| {
-            !matches!(
-                h,
-                Header::Contact(_) | Header::ContentLength(_) | Header::Server(_)
-            )
-        });
-
-        if let Some(c) = self.local_contact.as_ref() {
-            resp_headers.push(Contact::from(c.clone()).into())
-        }
+        resp_headers.retain(|h| !matches!(h, Header::ContentLength(_) | Header::Server(_)));
 
         resp_headers.push(Header::ContentLength(
             body.as_ref().map_or(0u32, |b| b.len() as u32).into(),

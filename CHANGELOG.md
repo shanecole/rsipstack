@@ -5,6 +5,62 @@ All notable changes to rsipstack will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.2] - 2025-11-14
+
+### Added
+
+- **set_remote_target() method** on Dialog and DialogInner to update remote target URI and Contact header
+  - Useful after receiving 2xx/UPDATE responses with new Contact information
+  - Ensures subsequent in-dialog requests route to the latest remote target
+
+### Changed
+
+- **ACK handling refactored** (merged from upstream v0.2.91):
+  - Simplified `make_ack()` API: now takes `request_uri` directly instead of computing internally
+  - Request URI computation moved to callers for better separation of concerns
+  - Enhanced `SipAddr` to `Uri` conversion to include transport parameters
+  - Now properly handles TCP, TLS, WS, WSS, TlsSctp, and Sctp transports in URI params
+  - Improved destination handling for 2xx vs non-2xx ACK responses
+
+### Fixed
+
+- **accept_with_public_contact bug**: Custom Contact headers in the `headers` parameter are now properly preserved
+  - Fixed header ordering: local_contact is added before merging custom headers
+  - Removed Contact from retain() filter to prevent removal of custom Contact headers
+- **Authentication retry bug** (upstream issue #40): Via branch parameter now properly updated during auth retry
+  - Old branch parameter is removed before adding new one
+  - Prevents multiple branch parameters in Via header (RFC 3261 violation)
+  - Added comprehensive test coverage in `test_authenticate.rs`
+- **Code organization**: Moved `SipAddr` conversion implementations from `connection.rs` to `sip_addr.rs`
+
+### Tests
+
+- **New test file**: `src/dialog/tests/test_authenticate.rs` with comprehensive authentication tests
+  - Verifies old branch parameter removal
+  - Verifies new branch parameter generation
+  - Verifies rport parameter addition
+
+## [0.3.1] - 2025-11-10
+
+### Added
+
+- **PRACK support (RFC 3262)**: Provisional Response Acknowledgment for reliable provisional responses
+  - Added `prepare_prack_request()` method to generate PRACK requests
+  - Added `send_prack_request()` method for sending PRACK with authentication support
+  - Added `handle_prack()` method in ServerInviteDialog
+  - Added `parse_rseq_header()` and `parse_rack_header()` helper functions
+  - Added comprehensive PRACK test coverage in `src/dialog/tests/test_prack.rs`
+  - Supports 100rel extension with RSeq/RAck headers
+
+### Changed
+
+- **Dialog confirmation handling improved**: Client invite dialogs are now only inserted into DialogLayer after successful (2xx) responses
+- **Dependency version relaxed**: rsip-dns version constraint changed to "0" for workspace patch compatibility
+
+### Fixed
+
+- **Clippy warnings**: Removed unnecessary borrows in PRACK tests and other minor clippy fixes
+
 ## [0.3.0] - 2025-10-30
 
 ### Added
@@ -106,5 +162,7 @@ let endpoint = EndpointBuilder::new()
 
 See git history for changes in previous versions.
 
+[0.3.2]: https://github.com/restsend/rsipstack/compare/v0.3.1...v0.3.2
+[0.3.1]: https://github.com/restsend/rsipstack/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/restsend/rsipstack/compare/v0.2.85...v0.3.0
 [0.2.85]: https://github.com/restsend/rsipstack/releases/tag/v0.2.85

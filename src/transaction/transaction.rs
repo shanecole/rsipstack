@@ -2,7 +2,7 @@ use super::endpoint::EndpointInnerRef;
 use super::key::TransactionKey;
 use super::{SipConnection, TransactionState, TransactionTimer, TransactionType};
 use crate::dialog::DialogId;
-use crate::rsip_ext::destination_from_request;
+use crate::rsip_ext::{RsipResponseExt, destination_from_request};
 use crate::transaction::make_tag;
 use crate::transport::SipAddr;
 use crate::{Error, Result};
@@ -459,11 +459,12 @@ impl Transaction {
         let ack = match self.last_ack.clone() {
             Some(ack) => ack,
             None => match self.last_response {
-                Some(ref resp) => self.endpoint_inner.make_ack(
-                    resp,
-                    Some(&self.original.uri),
-                    self.destination.as_ref(),
-                )?,
+                Some(ref resp) => {
+                    let request_uri = resp
+                        .remote_uri(self.destination.as_ref())
+                        .unwrap_or_else(|_| self.original.uri.clone());
+                    self.endpoint_inner.make_ack(resp, request_uri)?
+                }
                 None => {
                     return Err(Error::TransactionError(
                         "no last response found to send ACK".to_string(),
@@ -478,15 +479,12 @@ impl Transaction {
         } else {
             ack.to_owned().into()
         };
-        if let SipMessage::Request(ref req) = ack {
-            // Only update destination for 2xx responses - they use end-to-end ACK with Contact
-            // For non-2xx, keep using the original INVITE destination (hop-by-hop ACK)
-            if let Some(ref resp) = self.last_response
-                && resp.status_code.kind() == StatusCodeKind::Successful
-            {
-                self.destination = destination_from_request(req);
-            }
-        }
+        if let SipMessage::Request(ref req) = ack
+            && let Some(resp) = self.last_response.as_ref()
+                && resp.status_code.kind() == StatusCodeKind::Successful {
+                    // 2xx response, set destination from request
+                    self.destination = destination_from_request(req);
+                }
 
         match ack.clone() {
             SipMessage::Request(ack) => self.last_ack.replace(ack),
@@ -1001,16 +999,14 @@ impl Transaction {
                     if matches!(
                         self.state,
                         TransactionState::Proceeding | TransactionState::Trying
-                    ) && self.last_ack.is_none()
-                        && let Some(ref resp) = self.last_response
-                        && let Ok(ack) = self.endpoint_inner.make_ack(
-                            resp,
-                            Some(&self.original.uri),
-                            self.destination.as_ref(),
-                        )
-                    {
-                        self.last_ack.replace(ack);
-                    }
+                    )
+                        && self.last_ack.is_none()
+                            && let Some(ref resp) = self.last_response {
+                                let request_uri = self.original.uri.clone();
+                                if let Ok(ack) = self.endpoint_inner.make_ack(resp, request_uri) {
+                                    self.last_ack.replace(ack);
+                                }
+                            }
                     self.last_ack.take().map(SipMessage::Request)
                 }
                 TransactionType::ServerNonInvite => {

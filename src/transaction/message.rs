@@ -1,5 +1,5 @@
 use super::{endpoint::EndpointInner, make_call_id};
-use crate::{Result, rsip_ext::RsipResponseExt, transaction::make_via_branch, transport::SipAddr};
+use crate::{Result, transaction::make_via_branch};
 use rsip::{
     Error, Header, Request, Response, StatusCode, header,
     headers::{ContentLength, Route},
@@ -267,26 +267,8 @@ impl EndpointInner {
     }
 
     /// Generate an ACK request for a response
-    pub fn make_ack(
-        &self,
-        resp: &Response,
-        original_request_uri: Option<&rsip::Uri>,
-        destination: Option<&SipAddr>,
-    ) -> Result<Request> {
+    pub fn make_ack(&self, resp: &Response, request_uri: rsip::Uri) -> Result<Request> {
         let mut headers = resp.headers.clone();
-
-        let request_uri = if matches!(resp.status_code.kind(), rsip::StatusCodeKind::Successful) {
-            // For 2xx responses, ACK is end-to-end and uses Contact URI
-            resp.remote_uri(destination)?
-        } else {
-            // For non-2xx final responses (3xx–6xx), the ACK stays within the original INVITE client transaction
-            // and uses the original Request-URI (Contact header is optional for non-2xx)
-            original_request_uri
-                .ok_or_else(|| {
-                    Error::missing_header("original request URI required for non-2xx ACK")
-                })?
-                .clone()
-        };
 
         if matches!(resp.status_code.kind(), rsip::StatusCodeKind::Successful) {
             // For 2xx responses, ACK is a new transaction with new Via branch
@@ -343,10 +325,9 @@ impl EndpointInner {
             }
             crate::transaction::types::IdentityBehavior::OnlyGenerated => {
                 // Only add User-Agent for non-2xx ACK (hop-by-hop)
-                if !is_2xx
-                    && let Some(ref ua) = self.user_agent {
-                        headers.unique_push(Header::UserAgent(ua.clone().into()));
-                    }
+                if !is_2xx && let Some(ref ua) = self.user_agent {
+                    headers.unique_push(Header::UserAgent(ua.clone().into()));
+                }
             }
             crate::transaction::types::IdentityBehavior::Never => {
                 // Don't add User-Agent
