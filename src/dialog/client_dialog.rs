@@ -528,13 +528,25 @@ impl ClientInviteDialog {
                         }
                     }
                     final_response = Some(resp.clone());
-                    if let Some(tag) = resp.to_header()?.tag()? { self.inner.update_remote_tag(tag.value())? }
+                    if let Some(tag) = resp.to_header()?.tag()? {
+                        self.inner.update_remote_tag(tag.value())?
+                    }
 
                     if let Ok(id) = DialogId::try_from(&resp) {
                         dialog_id = id;
                     }
                     match resp.status_code {
+                        StatusCode::Ringing | StatusCode::SessionProgress
+                            if resp
+                                .to_header()
+                                .ok()
+                                .and_then(|h| h.tag().ok().flatten())
+                                .is_some() =>
+                        {
+                            self.inner.update_route_set_from_response(&resp);
+                        }
                         StatusCode::OK => {
+                            self.inner.update_route_set_from_response(&resp);
                             // 200 response to INVITE always contains Contact header
                             let contact = resp.contact_header()?;
                             self.inner

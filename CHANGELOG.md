@@ -5,6 +5,35 @@ All notable changes to rsipstack will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.3] - 2025-11-28
+
+### Upstream Sync
+
+Merged changes from upstream [restsend/rsipstack](https://github.com/restsend/rsipstack) v0.2.93.
+
+- **Last synced upstream commit**: `26bfddc` (for future merge reference)
+- **Upstream version range**: v0.2.87 through v0.2.93
+
+### Added
+
+- **`update_route_set_from_response()` method** on DialogInner to update route set from Record-Route headers
+  - Client dialogs now properly learn their route set from 2xx responses (RFC 3261 §12.1.2)
+  - Ensures subsequent in-dialog requests reuse the same proxy chain
+
+### Changed
+
+- **Route set updates from provisional responses**: 18x responses (Ringing/SessionProgress) with to-tag now trigger route set updates
+- **Route set updates from 200 OK**: Final successful responses now update the route set before transitioning to Confirmed state
+
+### Fixed
+
+- **Issue #44 fix from upstream**: Route set update from 200 OK response now implemented correctly
+- **18x with to-tag handling**: Route set is now properly captured from early dialog responses
+
+### Tests
+
+- **New test**: `test_route_set_updates_from_200_ok_response` verifying route set extraction and reversal from Record-Route headers
+
 ## [0.3.2] - 2025-11-14
 
 ### Added
@@ -162,7 +191,8 @@ let endpoint = EndpointBuilder::new()
 
 See git history for changes in previous versions.
 
-[0.3.2]: https://github.com/restsend/rsipstack/compare/v0.3.1...v0.3.2
+[0.3.3]: https://github.com/shanecole/rsipstack/compare/v0.3.2...v0.3.3
+[0.3.2]: https://github.com/shanecole/rsipstack/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/restsend/rsipstack/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/restsend/rsipstack/compare/v0.2.85...v0.3.0
 [0.2.85]: https://github.com/restsend/rsipstack/releases/tag/v0.2.85

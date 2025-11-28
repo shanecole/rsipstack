@@ -1,6 +1,7 @@
+# 0.3.3 Merge upstream v0.2.93 (commit 26bfddc): route set updates from 200 OK/18x responses
 [package]
 name = "rsipstack"
-version = "0.3.2"
+version = "0.3.3"
 edition = "2024"
 description = "SIP Stack Rust library for building SIP applications"
 license = "MIT"
