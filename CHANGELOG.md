@@ -5,6 +5,20 @@ All notable changes to rsipstack will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.4] - 2025-11-28
+
+### Upstream Sync
+
+Merged changes from upstream [restsend/rsipstack](https://github.com/restsend/rsipstack) PR #48.
+
+- **Last synced upstream commit**: `f0eefaa` (for future merge reference)
+
+### Fixed
+
+- **ACK for 487 responses**: ACK for 487 (Request Terminated) responses now correctly sent back to where the response came from
+  - Added `from` address parameter to `on_received_message()` method
+  - Added `RequestFailure` case handling to send ACK to originating address
+
 ## [0.3.3] - 2025-11-28
 
 ### Upstream Sync
@@ -191,6 +205,7 @@ let endpoint = EndpointBuilder::new()
 
 See git history for changes in previous versions.
 
+[0.3.4]: https://github.com/shanecole/rsipstack/compare/v0.3.3...v0.3.4
 [0.3.3]: https://github.com/shanecole/rsipstack/compare/v0.3.2...v0.3.3
 [0.3.2]: https://github.com/shanecole/rsipstack/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/restsend/rsipstack/compare/v0.3.0...v0.3.1
