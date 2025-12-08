@@ -29,7 +29,7 @@ fn create_request_with_branch(branch: &str) -> Request {
         method: rsip::Method::Register,
         uri: rsip::Uri::try_from("sip:example.com:5060").unwrap(),
         headers: vec![
-            Via::new(&format!(
+            Via::new(format!(
                 "SIP/2.0/UDP alice.example.com:5060;branch={}",
                 branch
             ))
@@ -156,4 +156,3 @@ async fn test_authenticate_via_header_branch_update() -> crate::Result<()> {
 
     Ok(())
 }
-

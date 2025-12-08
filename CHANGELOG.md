@@ -5,7 +5,40 @@ All notable changes to rsipstack will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.3.4] - 2025-11-28
+## [0.3.5] - 2025-12-09
+
+### Upstream Sync
+
+Merged changes from upstream [restsend/rsipstack](https://github.com/restsend/rsipstack) PRs #49, #52, #54.
+
+- **Last synced upstream commit**: `2ea7be3` (for future merge reference)
+
+### Added
+
+- **Optional `call_id` in `InviteOption`** (PR #54): Added `call_id: Option<String>` field to allow custom Call-ID for INVITE requests
+  - Updated `make_request()` signature to accept optional `call_id` parameter
+  - Useful for call correlation and tracking scenarios
+
+### Fixed
+
+- **Duplicate Max-Forwards headers** (PR #49): Custom `MaxForwards` headers in `InviteOption.headers` now use `unique_push` to prevent duplicates
+  - Some clients consider messages with duplicate Max-Forwards headers as malformed and may silently ignore INVITEs
+
+- **ACK for domain name contacts** (PR #52): ACK for 2xx responses now performs DNS lookup when Contact contains a domain name
+  - Previously only worked correctly for IP-based Contact addresses
+  - Now uses `transport_layer.lookup()` to resolve domain names before sending ACK
+
+### Fork-Specific Changes
+
+This fork maintains a streamlined version. The following upstream components have been removed:
+
+- Examples and benchmark binaries (`examples/`, `src/bin/`)
+- WASM target support and associated dependencies
+- Development dependencies used only for upstream examples
+- CI/CD workflows and Docker configurations
+
+
+## [0.3.4] - 2025-12-05
 
 ### Upstream Sync
 
@@ -205,6 +238,7 @@ let endpoint = EndpointBuilder::new()
 
 See git history for changes in previous versions.
 
+[0.3.5]: https://github.com/shanecole/rsipstack/compare/v0.3.4...v0.3.5
 [0.3.4]: https://github.com/shanecole/rsipstack/compare/v0.3.3...v0.3.4
 [0.3.3]: https://github.com/shanecole/rsipstack/compare/v0.3.2...v0.3.3
 [0.3.2]: https://github.com/shanecole/rsipstack/compare/v0.3.1...v0.3.2

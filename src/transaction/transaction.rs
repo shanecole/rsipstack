@@ -439,7 +439,7 @@ impl Transaction {
         }
     }
 
-    pub async fn send_ack(&mut self, connection: Option<SipConnection>) -> Result<()> {
+    pub async fn send_ack(&mut self, mut connection: Option<SipConnection>) -> Result<()> {
         if self.transaction_type != TransactionType::ClientInvite {
             return Err(Error::TransactionError(
                 "send_ack is only valid for client invite transactions".to_string(),
@@ -479,12 +479,22 @@ impl Transaction {
         } else {
             ack.to_owned().into()
         };
-        if let SipMessage::Request(ref req) = ack
+        if let SipMessage::Request(req) = &ack
             && let Some(resp) = self.last_response.as_ref()
-                && resp.status_code.kind() == StatusCodeKind::Successful {
-                    // 2xx response, set destination from request
-                    self.destination = destination_from_request(req);
-                }
+            && resp.status_code.kind() == StatusCodeKind::Successful
+        {
+            // 2xx response, set destination from request
+            if let Some(dest) = destination_from_request(req) {
+                let (conn, addr) = self
+                    .endpoint_inner
+                    .transport_layer
+                    .lookup(&dest, Some(&self.key))
+                    .await?;
+
+                connection = Some(conn);
+                self.destination = Some(addr);
+            }
+        }
 
         match ack.clone() {
             SipMessage::Request(ack) => self.last_ack.replace(ack),
@@ -999,14 +1009,14 @@ impl Transaction {
                     if matches!(
                         self.state,
                         TransactionState::Proceeding | TransactionState::Trying
-                    )
-                        && self.last_ack.is_none()
-                            && let Some(ref resp) = self.last_response {
-                                let request_uri = self.original.uri.clone();
-                                if let Ok(ack) = self.endpoint_inner.make_ack(resp, request_uri) {
-                                    self.last_ack.replace(ack);
-                                }
-                            }
+                    ) && self.last_ack.is_none()
+                        && let Some(ref resp) = self.last_response
+                    {
+                        let request_uri = self.original.uri.clone();
+                        if let Ok(ack) = self.endpoint_inner.make_ack(resp, request_uri) {
+                            self.last_ack.replace(ack);
+                        }
+                    }
                     self.last_ack.take().map(SipMessage::Request)
                 }
                 TransactionType::ServerNonInvite => {

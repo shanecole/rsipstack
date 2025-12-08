@@ -133,6 +133,7 @@ pub struct InviteOption {
     pub credential: Option<Credential>,
     pub headers: Option<Vec<rsip::Header>>,
     pub support_prack: bool,
+    pub call_id: Option<String>,
 }
 
 pub struct DialogGuard {
@@ -248,10 +249,21 @@ impl DialogLayer {
         }
         .with_tag(make_tag());
 
+        let call_id = opt
+            .call_id
+            .as_ref()
+            .map(|id| rsip::headers::CallId::from(id.clone()));
+
         let via = self.endpoint.get_via(None, None)?;
-        let mut request =
-            self.endpoint
-                .make_request(rsip::Method::Invite, recipient, via, from, to, last_seq);
+        let mut request = self.endpoint.make_request(
+            rsip::Method::Invite,
+            recipient,
+            via,
+            from,
+            to,
+            last_seq,
+            call_id,
+        );
 
         let contact = rsip::typed::Contact {
             display_name: None,
@@ -278,7 +290,14 @@ impl DialogLayer {
         // can't override default headers
         if let Some(headers) = opt.headers.as_ref() {
             for header in headers {
-                request.headers.push(header.clone());
+                // only override if it is a "max-forwards" header
+                // so as not to duplicate it; this is important because
+                // some clients consider messages with duplicate "max-forwards"
+                // headers as malformed and may silently ignore invites
+                match header {
+                    rsip::Header::MaxForwards(_) => request.headers.unique_push(header.clone()),
+                    _ => request.headers.push(header.clone()),
+                }
             }
         }
         Ok(request)
