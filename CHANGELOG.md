@@ -5,6 +5,29 @@ All notable changes to rsipstack will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.6] - 2025-12-16
+
+### Upstream Sync
+
+Merged changes from upstream [restsend/rsipstack](https://github.com/restsend/rsipstack) PR #55 and commit `650243e`.
+
+- **Last synced upstream commit**: `650243e` (for future merge reference)
+
+### Added
+
+- **Re-INVITE handling in ServerInviteDialog** (commit `650243e`): Server dialogs now properly handle re-INVITE requests
+  - Added `handle_reinvite()` method to process re-INVITEs in confirmed state
+  - Transitions dialog to `Updated` state, sends 200 OK, and waits for ACK
+  - Previously, re-INVITEs in confirmed state returned `MethodNotAllowed` error
+
+### Fixed
+
+- **BYE when waiting for ACK** (PR #55): UAS can now send BYE while waiting for ACK after sending 200 OK
+  - Added `waiting_ack()` method to `DialogState` and `DialogInner`
+  - Modified `bye()` to allow BYE in `WaitAck` state, not just `Confirmed` state
+  - Previously, UAS that sent 200 but hadn't received ACK couldn't hang up the call
+
+
 ## [0.3.5] - 2025-12-09
 
 ### Upstream Sync
@@ -238,6 +261,7 @@ let endpoint = EndpointBuilder::new()
 
 See git history for changes in previous versions.
 
+[0.3.6]: https://github.com/shanecole/rsipstack/compare/v0.3.5...v0.3.6
 [0.3.5]: https://github.com/shanecole/rsipstack/compare/v0.3.4...v0.3.5
 [0.3.4]: https://github.com/shanecole/rsipstack/compare/v0.3.3...v0.3.4
 [0.3.3]: https://github.com/shanecole/rsipstack/compare/v0.3.2...v0.3.3
