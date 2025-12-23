@@ -5,6 +5,20 @@ All notable changes to rsipstack will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.8] - 2025-12-24
+
+### Fixed
+
+- **Multiple provisional responses now delivered to TU (RFC 3262)**: Fixed transaction layer to properly deliver multiple provisional responses (e.g., 183 Session Progress followed by 180 Ringing) instead of dropping them as duplicates
+  - Previously, when a transaction was already in `Proceeding` state, subsequent provisional responses were silently dropped
+  - Now compares status code and RSeq header to detect true duplicates vs. new provisional responses
+  - A response is only considered a duplicate if it has the same status code AND same RSeq value (or both lack RSeq)
+  - This enables proper PRACK (RFC 3262) handling for multiple reliable provisional responses
+
+### Changed
+
+- **Replaced debug eprintln with tracing**: Changed `eprintln!` error output in `Transaction::respond()` to use `tracing::error!` macro for consistent logging
+
 ## [0.3.7] - 2025-12-24
 
 ### Upstream Sync
@@ -306,6 +320,7 @@ let endpoint = EndpointBuilder::new()
 
 See git history for changes in previous versions.
 
+[0.3.8]: https://github.com/shanecole/rsipstack/compare/v0.3.7...v0.3.8
 [0.3.7]: https://github.com/shanecole/rsipstack/compare/v0.3.6...v0.3.7
 [0.3.6]: https://github.com/shanecole/rsipstack/compare/v0.3.5...v0.3.6
 [0.3.5]: https://github.com/shanecole/rsipstack/compare/v0.3.4...v0.3.5

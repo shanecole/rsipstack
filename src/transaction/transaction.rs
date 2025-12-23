@@ -2,7 +2,7 @@ use super::endpoint::EndpointInnerRef;
 use super::key::TransactionKey;
 use super::{SipConnection, TransactionState, TransactionTimer, TransactionType};
 use crate::dialog::DialogId;
-use crate::rsip_ext::{RsipResponseExt, destination_from_request};
+use crate::rsip_ext::{RsipResponseExt, destination_from_request, parse_rseq_header};
 use crate::transaction::make_tag;
 use crate::transport::SipAddr;
 use crate::{Error, Result};
@@ -11,7 +11,7 @@ use rsip::message::HasHeaders;
 use rsip::prelude::HeadersExt;
 use rsip::{Header, Method, Request, Response, SipMessage, StatusCode, StatusCodeKind};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
-use tracing::{debug, info, trace};
+use tracing::{debug, error, info, trace};
 
 pub type TransactionEventReceiver = UnboundedReceiver<TransactionEvent>;
 pub type TransactionEventSender = UnboundedSender<TransactionEvent>;
@@ -350,10 +350,14 @@ impl Transaction {
         // check an transition to new state
         self.can_transition(&new_state)?;
 
-        let connection = self.connection.as_ref().ok_or(Error::TransactionError(
-            "no connection found".to_string(),
-            self.key.clone(),
-        ))?;
+        let connection = self.connection.as_ref().ok_or_else(|| {
+            error!(
+                key = %self.key,
+                state = %self.state,
+                "no connection found in transaction"
+            );
+            Error::TransactionError("no connection found".to_string(), self.key.clone())
+        })?;
 
         let response = if let Some(ref inspector) = self.endpoint_inner.message_inspector {
             inspector.before_send(response.clone().to_owned().into())
@@ -390,6 +394,7 @@ impl Transaction {
             | (&TransactionState::Trying, &TransactionState::Completed)
             | (&TransactionState::Trying, &TransactionState::Confirmed)
             | (&TransactionState::Trying, &TransactionState::Terminated)
+            | (&TransactionState::Proceeding, &TransactionState::Proceeding) // multiple provisional responses (RFC 3262)
             | (&TransactionState::Proceeding, &TransactionState::Completed)
             | (&TransactionState::Proceeding, &TransactionState::Confirmed)
             | (&TransactionState::Proceeding, &TransactionState::Terminated)
@@ -690,9 +695,34 @@ impl Transaction {
         };
 
         self.can_transition(&new_state).ok()?;
+
+        // Check for duplicate responses
         if self.state == new_state {
-            // ignore duplicate response
-            return None;
+            if new_state == TransactionState::Proceeding {
+                // For provisional responses (RFC 3262), check if this is a true duplicate
+                // by comparing status code and RSeq header. A different status code (e.g., 183 vs 180)
+                // or a different RSeq value indicates a new provisional response that should be delivered.
+                if let Some(ref last_resp) = self.last_response {
+                    let same_status = last_resp.status_code == resp.status_code;
+                    let last_rseq = parse_rseq_header(&last_resp.headers);
+                    let current_rseq = parse_rseq_header(&resp.headers);
+
+                    // It's a duplicate if: same status code AND (both have no RSeq OR same RSeq value)
+                    let is_duplicate = same_status
+                        && match (last_rseq, current_rseq) {
+                            (Some(last), Some(current)) => last == current,
+                            (None, None) => true, // Both unreliable, same status = duplicate
+                            _ => false,           // One has RSeq, other doesn't = not duplicate
+                        };
+
+                    if is_duplicate {
+                        return None;
+                    }
+                }
+            } else {
+                // For non-provisional responses, ignore duplicates
+                return None;
+            }
         }
 
         // Check if we need to send ACK before moving new_state

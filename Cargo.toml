@@ -1,3 +1,4 @@
+# 0.3.8 Fix: deliver multiple provisional responses (RFC 3262) to TU instead of dropping as duplicates
 # 0.3.7 Merge upstream commits 4ab8a57..72f9426: get_running_transactions(), client re-INVITE, dialog key String, t4=5s
 # 0.3.6 Merge upstream PR #55 + commit 650243e (commit 650243e): fix BYE when waiting ACK, re-INVITE handling
 # 0.3.5 Merge upstream PRs #49, #52, #54 (commit 2ea7be3): fix duplicate Max-Forwards, ACK for domain contacts, optional call_id
@@ -5,7 +6,7 @@
 # 0.3.3 Merge upstream v0.2.93 (commit 26bfddc): route set updates from 200 OK/18x responses
 [package]
 name = "rsipstack"
-version = "0.3.7"
+version = "0.3.8"
 edition = "2024"
 description = "SIP Stack Rust library for building SIP applications"
 license = "MIT"
