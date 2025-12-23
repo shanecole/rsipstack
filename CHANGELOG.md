@@ -5,6 +5,51 @@ All notable changes to rsipstack will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.7] - 2025-12-24
+
+### Upstream Sync
+
+Merged changes from upstream [restsend/rsipstack](https://github.com/restsend/rsipstack) commits `4ab8a57` through `72f9426`.
+
+- **Last synced upstream commit**: `72f9426` (for future merge reference)
+- **Upstream version**: v0.3.0 (their versioning)
+
+### Added
+
+- **`get_running_transactions()` method** (commit `4ab8a57`): Added method to `EndpointInner` to retrieve list of currently running transaction keys
+  - Returns `Option<Vec<TransactionKey>>` for monitoring/debugging purposes
+
+- **Re-INVITE handling in ClientInviteDialog** (commit `bc1ecd2`): Client dialogs now properly handle incoming re-INVITE requests
+  - Added `handle_reinvite()` method to process re-INVITEs in confirmed state
+  - Transitions dialog to `Updated` state, sends 200 OK, and waits for ACK
+  - Complements the server-side re-INVITE handling added in v0.3.6
+
+- **`get_dialog_with()` method** (commit `72f9426`): Added method to `DialogLayer` that accepts `&String` directly
+  - `get_dialog()` now delegates to `get_dialog_with()` after converting `DialogId` to `String`
+
+### Changed
+
+- **Dialog storage key type changed to String** (commit `72f9426`): Internal dialog storage now uses `String` keys instead of `DialogId`
+  - `DialogLayerInner.dialogs` type changed from `HashMap<DialogId, Dialog>` to `HashMap<String, Dialog>`
+  - `all_dialog_ids()` now returns `Vec<String>` instead of `Vec<DialogId>`
+  - All dialog insertion/removal operations now convert `DialogId` to `String` via `.to_string()`
+
+- **Timer T4 default changed from 4s to 5s** (commit `72f9426`): `EndpointOption::default()` now sets `t4` to 5 seconds
+  - This is the maximum duration a message will remain in the network
+
+- **Simplified ACK destination handling for 2xx responses** (commit `a095751`): Reverted connection lookup during ACK send
+  - For 2xx responses, destination is now set directly from `destination_from_request()` without connection lookup
+  - Removes complexity from the ACK path
+
+- **ServerInviteDialog ignores invalid requests in non-confirmed state** (commit `098cac1`): Changed from returning error to returning `Ok(())`
+  - Previously returned `DialogError` with `MethodNotAllowed` for unexpected requests
+  - Now silently ignores unexpected requests to prevent premature dialog termination
+
+- **ServerInviteDialog request handling refactored** (commit `72f9426`): Flattened match logic for cleaner flow
+  - Removed nested `else` block, replaced with sequential match on method
+  - Explicit handling for INVITE, PRack, ACK, and catch-all for others
+
+
 ## [0.3.6] - 2025-12-16
 
 ### Upstream Sync
@@ -261,6 +306,7 @@ let endpoint = EndpointBuilder::new()
 
 See git history for changes in previous versions.
 
+[0.3.7]: https://github.com/shanecole/rsipstack/compare/v0.3.6...v0.3.7
 [0.3.6]: https://github.com/shanecole/rsipstack/compare/v0.3.5...v0.3.6
 [0.3.5]: https://github.com/shanecole/rsipstack/compare/v0.3.4...v0.3.5
 [0.3.4]: https://github.com/shanecole/rsipstack/compare/v0.3.3...v0.3.4
